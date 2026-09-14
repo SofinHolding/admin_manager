@@ -1,0 +1,215 @@
+/**
+ * Admin web — cùng hệ thiết kế với Electron app.
+ *
+ * Token màu copy 1:1 từ `ui/src/renderer/src/index.css`. Khác: dùng system font thay vì tự host
+ * (admin web chạy trên VPS qua mạng, tải font riêng cho một trang dashboard là chậm vô ích).
+ */
+
+@import "tailwindcss";
+
+/* Tailwind 4 tự scan project root, nhưng khi `base` khác "/" hoặc cấu trúc thư mục lạ thì
+   auto-detect có thể bỏ sót. Khai báo rõ để chắc chắn. */
+@source "../src";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TOKEN — sáng
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --radius: 0.5rem;
+
+  --background: oklch(0.979 0.003 255);
+  --surface-1: oklch(1 0 0);
+  --surface-2: oklch(0.963 0.004 255);
+  --surface-3: oklch(1 0 0);
+
+  --foreground: oklch(0.22 0.012 258);
+  --muted-foreground: oklch(0.468 0.014 258);
+
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-3);
+  --popover-foreground: var(--foreground);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-2);
+  --accent: var(--surface-2);
+  --accent-foreground: var(--foreground);
+
+  --primary: oklch(0.505 0.185 254);
+  --primary-foreground: oklch(0.995 0 0);
+  --primary-text: oklch(0.475 0.19 254);
+
+  --success: oklch(0.52 0.14 156);
+  --warning: oklch(0.545 0.14 74);
+  --destructive: oklch(0.545 0.21 27);
+  --destructive-solid: oklch(0.545 0.21 27);
+  --accent-2: oklch(0.55 0.11 218);
+
+  --border: oklch(0.22 0.012 258 / 13%);
+  --border-strong: oklch(0.22 0.012 258 / 22%);
+  --hairline: var(--border);
+  --input: var(--border-strong);
+  --ring: oklch(0.505 0.185 254);
+
+  --elev-1: oklch(0.22 0.012 258 / 4%);
+  --elev-2: oklch(0.22 0.012 258 / 8%);
+
+  --grad-from: oklch(0.505 0.185 254);
+  --grad-via: oklch(0.487 0.185 258);
+  --grad-to: oklch(0.470 0.175 262);
+  --glow: oklch(0.505 0.185 254 / 18%);
+
+  --chart-1: oklch(0.505 0.185 254);
+  --chart-2: oklch(0.600 0.140 74);
+  --chart-3: oklch(0.545 0.100 186);
+  --chart-4: oklch(0.505 0.170 300);
+  --chart-5: oklch(0.520 0.140 156);
+  --chart-6: oklch(0.560 0.170 15);
+
+  --shadow-overlay: 0 16px 40px -16px oklch(0.22 0.05 258 / 28%), 0 2px 8px -2px oklch(0.22 0.05 258 / 12%);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TOKEN — tối
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.dark {
+  --background: oklch(0.168 0.008 256);
+  --surface-1: oklch(0.212 0.009 256);
+  --surface-2: oklch(0.252 0.010 256);
+  --surface-3: oklch(0.278 0.011 256);
+
+  --foreground: oklch(0.968 0.002 256);
+  --muted-foreground: oklch(0.735 0.012 256);
+
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-3);
+  --popover-foreground: var(--foreground);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-2);
+  --accent: var(--surface-2);
+  --accent-foreground: var(--foreground);
+
+  --primary: oklch(0.565 0.185 253);
+  --primary-foreground: oklch(0.995 0 0);
+  --primary-text: oklch(0.755 0.135 250);
+
+  --success: oklch(0.735 0.145 158);
+  --warning: oklch(0.795 0.135 78);
+  --destructive: oklch(0.685 0.185 25);
+  --destructive-solid: oklch(0.565 0.200 27);
+  --accent-2: oklch(0.755 0.105 214);
+
+  --border: oklch(1 0 0 / 10%);
+  --border-strong: oklch(1 0 0 / 18%);
+  --hairline: var(--border);
+  --input: var(--border-strong);
+  --ring: oklch(0.665 0.165 252);
+
+  --elev-1: oklch(1 0 0 / 4%);
+  --elev-2: oklch(1 0 0 / 8%);
+
+  --grad-from: oklch(0.565 0.185 253);
+  --grad-via: oklch(0.545 0.185 257);
+  --grad-to: oklch(0.525 0.175 261);
+  --glow: oklch(0.565 0.185 253 / 22%);
+
+  --chart-1: oklch(0.700 0.155 253);
+  --chart-2: oklch(0.795 0.135 78);
+  --chart-3: oklch(0.755 0.105 188);
+  --chart-4: oklch(0.700 0.150 300);
+  --chart-5: oklch(0.735 0.145 158);
+  --chart-6: oklch(0.720 0.150 15);
+
+  --shadow-overlay: 0 16px 40px -16px oklch(0 0 0 / 55%), 0 2px 8px -2px oklch(0 0 0 / 35%);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ĐĂNG KÝ VỚI TAILWIND
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-text: var(--primary-text);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-2: var(--accent-2);
+  --color-destructive: var(--destructive);
+  --color-destructive-solid: var(--destructive-solid);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-hairline: var(--hairline);
+  --color-elev-1: var(--elev-1);
+  --color-elev-2: var(--elev-2);
+  --color-grad-from: var(--grad-from);
+  --color-grad-via: var(--grad-via);
+  --color-grad-to: var(--grad-to);
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-2xl: 12px;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NỀN TẢNG
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Focus outline dùng chung */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* Glass surface — nền đục + viền nhẹ, cùng kiểu Electron app */
+  .glass {
+    background-color: var(--surface-1);
+    border: 1px solid var(--hairline);
+  }
+}
