@@ -1,0 +1,106 @@
+name: Deploy Admin lên VPS
+
+# Trigger khi push lên main — dù thay đổi ở server, web hay cả hai.
+# Không trigger khi chỉ sửa docs/README để tránh deploy thừa.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "admin-server/**"
+      - "admin-web/**"
+  workflow_dispatch:   # Cho phép chạy tay từ tab Actions trên GitHub
+
+env:
+  DEPLOY_DIR: /home/vilas/ufadmin   # Thư mục deploy trên VPS — khớp với setup-vps.sh
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── 1. Lấy code ────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Build frontend (admin-web) ──────────────────────────────────────────
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: admin-web/package-lock.json
+
+      - name: Cài dependencies frontend
+        working-directory: admin-web
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: admin-web
+        run: npm run build
+        # Kết quả: admin-web/dist/ — vite đã cấu hình base="/admin/" nên mọi asset
+        # dùng đường dẫn /admin/assets/... và không bị lỗi 404 khi nginx proxy.
+
+      # ── 3. Chuẩn bị SSH ────────────────────────────────────────────────────────
+      - name: Cài SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Thêm VPS vào known_hosts (tránh hỏi xác nhận fingerprint)
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      # ── 4. Đẩy file lên VPS ────────────────────────────────────────────────────
+      - name: Đẩy admin-server lên VPS
+        run: |
+          rsync -az --delete \
+            --exclude='.env' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='*.db' \
+            --exclude='.venv/' \
+            admin-server/ \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.DEPLOY_DIR }}/
+        # --exclude='.env': KHÔNG đẩy đè .env — secrets chỉ set 1 lần tay trên VPS.
+        # --delete: xoá file trên server mà repo đã bỏ (tránh rác tích tụ qua nhiều lần deploy).
+
+      - name: Đẩy frontend dist lên VPS
+        run: |
+          rsync -az --delete \
+            admin-web/dist/ \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.DEPLOY_DIR }}/dist/
+
+      # ── 5. Trên VPS: cài deps Python & restart ─────────────────────────────────
+      - name: Cài Python deps & restart service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd ${{ env.DEPLOY_DIR }}
+
+            # Cài/cập nhật Python deps trong venv riêng
+            if [ ! -d .venv ]; then
+              python3 -m venv .venv
+            fi
+            .venv/bin/pip install -q --upgrade pip
+            .venv/bin/pip install -q -r requirements.txt
+
+            # Cập nhật run.sh để dùng venv
+            # (run.sh sẽ tự detect venv nếu đã có — xem bên dưới)
+
+            # Restart pm2 (khởi tạo lần đầu nếu chưa có)
+            if pm2 list | grep -q ufadmin; then
+              pm2 restart ufadmin
+            else
+              pm2 start run.sh --name ufadmin --interpreter bash
+              pm2 save
+            fi
+
+            echo "✅ Deploy xong. Trạng thái:"
+            pm2 show ufadmin | grep -E "status|restarts|uptime"
