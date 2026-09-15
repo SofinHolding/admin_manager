@@ -8,12 +8,12 @@
  * Nguồn data: viewerApi (admin-server) thay vì analytics (local API).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Filter, RefreshCw } from "lucide-react";
+import { AlertTriangle, Filter } from "lucide-react";
 import {
   Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, Pie, PieChart,
-  Tooltip, XAxis, YAxis,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
   viewerApi,
@@ -27,6 +27,7 @@ import {
   type Platform,
 } from "../api";
 import { Button } from "../components/ui/button";
+import { DateInput } from "../components/ui/date-input";
 import { Skeleton } from "../components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import {
@@ -146,30 +147,6 @@ function useLazyLoad(): [(el: HTMLDivElement | null) => void, boolean] {
   return [setRef, visible];
 }
 
-// ── PieChart wrapper — Recharts 3.x PieChart bị lỗi sizing ────────────────
-
-function PieChartSized({ children, className }: {
-  children: (w: number, h: number) => React.ReactNode;
-  className?: string;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return (
-    <div ref={ref} className={className} style={{ width: "100%", height: "100%" }}>
-      {size.w > 0 && size.h > 0 && children(size.w, size.h)}
-    </div>
-  );
-}
-
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ══════════════════════════════════════════════════════════════════════════════
@@ -200,7 +177,6 @@ export default function DashboardPage() {
   const [lByCountry, setLByCountry] = useState(true);
   const [lTop, setLTop] = useState(true);
   const [error, setError] = useState("");
-  const [lastUpdate, setLastUpdate] = useState("");
 
   const [topRef, topVisible] = useLazyLoad();
 
@@ -229,7 +205,6 @@ export default function DashboardPage() {
   // Traffic
   useEffect(() => {
     setLTraffic(true);
-    setLastUpdate(new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }));
     viewerApi.traffic(from, to, scope, country)
       .then((d) => { setTraffic(d); setError(""); })
       .catch((e) => { setTraffic(null); bao_loi(e); })
@@ -255,29 +230,6 @@ export default function DashboardPage() {
       .finally(() => setLTop(false));
   }, [topVisible, from, to, country, topLimit, bao_loi]);
 
-  // Auto-refresh mỗi 5 phút
-  useEffect(() => {
-    const id = setInterval(() => {
-      setFrom((f) => f); // trigger re-fetch bằng cách giữ nguyên giá trị
-    }, 5 * 60 * 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Tab focus lại → refresh
-  useEffect(() => {
-    let blurAt = 0;
-    const onBlur = () => { blurAt = Date.now(); };
-    const onFocus = () => {
-      if (blurAt && Date.now() - blurAt > 60_000) {
-        // Force re-fetch
-        setFrom((f) => f);
-      }
-    };
-    window.addEventListener("blur", onBlur);
-    window.addEventListener("focus", onFocus);
-    return () => { window.removeEventListener("blur", onBlur); window.removeEventListener("focus", onFocus); };
-  }, []);
-
   const dirty = draftFrom !== from || draftTo !== to || draftCountry !== country;
   const applyFilter = () => {
     if (!dirty) return;
@@ -290,15 +242,9 @@ export default function DashboardPage() {
       {/* ═══ Filter bar — giống Electron ═══ */}
       <div className="glass flex flex-wrap items-center gap-3 rounded-xl px-4 py-3">
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Khoảng ngày</span>
-        <input type="date" value={draftFrom} max={draftTo}
-               onChange={(e) => setDraftFrom(e.target.value)}
-               onKeyDown={(e) => e.key === "Enter" && applyFilter()}
-               className="h-8 w-40 rounded-md border border-border bg-elev-1 px-2 text-xs outline-none focus:border-primary" />
+        <DateInput value={draftFrom} max={draftTo} onChange={setDraftFrom} onEnter={applyFilter} />
         <span className="text-muted-foreground">–</span>
-        <input type="date" value={draftTo} min={draftFrom} max={todayStr()}
-               onChange={(e) => setDraftTo(e.target.value)}
-               onKeyDown={(e) => e.key === "Enter" && applyFilter()}
-               className="h-8 w-40 rounded-md border border-border bg-elev-1 px-2 text-xs outline-none focus:border-primary" />
+        <DateInput value={draftTo} min={draftFrom} max={todayStr()} onChange={setDraftTo} onEnter={applyFilter} />
 
         <Select value={draftCountry || MOI_QUOC_GIA}
                 onValueChange={(v) => setDraftCountry(v === MOI_QUOC_GIA ? "" : v)}>
@@ -314,13 +260,6 @@ export default function DashboardPage() {
         <Button size="sm" variant={dirty ? "default" : "outline"} onClick={applyFilter} disabled={!dirty}>
           <Filter className="size-4" /> Lọc
         </Button>
-
-        <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-          {lastUpdate && <>Cập nhật lúc {lastUpdate}</>}
-          <button type="button" onClick={() => setFrom((f) => f)} className="text-primary-text hover:underline" title="Làm mới">
-            <RefreshCw className="size-3.5" />
-          </button>
-        </div>
       </div>
 
       {error && (
@@ -528,44 +467,40 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope }: {
           : !shown.length ? <EmptyNote text="Chọn ít nhất một chỉ số để vẽ." />
           : !rows.length ? <EmptyNote text="Chưa có số liệu trong khoảng ngày này." />
           : kind === "pie" ? (
-            <PieChartSized>
-              {(w, h) => (
-                <PieChart width={w} height={h}>
-                  <Pie data={pie} dataKey="value" nameKey="name" innerRadius="45%" outerRadius="72%" paddingAngle={2}>
-                    {pie.map((p) => <Cell key={p.key} fill={p.fill} />)}
-                  </Pie>
-                  <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
-                  <Legend />
-                </PieChart>
-              )}
-            </PieChartSized>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={pie} dataKey="value" nameKey="name" innerRadius="45%" outerRadius="72%" paddingAngle={2}>
+                  {pie.map((p) => <Cell key={p.key} fill={p.fill} />)}
+                </Pie>
+                <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
           ) : (
-            <PieChartSized>
-              {(w, h) => (
-                <ComposedChart data={rows} width={w} height={h}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
-                  <XAxis dataKey="date" tickFormatter={shortDay} stroke={c.axis} fontSize={11} />
-                  <YAxis yAxisId="left" stroke={c.axis} fontSize={11} tickFormatter={(v) => fmtNum(v)} width={70} />
-                  {showRightAxis && (
-                    <YAxis yAxisId="right" orientation="right" stroke={c.axis} fontSize={11}
-                           tickFormatter={(v) => fmtNum(v)} allowDecimals={false} width={50} />
-                  )}
-                  <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
-                  <Legend />
-                  {shown.map((k) => {
-                    const onRight = yAxisIdOf(k) === "right";
-                    const asBar = kind === "bar" || (kind === "mixed" && k === "videos");
-                    return asBar ? (
-                      <Bar key={k} yAxisId={onRight ? "right" : "left"} dataKey={k} name={label(k)}
-                           fill={color(k)} {...(onRight ? { barSize: 10, radius: [2, 2, 0, 0] as [number, number, number, number] } : {})} />
-                    ) : (
-                      <Line key={k} yAxisId={yAxisIdOf(k)} type="monotone" dataKey={k} name={label(k)}
-                            stroke={color(k)} strokeWidth={2} dot={false} />
-                    );
-                  })}
-                </ComposedChart>
-              )}
-            </PieChartSized>
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={rows}>
+                <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
+                <XAxis dataKey="date" tickFormatter={shortDay} stroke={c.axis} fontSize={11} />
+                <YAxis yAxisId="left" stroke={c.axis} fontSize={11} tickFormatter={(v) => fmtNum(v)} width={70} />
+                {showRightAxis && (
+                  <YAxis yAxisId="right" orientation="right" stroke={c.axis} fontSize={11}
+                         tickFormatter={(v) => fmtNum(v)} allowDecimals={false} width={50} />
+                )}
+                <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
+                <Legend />
+                {shown.map((k) => {
+                  const onRight = yAxisIdOf(k) === "right";
+                  const asBar = kind === "bar" || (kind === "mixed" && k === "videos");
+                  return asBar ? (
+                    <Bar key={k} yAxisId={onRight ? "right" : "left"} dataKey={k} name={label(k)}
+                         fill={color(k)} {...(onRight ? { barSize: 10, radius: [2, 2, 0, 0] as [number, number, number, number] } : {})} />
+                  ) : (
+                    <Line key={k} yAxisId={yAxisIdOf(k)} type="monotone" dataKey={k} name={label(k)}
+                          stroke={color(k)} strokeWidth={2} dot={false} />
+                  );
+                })}
+              </ComposedChart>
+            </ResponsiveContainer>
           )}
       </div>
       <p className="mt-1 text-[11px] text-muted-foreground">
@@ -660,23 +595,21 @@ function CountryViewsCard({ data, loading, country }: {
       </div>
       <div className="h-[300px] w-full">
         {loading && !data ? <EmptyNote text="Đang tải…" />
-          : !shownCountries.length ? <EmptyNote text="Chưa có dữ liệu view theo quốc gia." />
+          : !shownCountries.length ? <EmptyNote text="Chưa gắn được quốc gia cho view nào — tạo & gắn thẻ quốc gia trước." />
           : !hasAny ? <EmptyNote text="Chưa có view cho quốc gia này trong khoảng ngày." />
           : (
-            <PieChartSized>
-              {(w, h) => (
-                <BarChart data={rows} width={w} height={h}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
-                  <XAxis dataKey="date" tickFormatter={shortDay} stroke={c.axis} fontSize={11} />
-                  <YAxis stroke={c.axis} fontSize={11} tickFormatter={(v) => fmtNum(v)} width={60} />
-                  <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
-                  <Legend />
-                  {shownCountries.map((name, i) => (
-                    <Bar key={name} dataKey={name} name={name} fill={c.ramp[i % c.ramp.length]} />
-                  ))}
-                </BarChart>
-              )}
-            </PieChartSized>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={rows}>
+                <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
+                <XAxis dataKey="date" tickFormatter={shortDay} stroke={c.axis} fontSize={11} />
+                <YAxis stroke={c.axis} fontSize={11} tickFormatter={(v) => fmtNum(v)} width={60} />
+                <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
+                <Legend />
+                {shownCountries.map((name, i) => (
+                  <Bar key={name} dataKey={name} name={name} fill={c.ramp[i % c.ramp.length]} />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
           )}
       </div>
     </div>
