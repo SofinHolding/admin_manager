@@ -118,8 +118,23 @@ function InviteKeysTab() {
   };
 
   const copyKey = (key: string) => {
-    navigator.clipboard.writeText(key);
-    toast.success("Đã copy mã mời");
+    // navigator.clipboard chỉ hoạt động trên HTTPS; fallback execCommand cho HTTP
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(key).then(() => toast.success("Đã copy mã mời")).catch(() => copyFallback(key));
+    } else {
+      copyFallback(key);
+    }
+  };
+
+  const copyFallback = (text: string) => {
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.style.cssText = "position:fixed;top:-9999px;left:-9999px";
+    document.body.appendChild(el);
+    el.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(el);
+    if (ok) toast.success("Đã copy mã mời"); else toast.error("Không copy được — hãy copy thủ công");
   };
 
   return (
