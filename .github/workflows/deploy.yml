@@ -11,7 +11,7 @@ on:
   workflow_dispatch:   # Cho phép chạy tay từ tab Actions trên GitHub
 
 env:
-  DEPLOY_DIR: /home/vilas/ufadmin   # Thư mục deploy trên VPS — khớp với setup-vps.sh
+  DEPLOY_DIR: /srv/admin   # Thư mục deploy trên VPS (Contabo 169.58.232.253)
 
 jobs:
   deploy:
