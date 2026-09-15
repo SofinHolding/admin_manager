@@ -49,6 +49,13 @@ BASE_URL = os.environ.get("BASE_URL", "http://localhost:8421")
 
 _rate: dict[str, list[float]] = defaultdict(list)
 
+
+def _client_ip(request: Request) -> str:
+    # Nginx forward X-Real-IP; fallback request.client.host khi chay khong co proxy.
+    # Khong dung X-Forwarded-For vi co the gia mao nhieu tang proxy.
+    return request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+
+
 def _check_rate(ip: str, action: str, max_hits: int, window_s: int) -> None:
     """Nếu quá `max_hits` lần trong `window_s` giây gần nhất → 429."""
     key = f"{ip}:{action}"
@@ -169,7 +176,7 @@ def make_router(db: Db, send_verify_email=None, send_reset_email=None) -> APIRou
 
     @router.post("/validate-key", summary="Kiểm tra invite key hợp lệ không")
     async def validate_key(body: ValidateKeyBody, request: Request) -> dict:
-        _check_rate(request.client.host, "validate-key", 10, 60)
+        _check_rate(_client_ip(request), "validate-key", 10, 60)
         row = await db.get_invite_key(body.key.strip())
         if not row:
             return {"valid": False, "reason": "Mã mời không hợp lệ"}
@@ -192,21 +199,21 @@ def make_router(db: Db, send_verify_email=None, send_reset_email=None) -> APIRou
 
     @router.post("/check-username", summary="Username đã có ai dùng chưa")
     async def check_username(body: CheckUsernameBody, request: Request) -> dict:
-        _check_rate(request.client.host, "check", 30, 60)
+        _check_rate(_client_ip(request), "check", 30, 60)
         return {"available": not await db.username_exists(body.username.strip())}
 
     # ── 3. Check email ──────────────────────────────────────────────────────────
 
     @router.post("/check-email", summary="Email đã đăng ký chưa")
     async def check_email(body: CheckEmailBody, request: Request) -> dict:
-        _check_rate(request.client.host, "check", 30, 60)
+        _check_rate(_client_ip(request), "check", 30, 60)
         return {"available": not await db.email_exists(body.email.strip())}
 
     # ── 4. Register ─────────────────────────────────────────────────────────────
 
     @router.post("/register", summary="Đăng ký tài khoản mới bằng invite key")
     async def register(body: RegisterBody, request: Request) -> dict:
-        _check_rate(request.client.host, "register", 3, 3600)
+        _check_rate(_client_ip(request), "register", 3, 3600)
 
         # Validate key — phải còn lượt
         key_row = await db.get_invite_key(body.key.strip())
@@ -271,7 +278,7 @@ def make_router(db: Db, send_verify_email=None, send_reset_email=None) -> APIRou
 
     @router.post("/resend-verify", summary="Gửi lại email xác thực")
     async def resend_verify(body: ResendVerifyBody, request: Request) -> dict:
-        _check_rate(request.client.host, "resend", 5, 3600)
+        _check_rate(_client_ip(request), "resend", 5, 3600)
 
         account = await db.get_account_by_email(body.email.strip())
         # KHÔNG tiết lộ email có tồn tại không — luôn trả "đã gửi"
@@ -296,7 +303,7 @@ def make_router(db: Db, send_verify_email=None, send_reset_email=None) -> APIRou
 
     @router.post("/login", summary="Đăng nhập bằng username + password")
     async def login(body: LoginBody, request: Request) -> dict:
-        _check_rate(request.client.host, "login", 5, 300)
+        _check_rate(_client_ip(request), "login", 5, 300)
 
         account = await db.get_account_by_username(body.username.strip())
 
@@ -379,7 +386,7 @@ def make_router(db: Db, send_verify_email=None, send_reset_email=None) -> APIRou
 
     @router.post("/forgot-password", summary="Gửi email đặt lại mật khẩu")
     async def forgot_password(body: ForgotPasswordBody, request: Request) -> dict:
-        _check_rate(request.client.host, "forgot", 3, 3600)
+        _check_rate(_client_ip(request), "forgot", 3, 3600)
 
         # KHÔNG xác nhận email có tồn tại — tránh dò tài khoản
         account = await db.get_account_by_email(body.email.strip())
@@ -431,7 +438,7 @@ def make_router(db: Db, send_verify_email=None, send_reset_email=None) -> APIRou
         Dùng lại cặp reset_token + reset_token_at — tránh thêm cột. Mã 6 số ngắn hơn UUID
         nên dễ gõ, nhưng brute-force 10^6 = 1M nên rate limit chặt (3 lần / 10 phút).
         """
-        _check_rate(request.client.host, "change-code", 3, 600)
+        _check_rate(_client_ip(request), "change-code", 3, 600)
 
         import random
         code = f"{random.randint(0, 999999):06d}"
@@ -455,7 +462,7 @@ def make_router(db: Db, send_verify_email=None, send_reset_email=None) -> APIRou
                  summary="Xác thực mã 6 số + đặt mật khẩu mới — bước 2")
     async def change_password(body: ChangePasswordBody, request: Request,
                               account: dict = CurrentUser) -> dict:
-        _check_rate(request.client.host, "change-pw", 5, 600)
+        _check_rate(_client_ip(request), "change-pw", 5, 600)
 
         # Kiểm tra mã — lấy từ DB để so sánh an toàn
         fresh = await db.get_account_by_id(account["id"])
