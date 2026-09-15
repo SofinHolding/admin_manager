@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -135,8 +136,18 @@ async def health() -> dict:
 if ADMIN_WEB_DIR:
     _web_dir = Path(ADMIN_WEB_DIR)
     if _web_dir.is_dir():
-        # SPA fallback: moi route khong khop API deu tra index.html de React Router xu ly
-        app.mount("/admin", StaticFiles(directory=str(_web_dir), html=True), name="admin-web")
+        # Phuc vu static assets (/admin/assets/*, /admin/favicon.ico, ...)
+        app.mount("/admin/assets", StaticFiles(directory=str(_web_dir / "assets")), name="admin-assets")
+
+        # SPA fallback: moi route /admin/* khong khop API hay asset deu tra index.html
+        # StaticFiles(html=True) chi serve index.html cho directory root, khong fallback cho
+        # sub-path nhu /admin/login — phai dung catch-all route rieng.
+        _index_html = (_web_dir / "index.html").read_bytes()
+
+        @app.get("/admin/{full_path:path}", include_in_schema=False)
+        async def spa_fallback(full_path: str) -> Response:
+            return Response(content=_index_html, media_type="text/html")
+
         logger.info("Mount frontend tai /admin tu %s", _web_dir)
     else:
         logger.warning("ADMIN_WEB_DIR=%s khong ton tai — chi chay API", ADMIN_WEB_DIR)
