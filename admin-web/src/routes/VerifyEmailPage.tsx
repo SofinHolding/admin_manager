@@ -21,6 +21,8 @@ export default function VerifyEmailPage() {
     }
     if (called.current) return;
     called.current = true;
+    // Xóa token khỏi URL ngay lập tức — không để lộ trong lịch sử trình duyệt
+    window.history.replaceState({}, "", window.location.pathname);
     authApi.verifyEmail(token)
       .then((d) => { setStatus("ok"); setMessage(d.message); })
       .catch((e) => { setStatus("error"); setMessage((e as Error).message); });

@@ -53,7 +53,7 @@ async def send_verify_email(email: str, token: str, username: str) -> None:
         logger.info("SMTP chưa cấu hình. Verify token cho %s: %s", email, token)
         return
 
-    link = f"{BASE_URL}/v1/auth/verify-email?token={token}"
+    link = f"{BASE_URL}/admin/verify-email?token={token}"
     html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 max-width: 480px; margin: 0 auto; padding: 32px 24px;">
