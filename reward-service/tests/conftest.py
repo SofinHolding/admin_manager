@@ -28,9 +28,17 @@ from cryptography.fernet import Fernet
 from store import migrate as store_migrate
 from store.pool import Pool
 
-TEST_DATABASE_URL = os.environ.get("REWARD_TEST_DATABASE_URL", "postgres://postgres:postgres@127.0.0.1:5544/ufsync_dev")
-TEST_JWT_SECRET = os.environ.get("REWARD_TEST_JWT_SECRET", "dev-secret-thay-doi-khi-deploy")
-TEST_ADMIN_API_BASE = os.environ.get("REWARD_TEST_ADMIN_API_BASE", "http://127.0.0.1:8421")
+# Ưu tiên: REWARD_TEST_* (đè riêng cho test) → biến chuẩn (CI set DATABASE_URL/JWT_SECRET/
+# ADMIN_API_BASE trực tiếp, xem .github/workflows/deploy-reward.yml) → fallback Postgres dev cục bộ.
+# BUG đã vá: trước đây conftest chỉ nhìn REWARD_TEST_DATABASE_URL, bỏ qua DATABASE_URL CI đặt sẵn
+# (cổng 5432 trong service Postgres của Actions) → luôn rơi về fallback cổng 5544 (Docker dev máy
+# tác giả) → CI báo ConnectionRefusedError vì cổng 5544 không tồn tại trên runner GitHub.
+TEST_DATABASE_URL = (os.environ.get("REWARD_TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
+                      or "postgres://postgres:postgres@127.0.0.1:5544/ufsync_dev")
+TEST_JWT_SECRET = (os.environ.get("REWARD_TEST_JWT_SECRET") or os.environ.get("JWT_SECRET")
+                    or "dev-secret-thay-doi-khi-deploy")
+TEST_ADMIN_API_BASE = (os.environ.get("REWARD_TEST_ADMIN_API_BASE") or os.environ.get("ADMIN_API_BASE")
+                        or "http://127.0.0.1:8421")
 
 # Nguyên văn `admin_manager/admin-server/db.py::_PG_DDL` — fixture DÀNH RIÊNG CHO TEST, không phải sửa
 # admin_manager. Nếu DDL thật đổi mà quên đồng bộ ở đây, test migrate/idempotent vẫn tự phát hiện lệch
