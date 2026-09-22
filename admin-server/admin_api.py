@@ -18,7 +18,11 @@ logger = logging.getLogger("admin.manage")
 
 
 class CreateKeyBody(BaseModel):
-    role: str = Field("viewer", pattern=r"^(viewer|admin)$")
+    # 'discord' thêm cho module reward-service (dùng chung accounts.role, cột text tự do —
+    # xem reward-service/store/migrations/001_reward_init.sql). register() dùng nguyên role
+    # của key (auth.py) nên tài khoản tạo ra có role='discord' ngay, không cần bước cấp quyền
+    # riêng qua reward-service nữa.
+    role: str = Field("viewer", pattern=r"^(viewer|admin|discord)$")
     label: str = Field("", max_length=200)
     max_uses: int = Field(1, ge=1, le=1000)
     expires_days: int = Field(7, ge=1, le=365)

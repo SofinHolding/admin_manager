@@ -14,7 +14,6 @@ import CredentialsPage from "./reward/pages/CredentialsPage";
 import JobsPage from "./reward/pages/JobsPage";
 import JobNewPage from "./reward/pages/JobNewPage";
 import JobDetailPage from "./reward/pages/JobDetailPage";
-import RewardAdminPage from "./reward/pages/AdminPage";
 
 export default function App() {
   return (
@@ -41,9 +40,6 @@ export default function App() {
               <Route path="/reward/jobs" element={<JobsPage />} />
               <Route path="/reward/jobs/new" element={<JobNewPage />} />
               <Route path="/reward/jobs/:id" element={<JobDetailPage />} />
-            </Route>
-            <Route element={<RoleGate allow={["admin"]} />}>
-              <Route path="/reward/admin" element={<RewardAdminPage />} />
             </Route>
 
             <Route path="/" element={<HomeRedirect />} />

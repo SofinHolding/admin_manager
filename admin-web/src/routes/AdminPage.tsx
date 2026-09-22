@@ -1,18 +1,24 @@
 /**
- * Trang quản trị — tạo invite key, quản lý tài khoản.
+ * Trang quản trị — tạo invite key (kèm vai trò Discord), quản lý tài khoản (lọc theo vai trò,
+ * cấp/thu quyền Discord), job toàn hệ thống, khoá kênh, nhật ký đổi role.
  *
  * Chỉ admin (role='admin') mới vào được. Viewer bị chặn ở ProtectedRoute hoặc API trả 403.
  * Key tạo ra luôn single-use (max_uses=1) và hết hạn sau 7 ngày — đây là constraint cố định,
  * không cho chọn trên giao diện để tránh tạo key vĩnh viễn.
+ *
+ * Trang "Reward admin" riêng (/reward/admin) đã gộp hết vào đây — không còn route riêng.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  Bot, Check, Copy, Key, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, UserX, UserCheck, X,
+  Bot, Check, Copy, History, Key, ListChecks, Pencil, Plus, RefreshCw, ShieldCheck, Trash2,
+  Unlock, UserX, UserCheck, X,
 } from "lucide-react";
 import { adminApi, type InviteKey, type Account } from "../api";
-import { adminApi as rewardAdminApi } from "../reward/api";
+import {
+  adminApi as rewardAdminApi, type JobSummary, type RoleAuditEntry, type RunnerLock,
+} from "../reward/api";
 import { Button } from "../components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -58,12 +64,18 @@ export default function AdminPage() {
     <div className="space-y-6">
       <h1 className="text-xl font-bold">Quản trị hệ thống</h1>
       <Tabs defaultValue="keys">
-        <TabsList className="w-full max-w-md">
+        <TabsList className="w-full max-w-2xl">
           <TabsTrigger value="keys"><Key className="mr-1.5 size-4" /> Mã mời</TabsTrigger>
           <TabsTrigger value="users"><ShieldCheck className="mr-1.5 size-4" /> Tài khoản</TabsTrigger>
+          <TabsTrigger value="jobs"><ListChecks className="mr-1.5 size-4" /> Job toàn hệ thống</TabsTrigger>
+          <TabsTrigger value="locks"><Unlock className="mr-1.5 size-4" /> Khoá kênh</TabsTrigger>
+          <TabsTrigger value="audit"><History className="mr-1.5 size-4" /> Nhật ký role</TabsTrigger>
         </TabsList>
         <TabsContent value="keys"><InviteKeysTab /></TabsContent>
         <TabsContent value="users"><AccountsTab /></TabsContent>
+        <TabsContent value="jobs"><SystemJobsTab /></TabsContent>
+        <TabsContent value="locks"><LocksTab /></TabsContent>
+        <TabsContent value="audit"><AuditTab /></TabsContent>
       </Tabs>
     </div>
   );
@@ -153,6 +165,7 @@ function InviteKeysTab() {
               <SelectContent>
                 <SelectItem value="viewer">Viewer</SelectItem>
                 <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="discord">Discord</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -259,6 +272,7 @@ function AccountsTab() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState({ username: "", email: "", role: "" });
   const [saving, setSaving] = useState(false);
+  const [roleFilter, setRoleFilter] = useState("all");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -353,14 +367,30 @@ function AccountsTab() {
   };
 
   const editInput = "h-7 rounded border border-border bg-elev-1 px-2 text-sm outline-none focus:border-primary";
+  const filteredUsers = roleFilter === "all" ? users : users.filter((u) => u.role === roleFilter);
 
   return (
     <div className="rounded-xl border border-border bg-elev-1">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h3 className="text-sm font-semibold">Danh sách tài khoản ({users.length})</h3>
-        <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
-          <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <h3 className="text-sm font-semibold">
+          Danh sách tài khoản ({filteredUsers.length}{roleFilter !== "all" ? ` / ${users.length}` : ""})
+        </h3>
+        <div className="flex items-center gap-2">
+          <Select value={roleFilter} onValueChange={setRoleFilter}>
+            <SelectTrigger className="h-8 w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tất cả</SelectItem>
+              <SelectItem value="viewer">Viewer</SelectItem>
+              <SelectItem value="admin">Admin</SelectItem>
+              <SelectItem value="discord">Discord</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
+            <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+          </Button>
+        </div>
       </div>
 
       {loading && users.length === 0 ? (
@@ -368,6 +398,10 @@ function AccountsTab() {
       ) : users.length === 0 ? (
         <div className="p-6 text-center text-sm text-muted-foreground">
           Chưa có tài khoản nào.
+        </div>
+      ) : filteredUsers.length === 0 ? (
+        <div className="p-6 text-center text-sm text-muted-foreground">
+          Không có tài khoản nào khớp bộ lọc.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -384,7 +418,7 @@ function AccountsTab() {
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => {
+              {filteredUsers.map((u) => {
                 const badge = userStatusBadge(u.status);
                 const isEditing = editingId === u.id;
                 return (
@@ -499,6 +533,148 @@ function AccountsTab() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Tab: Job toàn hệ thống ───────────────────────────────────────────────────
+
+function SystemJobsTab() {
+  const [jobs, setJobs] = useState<JobSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    rewardAdminApi.jobs().then((d) => setJobs(d.jobs)).catch((err) => toast.error((err as Error).message)).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" /> Đang tải…</div>;
+
+  return (
+    <div className="overflow-auto rounded-xl border border-border bg-elev-1">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+            <th className="px-4 py-2 font-medium">Tên</th>
+            <th className="px-4 py-2 font-medium">Chủ sở hữu</th>
+            <th className="px-4 py-2 font-medium">Trạng thái</th>
+            <th className="px-4 py-2 font-medium">Tổng item</th>
+            <th className="px-4 py-2 font-medium">Tạo lúc</th>
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map((j) => (
+            <tr key={j.id} className="border-b border-border/50 last:border-0 hover:bg-elev-2/50">
+              <td className="px-4 py-2.5 font-medium">{j.name}</td>
+              <td className="px-4 py-2.5 text-xs">{j.owner_username ?? "—"}</td>
+              <td className="px-4 py-2.5 capitalize">{j.status}</td>
+              <td className="px-4 py-2.5 text-xs">{j.total_items}</td>
+              <td className="px-4 py-2.5 text-xs text-muted-foreground">{new Date(j.created_at).toLocaleString("vi-VN")}</td>
+            </tr>
+          ))}
+          {jobs.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">Không có job</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Tab: Khoá kênh ────────────────────────────────────────────────────────────
+
+function LocksTab() {
+  const [locks, setLocks] = useState<RunnerLock[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await rewardAdminApi.locks();
+      setLocks(d.locks);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const release = async (jobId: string) => {
+    if (!confirm("Giải phóng khoá kênh này? Chỉ làm khi lock đã chết (tuổi > 30s).")) return;
+    setBusyId(jobId);
+    try {
+      await rewardAdminApi.releaseLock(jobId);
+      toast.success("Đã giải phóng khoá kênh");
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" /> Đang tải…</div>;
+
+  return (
+    <div className="overflow-auto rounded-xl border border-border bg-elev-1">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+            <th className="px-4 py-2 font-medium">Job</th>
+            <th className="px-4 py-2 font-medium">Channel</th>
+            <th className="px-4 py-2 font-medium">PID / Host</th>
+            <th className="px-4 py-2 font-medium">Nhịp tim gần nhất</th>
+            <th className="px-4 py-2 font-medium">Tuổi (giây)</th>
+            <th className="px-4 py-2 font-medium"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {locks.map((l) => (
+            <tr key={l.job_id} className="border-b border-border/50 last:border-0 hover:bg-elev-2/50">
+              <td className="px-4 py-2.5 text-xs">{l.job_id}</td>
+              <td className="px-4 py-2.5 text-xs">{l.channel_id}</td>
+              <td className="px-4 py-2.5 text-xs">{l.pid} / {l.host}</td>
+              <td className="px-4 py-2.5 text-xs">{new Date(l.heartbeat_at).toLocaleString("vi-VN")}</td>
+              <td className="px-4 py-2.5 text-xs">{l.age_s}</td>
+              <td className="px-4 py-2.5">
+                <Button size="sm" variant="outline" disabled={l.age_s <= 30 || busyId === l.job_id} onClick={() => release(l.job_id)}>
+                  <Unlock className="size-4" /> Giải phóng
+                </Button>
+              </td>
+            </tr>
+          ))}
+          {locks.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">Không có khoá nào</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Tab: Nhật ký role ───────────────────────────────────────────────────────
+
+function AuditTab() {
+  const [entries, setEntries] = useState<RoleAuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    rewardAdminApi.roleAudit({ limit: 200 }).then((d) => setEntries(d.entries)).catch((err) => toast.error((err as Error).message)).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" /> Đang tải…</div>;
+
+  return (
+    <div className="flex flex-col divide-y divide-border rounded-xl border border-border bg-elev-1">
+      {entries.map((e) => (
+        <div key={e.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+          <span>
+            <span className="font-medium">{e.username}</span>: {e.from_role} → {e.to_role}
+            {e.reason && <span className="text-muted-foreground"> ({e.reason})</span>}
+            <span className="text-xs text-muted-foreground"> bởi {e.actor_username}</span>
+          </span>
+          <span className="text-xs text-muted-foreground">{new Date(e.created_at).toLocaleString("vi-VN")}</span>
+        </div>
+      ))}
+      {entries.length === 0 && <p className="p-4 text-sm text-muted-foreground">Chưa có thay đổi role nào</p>}
     </div>
   );
 }

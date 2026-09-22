@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3, Coins, Link2, LogOut, Settings, ShieldCheck, User } from "lucide-react";
+import { BarChart3, Coins, Link2, LogOut, Settings, User } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "./ui/button";
 
@@ -42,11 +42,6 @@ export function Layout() {
                   <Coins className="size-4" /> Phân phối điểm
                 </NavLink>
               </>
-            )}
-            {isAdmin && (
-              <NavLink to="/reward/admin" className={navLinkCls}>
-                <ShieldCheck className="size-4" /> Reward admin
-              </NavLink>
             )}
           </nav>
 
