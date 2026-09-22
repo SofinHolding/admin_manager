@@ -1,10 +1,13 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3, LogOut, Settings, User } from "lucide-react";
+import { BarChart3, Coins, Link2, LogOut, Settings, ShieldCheck, User } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "./ui/button";
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const role = user?.role;
+  const isAdmin = role === "admin";
+  const isDiscord = role === "discord";
 
   const navLinkCls = ({ isActive }: { isActive: boolean }) =>
     `flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -18,14 +21,31 @@ export function Layout() {
       {/* Header */}
       <header className="glass sticky top-0 z-40 border-b border-hairline">
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4">
-          {/* Nav links */}
+          {/* Nav links — hiển thị theo vai trò, dùng chung 1 template */}
           <nav className="flex items-center gap-1">
-            <NavLink to="/dashboard" className={navLinkCls}>
-              <BarChart3 className="size-4" /> Thống kê
-            </NavLink>
-            {user?.role === "admin" && (
+            {(isAdmin || role === "viewer") && (
+              <NavLink to="/dashboard" className={navLinkCls}>
+                <BarChart3 className="size-4" /> Thống kê
+              </NavLink>
+            )}
+            {isAdmin && (
               <NavLink to="/manage" className={navLinkCls}>
                 <Settings className="size-4" /> Quản trị
+              </NavLink>
+            )}
+            {(isDiscord || isAdmin) && (
+              <>
+                <NavLink to="/reward/credentials" className={navLinkCls}>
+                  <Link2 className="size-4" /> Kết nối Discord
+                </NavLink>
+                <NavLink to="/reward/jobs" className={navLinkCls}>
+                  <Coins className="size-4" /> Phân phối điểm
+                </NavLink>
+              </>
+            )}
+            {isAdmin && (
+              <NavLink to="/reward/admin" className={navLinkCls}>
+                <ShieldCheck className="size-4" /> Reward admin
               </NavLink>
             )}
           </nav>

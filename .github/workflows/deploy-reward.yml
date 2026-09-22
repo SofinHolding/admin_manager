@@ -1,0 +1,105 @@
+name: Deploy Reward Service lên VPS
+
+# Module reward-service nằm CHUNG repo admin_manager nhưng deploy ĐỘC LẬP với admin-server.
+# UI discord đã gộp vào admin-web → phần frontend do deploy.yml (paths admin-web/**) lo;
+# workflow này CHỈ deploy backend reward-service. Paths filter reward-service/** đảm bảo
+# sửa backend reward KHÔNG restart admin-server và ngược lại.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "reward-service/**"
+      - ".github/workflows/deploy-reward.yml"
+  workflow_dispatch:
+
+env:
+  DEPLOY_DIR: /srv/reward   # Tách hẳn /srv/admin.
+
+jobs:
+  test:
+    name: Pytest (Postgres thật)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ufsync_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cài deps
+        working-directory: reward-service
+        run: |
+          python -m pip install -q --upgrade pip
+          pip install -q -r requirements.txt
+      - name: Chạy test
+        working-directory: reward-service
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ufsync_test
+          JWT_SECRET: ci-test-secret
+          ADMIN_API_BASE: http://127.0.0.1:8421
+          REWARD_PORT: "8422"
+          REWARD_TOKEN_KEY: -FbRU-EMyEVu0_cMu1oGTYXxL467krFp1zcp7WGhljA=
+        run: python -m pytest tests/ -q
+
+  deploy:
+    name: Deploy backend
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cài SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+      - name: Thêm VPS vào known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+      - name: Đẩy reward-service lên VPS
+        run: |
+          rsync -az --delete \
+            --exclude='.env' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='.venv/' \
+            --exclude='.pytest_cache/' \
+            --exclude='tests/' \
+            reward-service/ \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.DEPLOY_DIR }}/
+      - name: Preflight, migrate & restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd ${{ env.DEPLOY_DIR }}
+            if [ ! -d .venv ]; then python3 -m venv .venv; fi
+            .venv/bin/pip install -q --upgrade pip
+            .venv/bin/pip install -q -r requirements.txt
+            set -a; source .env; set +a
+            .venv/bin/python scripts/check-env.py
+            .venv/bin/python -m store.migrate
+            if pm2 list | grep -q ufreward; then
+              pm2 restart ufreward
+            else
+              pm2 start run.sh --name ufreward --interpreter bash
+              pm2 save
+            fi
+            sleep 3
+            curl -fsS "http://127.0.0.1:${REWARD_PORT:-8422}/v1/reward/health" > /dev/null
+            echo "✅ Deploy reward-service xong, health OK."

@@ -9,9 +9,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  Check, Copy, Key, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, UserX, UserCheck, X,
+  Bot, Check, Copy, Key, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, UserX, UserCheck, X,
 } from "lucide-react";
 import { adminApi, type InviteKey, type Account } from "../api";
+import { adminApi as rewardAdminApi } from "../reward/api";
 import { Button } from "../components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -332,6 +333,25 @@ function AccountsTab() {
     }
   };
 
+  // Cấp/thu hồi quyền discord — đi qua reward-service (admin-server chỉ nhận viewer|admin nên
+  // KHÔNG thể set role='discord' qua API của nó; reward-service UPDATE trực tiếp accounts.role).
+  const handleToggleDiscord = async (u: Account) => {
+    const granting = u.role !== "discord";
+    try {
+      if (granting) {
+        const r = await rewardAdminApi.grantDiscord(u.id);
+        setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, role: r.to_role } : x)));
+        toast.success(`Đã cấp quyền Discord cho ${u.username}`);
+      } else {
+        const r = await rewardAdminApi.revokeDiscord(u.id);
+        setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, role: r.to_role } : x)));
+        toast.success(`Đã thu hồi quyền Discord của ${u.username}`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Thao tác Discord thất bại");
+    }
+  };
+
   const editInput = "h-7 rounded border border-border bg-elev-1 px-2 text-sm outline-none focus:border-primary";
 
   return (
@@ -440,6 +460,15 @@ function AccountsTab() {
                               title="Chỉnh sửa"
                             >
                               <Pencil className="size-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleToggleDiscord(u)}
+                              title={u.role === "discord" ? "Thu hồi quyền Discord" : "Cấp quyền Discord"}
+                              className={u.role === "discord" ? "text-indigo-500 hover:text-indigo-600" : "text-muted-foreground hover:text-indigo-500"}
+                            >
+                              <Bot className="size-4" />
                             </Button>
                             <Button
                               variant="ghost"

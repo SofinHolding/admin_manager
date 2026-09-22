@@ -97,6 +97,29 @@ async function apiFetch<T = unknown>(url: string, init?: RequestInit): Promise<T
   return r.json();
 }
 
+/** Token truy cập hiện tại — module reward dùng cho SSE/CSV (fetch thủ công có Authorization). */
+export function getAccessToken(): string {
+  return _accessToken;
+}
+
+/** Fetch raw (không parse JSON) — tự gắn Authorization + refresh 401 một lần. Dùng cho SSE/CSV. */
+export async function apiFetchRaw(url: string, init?: RequestInit): Promise<Response> {
+  const headers: Record<string, string> = { ...(init?.headers as Record<string, string> || {}) };
+  if (_accessToken) headers["Authorization"] = `Bearer ${_accessToken}`;
+  let r = await fetch(url, { ...init, headers });
+  if (r.status === 401 && _refreshToken) {
+    const ok = await tryRefresh();
+    if (ok) {
+      headers["Authorization"] = `Bearer ${_accessToken}`;
+      r = await fetch(url, { ...init, headers });
+    } else {
+      _onSessionExpired?.();
+      throw new Error("Phiên đã hết hạn");
+    }
+  }
+  return r;
+}
+
 // ── Auth API (không cần JWT) ────────────────────────────────────────────────
 
 export const authApi = {
