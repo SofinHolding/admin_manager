@@ -302,6 +302,11 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
                 if counts != last_counts:
                     last_counts = counts
                     yield f"event: counts\ndata: {json.dumps(counts)}\n\n"
+                    # Counts đổi = có item vừa đổi trạng thái. Phát thêm `item` để trang chi tiết
+                    # refetch bảng item + job — nếu chỉ dựa vào 4 loại event bên dưới thì bảng item
+                    # KHÔNG BAO GIỜ tự cập nhật lúc job chạy bình thường (job_runner không ghi
+                    # reward_job_events cho từng item finalize, chỉ ghi cho auto_pause/stop/...).
+                    yield f"event: item\ndata: {json.dumps({'type': 'counts_changed'}, default=str)}\n\n"
                 if job["status"] != last_status:
                     last_status = job["status"]
                     yield f"event: job\ndata: {json.dumps({'status': job['status']})}\n\n"

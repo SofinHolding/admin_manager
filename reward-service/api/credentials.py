@@ -38,7 +38,10 @@ class CredentialsBody(BaseModel):
     channel_id: str
     command_name: str = "give-xp"
     confirm_mode: str = "reply"
-    success_pattern: str | None = None
+    # Mặc định khớp câu trả lời thật của Axolink Management ("N XP has been given to @user") —
+    # đã hiệu chuẩn từ dữ liệu Discord thật. User để trống ô Success pattern trên UI vẫn hoạt động
+    # đúng ngay, không cần tự gõ regex. Vẫn sửa được nếu đổi sang bot khác có định dạng trả lời khác.
+    success_pattern: str | None = r"\d+\s*XP has been given to"
     failure_pattern: str | None = None
     leveling_bot_id: str | None = None
     delay_ms: int = Field(3000, ge=0)

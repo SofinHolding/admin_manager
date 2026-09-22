@@ -36,13 +36,18 @@ interface FormState {
   jitter_ms: string;
 }
 
+// Mặc định khớp câu trả lời thật của Axolink Management ("N XP has been given to @user") — user
+// không cần tự gõ regex. Áp dụng cả khi tạo mới (EMPTY_FORM) lẫn khi tải lại 1 credential cũ đang
+// thiếu pattern (load() bên dưới, dùng `||` chứ không phải `??` để tự phục hồi cả trường hợp rỗng).
+const DEFAULT_SUCCESS_PATTERN = "\\d+\\s*XP has been given to";
+
 const EMPTY_FORM: FormState = {
   token: "",
   guild_id: "",
   channel_id: "",
   command_name: "give-xp",
   confirm_mode: "reply",
-  success_pattern: "",
+  success_pattern: DEFAULT_SUCCESS_PATTERN,
   failure_pattern: "",
   leveling_bot_id: "",
   delay_ms: "1200",
@@ -70,7 +75,7 @@ export default function CredentialsPage() {
           channel_id: d.channel_id ?? "",
           command_name: d.command_name ?? "give-xp",
           confirm_mode: d.confirm_mode ?? "reply",
-          success_pattern: d.success_pattern ?? "",
+          success_pattern: d.success_pattern || DEFAULT_SUCCESS_PATTERN,
           failure_pattern: d.failure_pattern ?? "",
           leveling_bot_id: d.leveling_bot_id ?? "",
           delay_ms: String(d.delay_ms ?? 1200),
