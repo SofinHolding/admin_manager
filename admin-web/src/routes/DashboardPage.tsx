@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Filter } from "lucide-react";
+import { AlertTriangle, ExternalLink, Filter } from "lucide-react";
 import {
   Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -23,6 +23,7 @@ import {
   type CountryViewsSeries,
   type TopChannel,
   type TrafficMetricKey,
+  type TrafficMetricPoint,
   type TrafficMetricSeries,
   type Platform,
 } from "../api";
@@ -54,6 +55,17 @@ const shortDay = (iso: string) => (iso.length >= 10 ? `${iso.slice(8, 10)}/${iso
 type TipValue = number | string | readonly (number | string)[] | undefined;
 const asNum = (v: TipValue): number | null => (typeof v === "number" ? v : null);
 const tipViews = (v: TipValue) => fmtNum(asNum(v));
+
+/** Từ id dạng "page:<numeric>" hoặc "profile:<numeric>" → link Facebook (dùng profile.php?id để
+ * cover cả page lẫn trang cá nhân qua cùng một dạng URL). Trả null nếu id không phải FB. */
+function fbLink(id: string): string | null {
+  const sep = id.indexOf(":");
+  if (sep < 0) return null;
+  const kind = id.slice(0, sep);
+  const fid  = id.slice(sep + 1);
+  if (!fid || (kind !== "page" && kind !== "profile")) return null;
+  return `https://www.facebook.com/profile.php?id=${fid}`;
+}
 
 function useThemeColors() {
   const read = useCallback(() => {
@@ -387,6 +399,31 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope }: {
   };
 
   const rows = data?.days ?? [];
+
+  /** Dot renderer cho recharts Line — chỉ vẽ chấm + nhãn giá trị tại đỉnh cục bộ.
+   * Đỉnh cục bộ: điểm có giá trị LỚN HƠN cả hai hàng xóm (biên = không có hàng xóm → tính là đỉnh).
+   * Màu nhãn = màu đường (tham số `clr`), khớp legend. */
+  const peakDot = (k: TrafficMetricKey, clr: string) =>
+    (props: { cx?: number; cy?: number; index?: number; payload?: TrafficMetricPoint }) => {
+      const { cx, cy, index, payload } = props;
+      if (cx == null || cy == null || index == null || !payload) return <g />;
+      const v = payload[k];
+      if (v == null || v === 0) return <g />;
+      const pv = rows[index - 1]?.[k];
+      const nv = rows[index + 1]?.[k];
+      if ((pv != null && v <= pv) || (nv != null && v <= nv)) return <g />;
+      // Nhãn: mặc định trên chấm, cạnh mép trên → dịch xuống dưới
+      const ty = cy < 18 ? cy + 14 : cy - 6;
+      return (
+        <g>
+          <circle cx={cx} cy={cy} r={3} fill={clr} stroke="none" />
+          <text x={cx} y={ty} textAnchor="middle" fontSize={9} fontWeight="600"
+                fill={clr} style={{ fontVariantNumeric: "tabular-nums" }}>
+            {v.toLocaleString("vi-VN")}
+          </text>
+        </g>
+      );
+    };
   const pie = useMemo(
     () => shown.map((k) => ({ key: k, name: label(k), value: data?.totals?.[k] ?? 0, fill: color(k) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -496,7 +533,9 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope }: {
                          fill={color(k)} {...(onRight ? { barSize: 10, radius: [2, 2, 0, 0] as [number, number, number, number] } : {})} />
                   ) : (
                     <Line key={k} yAxisId={yAxisIdOf(k)} type="monotone" dataKey={k} name={label(k)}
-                          stroke={color(k)} strokeWidth={2} dot={false} />
+                          stroke={color(k)} strokeWidth={2}
+                          dot={peakDot(k, color(k))}
+                          activeDot={{ r: 4, strokeWidth: 0, fill: color(k) }} />
                   );
                 })}
               </ComposedChart>
@@ -555,6 +594,19 @@ function TopChannelsCard({ items, loading, country, limit, onLimit }: {
               <div key={it.id} className="flex items-center gap-2 text-[13px]">
                 <span className="w-28 shrink-0 truncate" title={it.name}>{it.name}</span>
                 <PlatformTag platform={it.platform} />
+                {it.platform === "facebook" && fbLink(it.id) ? (
+                  <a
+                    href={fbLink(it.id)!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 text-muted-foreground/50 hover:text-[oklch(0.55_0.11_218)] transition-colors"
+                    title={`Mở Facebook: ${it.name}`}
+                  >
+                    <ExternalLink className="size-3" />
+                  </a>
+                ) : (
+                  <span className="size-3 shrink-0" />
+                )}
                 <span className="w-6 shrink-0 text-[11px] text-muted-foreground">{it.country || "—"}</span>
                 <div className="h-4 flex-1 overflow-hidden rounded bg-elev-2">
                   <div className="h-full rounded" style={{
