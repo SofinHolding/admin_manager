@@ -12,7 +12,9 @@ SQLite cho test: cùng lý do với `server/db.py` — toàn bộ auth flow ch�
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -24,6 +26,7 @@ from typing import Any
 
 import stats_core
 
+logger = logging.getLogger("admin.db")
 
 # ── DDL bảng MỚI (admin-server sở hữu) ────────────────────────────────────────
 #
@@ -181,6 +184,7 @@ class Db:
                            limit: int = 15) -> list[dict]: ...
     async def views_by_country(self, date_from: str, date_to: str) -> dict: ...
     async def country_tags(self) -> list[str]: ...
+    async def doc_version(self) -> str: ...
 
 
 # ── SQLite ──────────────────────────────────────────────────────────────────────
@@ -644,6 +648,18 @@ class SqliteDb(Db):
         chans = self._yt_channels_meta()
         return stats_core.country_tags(channel_meta=chans, target_country=tc)
 
+    async def doc_version(self) -> str:
+        """Con dấu phiên bản kho `documents` — đổi khi có ghi mới.
+
+        Bản SQLite dùng cho dev/test: `import_local_data.py` xoá sạch rồi nạp lại nên cả số bản
+        ghi lẫn `MAX(rev)` đều đổi. Bảng chưa tồn tại → `_safe_docs_query` trả [] → mốc cố định,
+        lúc đó TTL của cache là thứ duy nhất giới hạn tuổi dữ liệu."""
+        rows = self._safe_docs_query(
+            "SELECT COUNT(*) AS n, COALESCE(MAX(rev), 0) AS r FROM documents", ())
+        if not rows:
+            return "na"
+        return f"{rows[0]['n']}.{rows[0]['r']}"
+
 
 # ── Postgres ────────────────────────────────────────────────────────────────────
 
@@ -1057,6 +1073,23 @@ class PostgresDb(Db):
         chans = await self._yt_channels_meta_pg()
         return stats_core.country_tags(channel_meta=chans, target_country=tc)
 
+    async def doc_version(self) -> str:
+        """Con dấu phiên bản kho `documents` — đổi khi và chỉ khi sync server ghi bản ghi mới.
+
+        `revs.next_rev` tăng đúng một lần cho MỖI lần ghi document (`server/db.py` `next_rev`),
+        nên tổng của cột đó là con dấu cho toàn bộ kho. `revs` chỉ một dòng mỗi license nên quét
+        hết bảng vẫn dưới 1ms — rẻ hơn nhiều so với việc phục vụ số liệu cũ.
+
+        Bảng `revs` do sync server tạo. CSDL sạch (sync server chưa chạy lần nào) → trả mốc cố
+        định thay vì nổ lỗi; khi đó TTL là thứ duy nhất giới hạn tuổi cache."""
+        try:
+            async with self._pool.acquire() as c:
+                v = await c.fetchval("SELECT COALESCE(SUM(next_rev), 0) FROM revs")
+            return str(int(v or 0))
+        except Exception as e:  # noqa: BLE001 — thiếu bảng/lỗi tạm thời không được làm hỏng request
+            logger.debug("doc_version that bai, dung moc co dinh: %s", e)
+            return "na"
+
 
 # ── LocalFileDb — đọc thẳng data/*.json, cùng nguồn với Electron ────────────────
 #
@@ -1189,6 +1222,25 @@ class LocalFileDb(SqliteDb):
                 out.append({"id": cid, "title": ch.get("title") or "",
                             "country": ch.get("country") or ""})
         return out
+
+    # Tên file khớp đúng các `_read_json` ở trên — đổi danh sách này khi thêm nguồn đọc mới,
+    # nếu không cache sẽ không thấy file mới thay đổi.
+    _VIEWER_FILES = ("fb_posts.json", "yt_insights_daily.json", "repost_events.json",
+                     "repost_pairings.json", "repost_groups.json", "fb_page_meta.json",
+                     "fb_pages.json", "yt_channels.json")
+
+    async def doc_version(self) -> str:
+        """Dev mode: con dấu từ (mtime, size) của các file JSON mà viewer thực sự đọc.
+
+        Electron ghi đè file → mtime đổi → con dấu đổi → cache tự vô hiệu."""
+        parts: list[str] = []
+        for name in self._VIEWER_FILES:
+            try:
+                st = os.stat(os.path.join(self._data_dir, name))
+                parts.append(f"{st.st_mtime_ns}:{st.st_size}")
+            except OSError:
+                parts.append("-")
+        return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
 # ── Factory ─────────────────────────────────────────────────────────────────────

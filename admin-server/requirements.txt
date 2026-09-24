@@ -5,3 +5,4 @@ asyncpg>=0.29
 bcrypt>=4.1
 pyjwt>=2.8
 pydantic[email]>=2.7
+redis>=5.0

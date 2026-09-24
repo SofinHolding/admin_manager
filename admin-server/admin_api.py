@@ -39,7 +39,7 @@ class UpdateUserBody(BaseModel):
     role: str | None = Field(None, pattern=r"^(viewer|admin)$")
 
 
-def make_router(db: Db, decode_token) -> APIRouter:
+def make_router(db: Db, decode_token, cache) -> APIRouter:
     router = APIRouter(prefix="/v1/admin", tags=["admin"])
 
     async def require_admin(authorization: str = Header("")) -> dict:
@@ -141,5 +141,14 @@ def make_router(db: Db, decode_token) -> APIRouter:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Tài khoản không tồn tại")
         logger.info("Xoa user %s", user_id)
         return {"ok": True}
+
+    # ── Cache ──────────────────────────────────────────────────────────────────
+
+    @router.post("/cache/flush", summary="Xoá cache Redis — ép tổng hợp lại từ PostgreSQL")
+    async def flush_cache(_: dict = Admin) -> dict:
+        """Lối thoát cho cửa sổ làm mới 5 phút: admin bấm là số liệu tính lại ngay."""
+        removed = await cache.invalidate_all()
+        logger.info("Xoa cache Redis: %d key", removed)
+        return {"ok": True, "removed": removed, "enabled": cache.ready}
 
     return router

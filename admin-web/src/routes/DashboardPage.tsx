@@ -10,13 +10,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, ExternalLink, Filter } from "lucide-react";
+import { AlertTriangle, ExternalLink, Filter, RefreshCw } from "lucide-react";
 import {
-  Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, Pie, PieChart,
+  Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, LabelList, Line, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
   viewerApi,
+  adminApi,
   type AnalyticsMetric,
   type AnalyticsSummary,
   type CountryTag,
@@ -34,6 +35,7 @@ import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
+import { useAuth } from "../auth";
 
 // ── Helpers (copy từ AnalyticsView — cùng logic, cùng output) ──────────────
 
@@ -51,6 +53,14 @@ const fmtNum = (n: number | null | undefined) =>
   n === null || n === undefined ? "–" : n.toLocaleString("vi-VN");
 
 const shortDay = (iso: string) => (iso.length >= 10 ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : iso);
+
+/** Số rút gọn cho nhãn cột — tránh tràn khi cột hẹp */
+const shortNum = (v: number): string => {
+  if (!v) return "";
+  if (v >= 1_000_000) return `${+(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${+(v / 1_000).toFixed(1)}K`;
+  return v.toLocaleString("vi-VN");
+};
 
 type TipValue = number | string | readonly (number | string)[] | undefined;
 const asNum = (v: TipValue): number | null => (typeof v === "number" ? v : null);
@@ -175,6 +185,10 @@ export default function DashboardPage() {
   const [scope, setScope] = useState<"" | "youtube" | "facebook">("");
   const [topLimit, setTopLimit] = useState(15);
 
+  const { user } = useAuth();
+  const [reloadKey, setReloadKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+
   // Data
   const [tags, setTags] = useState<CountryTag[]>([]);
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
@@ -200,10 +214,10 @@ export default function DashboardPage() {
   // Tải tags quốc gia từ data (thay cho CountryTagManager)
   useEffect(() => {
     viewerApi.countryTags().then((d) => setTags(d.items)).catch(() => setTags([]));
-  }, []);
+  }, [reloadKey]);
   useEffect(() => {
     viewerApi.metrics().then((d) => setMetricList(d.metrics)).catch(() => setMetricList([]));
-  }, []);
+  }, [reloadKey]);
 
   // Summary
   useEffect(() => {
@@ -212,7 +226,7 @@ export default function DashboardPage() {
       .then((d) => { setSummary(d); setError(""); })
       .catch((e) => { setSummary(null); bao_loi(e); })
       .finally(() => setLSummary(false));
-  }, [from, to, country, bao_loi]);
+  }, [from, to, country, bao_loi, reloadKey]);
 
   // Traffic
   useEffect(() => {
@@ -221,7 +235,7 @@ export default function DashboardPage() {
       .then((d) => { setTraffic(d); setError(""); })
       .catch((e) => { setTraffic(null); bao_loi(e); })
       .finally(() => setLTraffic(false));
-  }, [from, to, scope, country, bao_loi]);
+  }, [from, to, scope, country, bao_loi, reloadKey]);
 
   // Views by country
   useEffect(() => {
@@ -230,7 +244,7 @@ export default function DashboardPage() {
       .then((d) => { setByCountry(d); setError(""); })
       .catch((e) => { setByCountry(null); bao_loi(e); })
       .finally(() => setLByCountry(false));
-  }, [from, to, bao_loi]);
+  }, [from, to, bao_loi, reloadKey]);
 
   // Top channels (lazy)
   useEffect(() => {
@@ -240,13 +254,26 @@ export default function DashboardPage() {
       .then((d) => { setTop(d.items); setError(""); })
       .catch((e) => { setTop(null); bao_loi(e); })
       .finally(() => setLTop(false));
-  }, [topVisible, from, to, country, topLimit, bao_loi]);
+  }, [topVisible, from, to, country, topLimit, bao_loi, reloadKey]);
 
   const dirty = draftFrom !== from || draftTo !== to || draftCountry !== country;
   const applyFilter = () => {
     if (!dirty) return;
     const [a, b] = draftFrom <= draftTo ? [draftFrom, draftTo] : [draftTo, draftFrom];
     setDraftFrom(a); setDraftTo(b); setFrom(a); setTo(b); setCountry(draftCountry);
+  };
+
+  const lamMoi = async () => {
+    setRefreshing(true);
+    try {
+      await adminApi.flushCache();
+      setReloadKey((k) => k + 1);
+      toast.success("Đã tổng hợp lại từ cơ sở dữ liệu.");
+    } catch (e) {
+      toast.error(`Không làm mới được: ${(e as Error).message}`);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   return (
@@ -272,6 +299,14 @@ export default function DashboardPage() {
         <Button size="sm" variant={dirty ? "default" : "outline"} onClick={applyFilter} disabled={!dirty}>
           <Filter className="size-4" /> Lọc
         </Button>
+
+        {user?.role === "admin" && (
+          <Button size="sm" variant="outline" onClick={lamMoi} disabled={refreshing}
+                  title="Xoá cache và tổng hợp lại từ cơ sở dữ liệu">
+            <RefreshCw className={cn("size-4", refreshing && "animate-spin")} />
+            {refreshing ? "Đang làm mới…" : "Làm mới"}
+          </Button>
+        )}
       </div>
 
       {error && (
@@ -530,7 +565,11 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope }: {
                   const asBar = kind === "bar" || (kind === "mixed" && k === "videos");
                   return asBar ? (
                     <Bar key={k} yAxisId={onRight ? "right" : "left"} dataKey={k} name={label(k)}
-                         fill={color(k)} {...(onRight ? { barSize: 10, radius: [2, 2, 0, 0] as [number, number, number, number] } : {})} />
+                         fill={color(k)} {...(onRight ? { barSize: 10, radius: [2, 2, 0, 0] as [number, number, number, number] } : {})}>
+                      <LabelList dataKey={k} position="top"
+                                 formatter={(v: unknown) => typeof v === "number" ? shortNum(v) : ""}
+                                 style={{ fontSize: 9, fontWeight: 600, fill: color(k) }} />
+                    </Bar>
                   ) : (
                     <Line key={k} yAxisId={yAxisIdOf(k)} type="monotone" dataKey={k} name={label(k)}
                           stroke={color(k)} strokeWidth={2}
@@ -658,7 +697,11 @@ function CountryViewsCard({ data, loading, country }: {
                 <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
                 <Legend />
                 {shownCountries.map((name, i) => (
-                  <Bar key={name} dataKey={name} name={name} fill={c.ramp[i % c.ramp.length]} />
+                  <Bar key={name} dataKey={name} name={name} fill={c.ramp[i % c.ramp.length]}>
+                    <LabelList dataKey={name} position="top"
+                               formatter={(v: unknown) => typeof v === "number" ? shortNum(v) : ""}
+                               style={{ fontSize: 9, fontWeight: 600, fill: c.ramp[i % c.ramp.length] }} />
+                  </Bar>
                 ))}
               </BarChart>
             </ResponsiveContainer>

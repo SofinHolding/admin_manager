@@ -68,6 +68,7 @@ import auth  # noqa: E402
 import email_service  # noqa: E402
 import viewer  # noqa: E402
 from db import make_db  # noqa: E402
+import cache as cache_mod  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("admin")
@@ -84,12 +85,22 @@ else:
     _default_db_url = "sqlite:///./admin.db"  # fallback khi production chưa cấu hình
 DATABASE_URL = os.environ.get("DATABASE_URL", _default_db_url)
 
-_db = make_db(DATABASE_URL, data_dir=DATA_DIR)
+REDIS_URL = os.environ.get("REDIS_URL", "")
+CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "1") not in ("0", "false", "False")
+CACHE_TTL = int(os.environ.get("CACHE_TTL", 3600))
+CACHE_VERSION_TTL = int(os.environ.get("CACHE_VERSION_TTL", 300))
+
+_cache = cache_mod.Cache(REDIS_URL, ttl=CACHE_TTL, version_ttl=CACHE_VERSION_TTL,
+                         enabled=CACHE_ENABLED)
+# Bọc NGOÀI CÙNG: auth/admin_api/viewer đều nhận cùng một đối tượng, nên không callsite nào lọt
+# ra ngoài tầng cache.
+_db = cache_mod.CachedDb(make_db(DATABASE_URL, data_dir=DATA_DIR), _cache)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _db.setup()
+    await _cache.connect()
     if MODE == "dev":
         logger.info("Admin server khoi dong — MODE=dev, doc data tu: %s",
                     os.path.abspath(DATA_DIR))
@@ -99,6 +110,7 @@ async def lifespan(app: FastAPI):
                     else "sqlite")
     yield
     await _db.close()
+    await _cache.close()
 
 
 app = FastAPI(title="Admin web server", lifespan=lifespan)
@@ -123,7 +135,8 @@ app.include_router(auth.make_router(
     send_reset_email=email_service.send_reset_email,
 ))
 app.include_router(viewer.make_router(_db, decode_token=auth._decode_access_token))
-app.include_router(admin_api.make_router(_db, decode_token=auth._decode_access_token))
+app.include_router(admin_api.make_router(_db, decode_token=auth._decode_access_token,
+                                         cache=_cache))
 
 
 @app.get("/v1/health", include_in_schema=False)

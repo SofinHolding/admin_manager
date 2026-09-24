@@ -330,6 +330,10 @@ export const adminApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+
+  flushCache: () =>
+    apiFetch<{ ok: boolean; removed: number; enabled: boolean }>("/v1/admin/cache/flush",
+      { method: "POST" }),
 };
 
 // ── Profile API (user tự quản lý) ──────────────────────────────────────────
