@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -33,6 +34,9 @@ class FakeDiscord:
     valid_tokens: dict[str, dict[str, Any]] | None = None
     """`None` ⇒ MỌI token coi là hợp lệ (trả `{"id":"u1","username":"tester"}`). Cung cấp dict ⇒
     CHỈ token có mặt trong dict mới `200`, còn lại `401` — dùng để test `credentials` verify."""
+    interaction_plan_by_token: dict[str, Any] | None = None
+    """Ghi đè kết quả `POST /interactions` THEO TOKEN (status lỗi `int`, hoặc `'hang'`) — dùng để mô phỏng
+    1 tài khoản bị Discord từ chối trong khi các tài khoản khác vẫn chạy."""
 
     def __post_init__(self) -> None:
         self.interactions: list[dict[str, Any]] = []
@@ -42,7 +46,8 @@ class FakeDiscord:
         self.app_id = APP_ID
         self.api_base = ""
         self.gateway_url = ""
-        self._seq = itertools.count(7000)
+        # id message dạng snowflake THẬT (ms kể từ 2015 << 22) để đối soát theo thời gian hoạt động y hệt Discord.
+        self._seq = itertools.count((int(time.time() * 1000) - 1420070400000) << 22)
         self._ok_count = 0
         self._app = self._build_app()
         self._server: uvicorn.Server | None = None
@@ -84,13 +89,16 @@ class FakeDiscord:
         async def interactions(request: Request) -> Response:
             if self.on_request:
                 self.on_request("POST", "/interactions")
-            self.interaction_tokens.append(request.headers.get("authorization") or "")
+            token = request.headers.get("authorization") or ""
+            self.interaction_tokens.append(token)
             payload = await request.json()
             self.interactions.append(payload)
             idx = len(self.interactions) - 1
             plan: Any = 204
             if self.interaction_plan:
                 plan = self.interaction_plan[min(idx, len(self.interaction_plan) - 1)]
+            if self.interaction_plan_by_token and token in self.interaction_plan_by_token:
+                plan = self.interaction_plan_by_token[token]
             if plan == "hang":
                 await asyncio.sleep(3600)
                 return Response(status_code=204)
@@ -107,10 +115,31 @@ class FakeDiscord:
             if rp:
                 rid = str(next(self._seq))
                 content = rp.get("text") or f"\u2705 {amount} XP has been given to <@!{member}>"
-                self.store.append({
+                msg = {
                     "id": rid, "author": {"bot": True, "id": rp.get("authorId") or APP_ID},
                     "content": "", "embeds": [{"description": content}],
-                })
+                }
+                defer_s = rp.get("defer_s")
+                if defer_s:
+                    # Mô phỏng interaction defer: tin "đang xử lý" RỖNG xuất hiện trước, bot điền nội dung sau.
+                    filled = msg["embeds"]
+                    msg = {**msg, "embeds": []}
+
+                    async def _fill(m: dict[str, Any] = msg, e: list = filled, d: float = defer_s) -> None:
+                        await asyncio.sleep(d)
+                        m["embeds"] = e
+
+                    asyncio.get_running_loop().create_task(_fill())
+                late_s = rp.get("late_s")
+                if late_s:
+                    # Reply tới MUỘN: chưa có tin nào trong cửa sổ xác nhận, bot mới đăng sau `late_s` giây.
+                    async def _post_late(m: dict[str, Any] = msg, d: float = late_s) -> None:
+                        await asyncio.sleep(d)
+                        self.store.append(m)
+
+                    asyncio.get_running_loop().create_task(_post_late())
+                else:
+                    self.store.append(msg)
             return Response(status_code=204)
 
         @app.get("/channels/{channel_id}/messages")

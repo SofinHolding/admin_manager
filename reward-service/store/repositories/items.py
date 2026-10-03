@@ -61,6 +61,50 @@ async def set_status(conn: asyncpg.Connection, item_id: int, status: str) -> Non
     await conn.execute("UPDATE reward_items SET status=$1 WHERE id=$2", status, item_id)
 
 
+async def list_unknown_for_reconcile(conn: asyncpg.Connection, job_id: int) -> list[dict[str, Any]]:
+    """Item `unknown` đã resolve được người nhận, kèm attempt gần nhất: `anchor` (id message neo, có thể NULL ở
+    attempt cũ) và `sent_at` (thời điểm gửi, hoặc lúc bắt đầu attempt nếu chưa có phản hồi HTTP)."""
+    rows = await conn.fetch(
+        """
+        SELECT i.*, a.id AS attempt_id, a.message_id AS anchor,
+               COALESCE(a.posted_at, a.started_at) AS sent_at
+        FROM reward_items i
+        JOIN LATERAL (
+            SELECT * FROM reward_attempts WHERE item_id = i.id ORDER BY id DESC LIMIT 1
+        ) a ON true
+        WHERE i.job_id = $1 AND i.status = 'unknown' AND i.resolved_user_id IS NOT NULL
+        ORDER BY i.row_index
+        """,
+        job_id)
+    return [dict(r) for r in rows]
+
+
+async def mark_reconciled(conn: asyncpg.Connection, item_id: int, result: str) -> None:
+    await conn.execute(
+        "UPDATE reward_items SET reconcile_result=$2, reconciled_at=now() WHERE id=$1", item_id, result)
+
+
+async def requeue_unconfirmed(conn: asyncpg.Connection, job_id: int) -> int:
+    """`unknown` đã được đối soát kết luận `no_reply` ⇒ `pending` (cho phép gửi lại). Trả số item được mở lại."""
+    rows = await conn.fetch(
+        """
+        UPDATE reward_items SET status='pending', failure_code=NULL, failure_message=NULL, finalized_at=NULL,
+               reconcile_result=NULL
+        WHERE job_id=$1 AND status='unknown' AND reconcile_result='no_reply'
+        RETURNING id
+        """,
+        job_id)
+    return len(rows)
+
+
+async def requeue(conn: asyncpg.Connection, item_id: int) -> None:
+    """Trả item về hàng đợi (`retrying`) KHÔNG tốn ngân sách retry — dùng khi token gửi bị Discord từ chối
+    (401/403/404: lệnh chưa hề được thực thi) và còn token khác để thử."""
+    await conn.execute(
+        "UPDATE reward_items SET status='retrying', attempt_count = GREATEST(attempt_count - 1, 0) WHERE id=$1",
+        item_id)
+
+
 async def finalize(
     conn: asyncpg.Connection, *, item_id: int, status: str, confirmation_level: str | None = None,
     failure_code: str | None = None, failure_message: str | None = None,

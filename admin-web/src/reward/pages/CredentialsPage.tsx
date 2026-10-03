@@ -1,14 +1,14 @@
 /**
- * Trang kết nối Discord — nhập token tài khoản người dùng + cấu hình lệnh slash để chạy job.
+ * Trang kết nối Discord — cấu hình lệnh slash + DANH SÁCH token tài khoản Discord để xoay vòng khi chạy job.
  *
- * Token chỉ dán một lần: PUT không bao giờ trả lại token, và trường token luôn để trống khi tải
- * lại trang (chỉ gửi khi người dùng nhập giá trị mới).
+ * Mỗi lệnh /give-xp đi qua một token chọn NGẪU NHIÊN (không dùng 1 token 2 lần liên tiếp); token bị Discord từ
+ * chối sẽ tự bị loại và item được gửi lại bằng token khác. Token chỉ dán một lần: API không bao giờ trả lại token.
  */
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Trash2, XCircle } from "lucide-react";
-import { credentialsApi, type CommandMeta, type CredentialInfo } from "../api";
+import { AlertTriangle, CheckCircle2, Loader2, Plus, Power, RefreshCw, Trash2, XCircle } from "lucide-react";
+import { credentialsApi, type CommandMeta, type CredentialInfo, type DiscordToken } from "../api";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
@@ -24,7 +24,6 @@ const STATUS_BADGE: Record<string, { label: string; variant: "success" | "destru
 };
 
 interface FormState {
-  token: string;
   guild_id: string;
   channel_id: string;
   command_name: string;
@@ -42,7 +41,6 @@ interface FormState {
 const DEFAULT_SUCCESS_PATTERN = "\\d+\\s*XP has been given to";
 
 const EMPTY_FORM: FormState = {
-  token: "",
   guild_id: "",
   channel_id: "",
   command_name: "give-xp",
@@ -62,6 +60,10 @@ export default function CredentialsPage() {
   const [verifying, setVerifying] = useState(false);
   const [command, setCommand] = useState<CommandMeta | null>(null);
   const [regexSample, setRegexSample] = useState("");
+  const [newToken, setNewToken] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [busyToken, setBusyToken] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -70,7 +72,6 @@ export default function CredentialsPage() {
       setInfo(d);
       if (d.exists) {
         setForm({
-          token: "",
           guild_id: d.guild_id ?? "",
           channel_id: d.channel_id ?? "",
           command_name: d.command_name ?? "give-xp",
@@ -104,7 +105,6 @@ export default function CredentialsPage() {
     setSaving(true);
     try {
       const result = await credentialsApi.put({
-        token: form.token.trim() || undefined,
         guild_id: form.guild_id.trim(),
         channel_id: form.channel_id.trim(),
         command_name: form.command_name.trim(),
@@ -115,9 +115,9 @@ export default function CredentialsPage() {
         delay_ms: Number(form.delay_ms) || undefined,
         jitter_ms: Number(form.jitter_ms) || undefined,
       });
-      toast.success("Đã lưu cấu hình kết nối Discord");
       setCommand(result.command);
-      set("token", "");
+      if (result.status === "valid") toast.success("Đã lưu cấu hình kết nối Discord");
+      else toast.warning(result.last_error || "Đã lưu nhưng cấu hình chưa hợp lệ — kiểm tra Guild ID / token");
       await load();
     } catch (err) {
       toast.error((err as Error).message);
@@ -131,12 +131,48 @@ export default function CredentialsPage() {
     try {
       const result = await credentialsApi.verify();
       setCommand(result.command);
-      toast.success(`Kết nối OK — Discord: ${result.discord_username}`);
+      const ok = result.tokens.filter((t) => t.enabled && t.status === "valid").length;
+      if (result.status === "valid") toast.success(`Kết nối OK — ${ok}/${result.tokens.length} token dùng được`);
+      else toast.error(result.last_error || "Không có token nào dùng được");
       await load();
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
       setVerifying(false);
+    }
+  };
+
+  const handleAddToken = async () => {
+    if (!newToken.trim()) {
+      toast.error("Hãy dán token Discord");
+      return;
+    }
+    setAdding(true);
+    try {
+      const r = await credentialsApi.addToken({ token: newToken.trim(), label: newLabel.trim() || undefined });
+      if (r.command) setCommand(r.command);
+      if (r.token.status === "valid") toast.success(`Đã thêm token: ${r.token.discord_username ?? r.token.label}`);
+      else toast.warning(r.token.last_error || "Đã thêm token nhưng chưa dùng được");
+      setNewToken("");
+      setNewLabel("");
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const tokenAction = async (t: DiscordToken, fn: () => Promise<unknown>, okMsg: string) => {
+    setBusyToken(t.id);
+    try {
+      await fn();
+      toast.success(okMsg);
+      await load();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusyToken(null);
     }
   };
 
@@ -163,6 +199,8 @@ export default function CredentialsPage() {
   }
 
   const statusInfo = info?.status ? STATUS_BADGE[info.status] : undefined;
+  const tokens = info?.tokens ?? [];
+  const usableTokens = tokens.filter((t) => t.enabled && t.status === "valid").length;
 
   return (
     <div className="flex flex-col gap-6">
@@ -191,21 +229,84 @@ export default function CredentialsPage() {
         <div className="text-sm text-muted-foreground">Đang tải…</div>
       ) : (
         <div className="glass grid gap-6 rounded-xl p-6 md:grid-cols-2">
-          <div className="flex flex-col gap-1.5 md:col-span-2">
-            <Label htmlFor="token">Discord token (dán một lần, không hiển thị lại)</Label>
-            <Input
-              id="token"
-              type="password"
-              autoComplete="off"
-              value={form.token}
-              onChange={(e) => set("token", e.target.value)}
-              placeholder={info?.exists ? "•••••••• (để trống nếu không đổi token)" : "Dán token tài khoản Discord"}
-            />
-            {info?.discord_username && (
+          <div className="flex flex-col gap-3 md:col-span-2">
+            <div className="flex items-center justify-between">
+              <Label>Tài khoản Discord xoay vòng ({usableTokens}/{tokens.length} dùng được)</Label>
               <p className="text-xs text-muted-foreground">
-                Tài khoản Discord đã xác thực: <span className="font-medium">{info.discord_username}</span>
+                Token được chọn ngẫu nhiên, xen kẽ. Khoảng cách giữa 2 lệnh ≈ (độ trễ + độ lệch/2) ÷ số token, ngẫu nhiên ±50%;
+                riêng từng token vẫn không gửi nhanh hơn độ trễ bên dưới.
+              </p>
+            </div>
+
+            {tokens.length === 0 && (
+              <p className="rounded-lg border border-border-strong bg-elev-1 p-3 text-sm text-muted-foreground">
+                Chưa có token nào. Thêm ít nhất một token bên dưới để chạy job.
               </p>
             )}
+
+            {tokens.map((t) => {
+              const badge = STATUS_BADGE[t.status] ?? STATUS_BADGE.unverified;
+              return (
+                <div key={t.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border-strong bg-elev-1 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {t.label || t.discord_username || `#${t.id}`}
+                      {t.discord_username && t.label && t.label !== t.discord_username && (
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">@{t.discord_username}</span>
+                      )}
+                    </p>
+                    {t.last_error && t.status !== "valid" && (
+                      <p className="truncate text-xs text-destructive" title={t.last_error}>{t.last_error}</p>
+                    )}
+                  </div>
+                  <Badge variant={badge.variant}>{badge.label}</Badge>
+                  {!t.enabled && <Badge variant="secondary">Đang tắt</Badge>}
+                  <Button
+                    size="sm" variant="outline" disabled={busyToken === t.id}
+                    onClick={() => tokenAction(t, () => credentialsApi.verifyToken(t.id), "Đã kiểm tra lại token")}
+                    title="Kiểm tra lại token"
+                  >
+                    {busyToken === t.id ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                  </Button>
+                  <Button
+                    size="sm" variant="outline" disabled={busyToken === t.id}
+                    onClick={() => tokenAction(
+                      t, () => credentialsApi.patchToken(t.id, { enabled: !t.enabled }),
+                      t.enabled ? "Đã tắt token" : "Đã bật token",
+                    )}
+                    title={t.enabled ? "Tắt (không tham gia xoay vòng)" : "Bật"}
+                  >
+                    <Power className="size-4" />
+                  </Button>
+                  <Button
+                    size="sm" variant="destructive" disabled={busyToken === t.id}
+                    onClick={() => {
+                      if (confirm("Xoá token này khỏi danh sách xoay vòng?")) {
+                        tokenAction(t, () => credentialsApi.deleteToken(t.id), "Đã xoá token");
+                      }
+                    }}
+                    title="Xoá token"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              );
+            })}
+
+            <div className="grid gap-2 rounded-lg border border-dashed border-border-strong p-3 md:grid-cols-[1fr_2fr_auto]">
+              <Input
+                value={newLabel} onChange={(e) => setNewLabel(e.target.value)}
+                placeholder="Nhãn (tuỳ chọn)" aria-label="Nhãn token"
+              />
+              <Input
+                type="password" autoComplete="off" value={newToken} onChange={(e) => setNewToken(e.target.value)}
+                placeholder="Dán token Discord (chỉ hiển thị một lần)" aria-label="Discord token"
+              />
+              <Button onClick={handleAddToken} disabled={adding}>
+                {adding ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+                Thêm token
+              </Button>
+            </div>
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -240,7 +341,7 @@ export default function CredentialsPage() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="delay_ms">Độ trễ giữa các lệnh (ms)</Label>
+            <Label htmlFor="delay_ms">Độ trễ giữa các lệnh của mỗi token (ms)</Label>
             <Input id="delay_ms" type="number" value={form.delay_ms} onChange={(e) => set("delay_ms", e.target.value)} />
           </div>
 

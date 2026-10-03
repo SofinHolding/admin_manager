@@ -45,11 +45,21 @@ export interface RewardUser {
   discord_username: string;
 }
 
+export interface DiscordToken {
+  id: number;
+  label: string;
+  discord_user_id: string | null;
+  discord_username: string | null;
+  status: "valid" | "invalid" | "unverified" | string;
+  enabled: boolean;
+  last_error: string | null;
+  verified_at: string | null;
+  last_used_at: string | null;
+}
+
 export interface CredentialInfo {
   exists: boolean;
   status: "valid" | "invalid" | "unverified" | "revoked" | string;
-  discord_user_id: string;
-  discord_username: string;
   guild_id: string;
   channel_id: string;
   command_name: string;
@@ -61,10 +71,10 @@ export interface CredentialInfo {
   jitter_ms: number;
   verified_at: string;
   last_error: string;
+  tokens: DiscordToken[];
 }
 
 export interface CredentialPutBody {
-  token?: string;
   guild_id: string;
   channel_id: string;
   command_name: string;
@@ -89,8 +99,15 @@ export interface CommandMeta {
 export interface CredentialResult {
   ok: boolean;
   status: string;
-  discord_username: string;
-  command: CommandMeta;
+  last_error: string | null;
+  command: CommandMeta | null;
+  tokens: DiscordToken[];
+}
+
+export interface TokenResult {
+  ok: boolean;
+  token: DiscordToken;
+  command: CommandMeta | null;
 }
 
 export interface ValidationIssue {
@@ -168,6 +185,20 @@ export interface JobAttempt {
   created_at: string;
 }
 
+export interface ReconcileSummary {
+  checked: number;
+  success: number;
+  failed: number;
+  no_reply: number;
+  waiting: number;
+  inconclusive: number;
+}
+
+export interface ReconcileResult {
+  summary: ReconcileSummary;
+  counts: JobCounts;
+}
+
 export interface JobEvent {
   id: number;
   kind: string;
@@ -217,6 +248,12 @@ export const credentialsApi = {
   put: (body: CredentialPutBody) => rj<CredentialResult>("credentials", { method: "PUT", body: JSON.stringify(body) }),
   verify: () => rj<CredentialResult>("credentials/verify", { method: "POST" }),
   delete: () => rj<{ ok: boolean }>("credentials", { method: "DELETE" }),
+  addToken: (body: { token: string; label?: string }) =>
+    rj<TokenResult>("credentials/tokens", { method: "POST", body: JSON.stringify(body) }),
+  patchToken: (id: number, body: { label?: string; enabled?: boolean }) =>
+    rj<TokenResult>(`credentials/tokens/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  verifyToken: (id: number) => rj<TokenResult>(`credentials/tokens/${id}/verify`, { method: "POST" }),
+  deleteToken: (id: number) => rj<{ ok: boolean }>(`credentials/tokens/${id}`, { method: "DELETE" }),
 };
 
 // ── Jobs API ─────────────────────────────────────────────────────────────
@@ -261,6 +298,13 @@ export const jobsApi = {
   pause: (id: string) => rj<{ status: string }>(`jobs/${id}/pause`, { method: "POST" }),
   resume: (id: string) => rj<{ status: string }>(`jobs/${id}/resume`, { method: "POST" }),
   stop: (id: string) => rj<{ status: string }>(`jobs/${id}/stop`, { method: "POST" }),
+
+  /** Đối soát item `unknown` với lịch sử kênh Discord: reply thật tìm thấy ⇒ success (không gửi lại). */
+  reconcile: (id: string) => rj<ReconcileResult>(`jobs/${id}/reconcile`, { method: "POST" }),
+  /** Đối soát rồi mở lại (pending) các item đã CHỨNG MINH không có reply — để Tiếp tục gửi lại an toàn. */
+  retryUnknown: (id: string) => rj<ReconcileResult & { requeued: number; status: string }>(
+    `jobs/${id}/retry-unknown`, { method: "POST" },
+  ),
 
   resolveItem: (id: string, itemId: string, to: "success" | "pending", note?: string) =>
     rj<{ ok: boolean; status: string }>(`jobs/${id}/items/${itemId}/resolve`, {

@@ -57,6 +57,10 @@ async def set_status(
     await conn.execute(f"UPDATE reward_jobs SET {', '.join(sets)} WHERE id=${len(vals)}", *vals)
 
 
+async def set_success_pattern(conn: asyncpg.Connection, job_id: int, pattern: str) -> None:
+    await conn.execute("UPDATE reward_jobs SET success_pattern=$2 WHERE id=$1", job_id, pattern)
+
+
 async def set_totals(conn: asyncpg.Connection, job_id: int, total: int) -> None:
     await conn.execute("UPDATE reward_jobs SET total_items=$1 WHERE id=$2", total, job_id)
 

@@ -27,7 +27,7 @@ logger = logging.getLogger("reward.engine.confirmation")
 class ConfirmationConfig:
     api_base: str
     channel_id: str
-    read_authorization: str
+    # (token đọc kênh được truyền theo từng lần gọi `await_confirmation(authorization=...)`)
     confirm_mode: str  # 'off' | 'reply'
     confirm_timeout_s: float
     confirm_poll_interval_s: float
@@ -87,9 +87,10 @@ def _link_of(msg: dict[str, Any], message_id: str, item: dict[str, Any], expecte
 
 
 async def await_confirmation(
-    http_client: DiscordHttpClient, *, config: ConfirmationConfig, message_id: str,
+    http_client: DiscordHttpClient, *, config: ConfirmationConfig, authorization: str, message_id: str,
     item: dict[str, Any], expected_bot_id: str | None = None,
 ) -> ConfirmationResult:
+    """`authorization` = token của tài khoản vừa gửi lệnh (mỗi item có thể dùng token khác — xoay vòng)."""
     if config.confirm_mode == "off":
         return ConfirmationResult(status="unknown", confirmation_level="message_posted", failure_code="CONFIRM_DISABLED")
 
@@ -100,23 +101,36 @@ async def await_confirmation(
     last_unmatched: dict[str, Any] | None = None
     success_hits: list[dict[str, Any]] = []
     failure_hits: list[dict[str, Any]] = []
+    # Tin đã chốt (không phải bot / không liên kết / đã có nội dung) — bỏ qua khi quét lại.
+    settled: set[str] = set()
+    saw_empty_reply = False
 
     while time.monotonic() < deadline:
         res = await fetch_channel_messages(
             http_client, api_base=config.api_base, channel_id=config.channel_id,
-            authorization=config.read_authorization, limit=10, after=after)
+            authorization=authorization, limit=10, after=after)
         if res.ok and res.messages is not None:
             msgs = sorted(res.messages, key=lambda m: int(m["id"]))
+            # Reply của bot có thể là tin "đang xử lý" (interaction defer): lúc đầu content/embed RỖNG,
+            # vài giây sau bot mới điền nội dung vào CHÍNH tin đó. Không được chốt tin rỗng và không được
+            # đẩy con trỏ `after` qua nó — giữ con trỏ ngay trước tin rỗng cũ nhất để lần quét sau đọc lại.
+            oldest_empty: int | None = None
+            newest_seen = int(after)
             for m in msgs:
-                if int(m["id"]) > int(after):
-                    after = m["id"]
+                mid = m["id"]
+                newest_seen = max(newest_seen, int(mid))
+                if mid in settled:
+                    continue
                 author = m.get("author") or {}
                 if not author.get("bot"):
+                    settled.add(mid)
                     continue
                 if config.leveling_bot_id and author.get("id") != config.leveling_bot_id:
+                    settled.add(mid)
                     continue
                 link_mode = _link_of(m, message_id, item, expected_bot_id)
                 if not link_mode:
+                    settled.add(mid)
                     continue
 
                 saw_candidate = True
@@ -124,15 +138,20 @@ async def await_confirmation(
                 excerpt = text[:500]
                 last_excerpt = excerpt
                 if text.strip() == "":
-                    logger.warning(
-                        "[Reward] Reply của bot rỗng (content + embed) — có thể thiếu MESSAGE CONTENT INTENT.")
-                rec = {"message_id": m["id"], "author_id": author.get("id"), "excerpt": excerpt, "link_mode": link_mode}
+                    saw_empty_reply = True
+                    oldest_empty = int(mid) if oldest_empty is None else min(oldest_empty, int(mid))
+                    last_unmatched = {
+                        "message_id": mid, "author_id": author.get("id"), "excerpt": excerpt, "link_mode": link_mode}
+                    continue
+                settled.add(mid)
+                rec = {"message_id": mid, "author_id": author.get("id"), "excerpt": excerpt, "link_mode": link_mode}
                 if config.success_pattern and config.success_pattern.search(text):
                     success_hits.append(rec)
                 elif config.failure_pattern and config.failure_pattern.search(text):
                     failure_hits.append(rec)
                 else:
                     last_unmatched = rec
+            after = str(oldest_empty - 1) if oldest_empty is not None else str(newest_seen)
 
         if success_hits and failure_hits:
             break
@@ -156,6 +175,8 @@ async def await_confirmation(
             reply_message_id=r["message_id"], reply_author_id=r["author_id"],
             reply_excerpt=f"[multi] {r['excerpt']}", link_mode=r["link_mode"])
     if saw_candidate:
+        if saw_empty_reply and last_excerpt == "":
+            logger.warning("[Reward] Reply của bot vẫn rỗng (content + embed) sau %ss chờ.", config.confirm_timeout_s)
         r = last_unmatched or {}
         return ConfirmationResult(
             status="unknown", confirmation_level="bot_reply_unmatched", failure_code="BOT_REPLY_UNMATCHED",

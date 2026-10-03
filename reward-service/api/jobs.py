@@ -4,13 +4,14 @@
 Mô hình job đa người dùng: mỗi job thuộc đúng 1 `account_id`; cấu hình (guild/channel/command/
 pattern/timeouts) được CHỤP từ `reward_discord_credentials` + `overrides` vào `reward_jobs` lúc tạo
 — sửa credentials sau đó KHÔNG ảnh hưởng job đã tạo. Chạy job qua `engine/worker_manager.py`
-(D.3) — mỗi job 1 task nền + 1 `GatewaySession` riêng.
+(D.3) — mỗi job 1 task nền + 1 bể token (mỗi token 1 `GatewaySession` riêng).
 """
 
 from __future__ import annotations
 
 import asyncio
 import csv
+import dataclasses
 import datetime
 import hashlib
 import io
@@ -25,6 +26,7 @@ from pydantic import BaseModel, Field, model_validator
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
+from domain.defaults import DEFAULT_SUCCESS_PATTERN
 from domain.idempotency import item_key
 from domain.item_state import assert_transition
 from domain.parser import ParsedRow, normalize_username, parse_input, validate_rows
@@ -161,6 +163,9 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
         jitter_ms = ov.jitter_ms if ov.jitter_ms is not None else (cred["jitter_ms"] if cred else 500)
         max_item_retries = ov.max_item_retries if ov.max_item_retries is not None else 3
         unknown_pause_threshold = ov.unknown_pause_threshold if ov.unknown_pause_threshold is not None else 5
+        if confirm_mode == "reply" and not success_pattern:
+            # Pattern rỗng ⇒ MỌI item sẽ `unknown` (job chụp cấu hình lúc tạo) — dùng mặc định thay vì chụp rỗng.
+            success_pattern = DEFAULT_SUCCESS_PATTERN
 
         _validate_job_config(guild_id, channel_id, confirm_mode, success_pattern, failure_pattern)
 
@@ -312,7 +317,10 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
                     yield f"event: job\ndata: {json.dumps({'status': job['status']})}\n\n"
                 for ev in new_events:
                     last_event_id = max(last_event_id, ev["id"])
-                    if ev["type"] in ("auto_pause", "operator_resolve", "stopped", "recovery"):
+                    if ev["type"] in (
+                        "auto_pause", "operator_resolve", "stopped", "recovery", "token_disabled",
+                        "reconcile", "retry_unknown",
+                    ):
                         yield f"event: item\ndata: {json.dumps({'type': ev['type']}, default=str)}\n\n"
                 if job["status"] in ("completed", "stopped", "invalid"):
                     yield ": bye\n\n"
@@ -439,11 +447,60 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
                         point=item["point"], evidence={"level": "operator", "note": body.note})
             else:
                 await items_repo.set_status(conn, item_id, "pending")
+                if job["status"] == "completed":
+                    await jobs_repo.set_status(conn, job_id, "paused")  # job đã xong không chạy lại được; paused thì có
 
             await events_repo.add_event(
                 conn, job_id=job_id, type="operator_resolve", actor=ctx.account_id,
                 payload={"item_id": item_id, "to": body.to, "note": body.note})
         return {"ok": True, "status": body.to}
+
+    # ── Đối soát + gửi lại item `unknown` ───────────────────────────────────
+
+    async def _reconcile(job_id: int, job: dict[str, Any]) -> dict[str, Any]:
+        if job["status"] == "running" or worker_manager.is_running(job_id):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Job đang chạy — runner tự đối soát item unknown, hãy tạm dừng job trước")
+        try:
+            summary = await worker_manager.reconcile(job_id)
+        except CredentialInvalidError as exc:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 — lỗi mạng/Discord khi đọc lịch sử kênh
+            logger.exception("[Reward] Job %s: đối soát thất bại", job_id)
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Không đọc được lịch sử kênh Discord") from exc
+        return dataclasses.asdict(summary)
+
+    @router.post(
+        "/{job_id}/reconcile",
+        summary="Đối soát item 'unknown' với lịch sử kênh: reply thật tìm thấy ⇒ success (không gửi lại)")
+    async def reconcile_job(job_id: int, ctx: AuthContext = Active, _r: AuthContext = Reward) -> dict:
+        async with pool.acquire() as conn:
+            job = await _owned_job(conn, job_id, ctx)
+        summary = await _reconcile(job_id, job)
+        async with pool.acquire() as conn:
+            await events_repo.add_event(conn, job_id=job_id, type="reconcile", actor=ctx.account_id, payload=summary)
+            counts = await items_repo.counts(conn, job_id)
+        return {"summary": summary, "counts": counts}
+
+    @router.post(
+        "/{job_id}/retry-unknown",
+        summary="Đối soát rồi mở lại (pending) các item 'unknown' đã CHỨNG MINH không có reply — để gửi lại an toàn")
+    async def retry_unknown(job_id: int, ctx: AuthContext = Active, _r: AuthContext = Reward) -> dict:
+        async with pool.acquire() as conn:
+            job = await _owned_job(conn, job_id, ctx)
+        if job["status"] not in ("completed", "paused", "stopped"):
+            raise HTTPException(status.HTTP_409_CONFLICT, f"Không thể gửi lại ở trạng thái '{job['status']}'")
+        summary = await _reconcile(job_id, job)
+        async with pool.acquire() as conn, conn.transaction():
+            requeued = await items_repo.requeue_unconfirmed(conn, job_id)
+            if requeued and job["status"] == "completed":
+                await jobs_repo.set_status(conn, job_id, "paused")  # job đã xong không chạy lại được; paused thì có
+            await events_repo.add_event(
+                conn, job_id=job_id, type="retry_unknown", actor=ctx.account_id,
+                payload={**summary, "requeued": requeued})
+            counts = await items_repo.counts(conn, job_id)
+            final = await jobs_repo.get_job(conn, job_id)
+        return {"summary": summary, "requeued": requeued, "counts": counts, "status": final["status"]}
 
     # ── Xoá ──────────────────────────────────────────────────────────────────
 

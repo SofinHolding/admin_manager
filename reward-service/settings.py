@@ -30,6 +30,7 @@ class RewardSettings:
     confirm_timeout_s: float
     confirm_poll_interval_s: float
     unknown_pause_threshold: int
+    reconcile_grace_s: float
     discord_api_base: str
     discord_gateway_url: str
 
@@ -96,6 +97,8 @@ def load_settings() -> RewardSettings:
     confirm_timeout_s = _float("REWARD_CONFIRM_TIMEOUT_S", 15.0)
     confirm_poll_interval_s = _float("REWARD_CONFIRM_POLL_INTERVAL_S", 2.0)
     unknown_pause_threshold = _int("REWARD_UNKNOWN_PAUSE_THRESHOLD", 5)
+    # Item `unknown` chỉ bị kết luận "bot không trả lời" khi đã gửi ≥ ngần này giây mà kênh vẫn không có reply khớp.
+    reconcile_grace_s = _float("REWARD_RECONCILE_GRACE_S", 45.0)
     discord_api_base = os.environ.get("REWARD_API_BASE", "https://discord.com/api/v9").rstrip("/")
     discord_gateway_url = os.environ.get(
         "REWARD_GATEWAY_URL", "wss://gateway.discord.gg/?v=9&encoding=json")
@@ -113,6 +116,7 @@ def load_settings() -> RewardSettings:
         confirm_timeout_s=confirm_timeout_s,
         confirm_poll_interval_s=confirm_poll_interval_s,
         unknown_pause_threshold=unknown_pause_threshold,
+        reconcile_grace_s=reconcile_grace_s,
         discord_api_base=discord_api_base,
         discord_gateway_url=discord_gateway_url,
     )

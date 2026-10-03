@@ -112,6 +112,7 @@ async def db_conn():
         await conn.execute("DELETE FROM reward_role_audit")
         await conn.execute("DELETE FROM reward_jobs")
         await conn.execute("DELETE FROM reward_discord_credentials")
+        await conn.execute("DELETE FROM reward_discord_tokens")
         await conn.execute("DELETE FROM accounts")
         await conn.close()
 
@@ -146,12 +147,11 @@ async def seed_active_account_with_credential(
     conn: asyncpg.Connection, *, role: str = "discord", credential_status: str = "valid",
 ) -> str:
     """Chèn 1 account active + 1 `reward_discord_credentials` `status='valid'` — dùng cho test gọi
-    `JobRunner.run()`/`WorkerManager.start()` trực tiếp (bắt buộc từ khi thêm kiểm T2 mỗi vòng lặp,
-    C.5 #2). Trả `account_id`."""
+    `JobRunner.run()` trực tiếp (bắt buộc từ khi thêm kiểm T2 mỗi vòng lặp, C.5 #2). Token do test tự
+    dựng (`TokenPool`). Trả `account_id`."""
     row = await insert_account(conn, role=role, status="active")
     await conn.execute(
-        "INSERT INTO reward_discord_credentials (account_id, token_ciphertext, status) "
-        "VALUES ($1, 'test-ciphertext', $2)",
+        "INSERT INTO reward_discord_credentials (account_id, status) VALUES ($1, $2)",
         row["id"], credential_status,
     )
     return row["id"]

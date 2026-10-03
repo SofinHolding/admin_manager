@@ -31,7 +31,8 @@ async def test_health_ok(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
-    assert body["migration_version"] == "001_reward_init"
+    latest = sorted(p.stem for p in (Path(__file__).resolve().parents[1] / "store" / "migrations").glob("*.sql"))[-1]
+    assert body["migration_version"] == latest
     assert len(body["jwt_secret_fingerprint"]) == 8
 
 

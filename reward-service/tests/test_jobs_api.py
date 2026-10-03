@@ -40,6 +40,7 @@ async def client(db_conn, fake):
     os.environ["REWARD_CONFIRM_TIMEOUT_S"] = "1"
     os.environ["REWARD_CONFIRM_POLL_INTERVAL_S"] = "0.05"
     os.environ["REWARD_MAX_CONCURRENT_JOBS"] = "3"
+    os.environ["REWARD_RECONCILE_GRACE_S"] = "0"
     import importlib
     import main as main_module
     importlib.reload(main_module)
@@ -57,10 +58,13 @@ async def _setup_credential(client, db_conn, fake, *, channel: str, role: str = 
     resp = await client.put(
         "/v1/reward/credentials", headers=headers,
         json={
-            "token": f"tok-{account['id']}", "guild_id": GUILD, "channel_id": channel,
+            "guild_id": GUILD, "channel_id": channel,
             "command_name": fake.command_name, "confirm_mode": "reply", "success_pattern": "has been given",
         })
     assert resp.status_code == 200, resp.text
+    add = await client.post(
+        "/v1/reward/credentials/tokens", headers=headers, json={"token": f"tok-{account['id']}"})
+    assert add.status_code == 200, add.text
     return account, token, headers
 
 
@@ -268,12 +272,13 @@ async def test_token_never_leaks_into_logs_or_responses(client, db_conn, fake, c
     headers = {"Authorization": f"Bearer {token}"}
     put_resp = await client.put(
         "/v1/reward/credentials", headers=headers,
-        json={
-            "token": secret_token, "guild_id": GUILD, "channel_id": "999999999999999991",
-            "command_name": fake.command_name, "success_pattern": "has been given",
-        })
+        json={"guild_id": GUILD, "channel_id": "999999999999999991",
+              "command_name": fake.command_name, "success_pattern": "has been given"})
     assert put_resp.status_code == 200
-    assert secret_token not in put_resp.text
+    add_resp = await client.post("/v1/reward/credentials/tokens", headers=headers, json={"token": secret_token})
+    assert add_resp.status_code == 200
+    assert secret_token not in put_resp.text and secret_token not in add_resp.text
+    assert secret_token not in (await client.get("/v1/reward/credentials", headers=headers)).text
 
     job_id = (await client.post(
         "/v1/reward/jobs", headers=headers,
@@ -333,3 +338,62 @@ async def test_pause_resume_stop_lifecycle(client, db_conn, fake):
     stop_resp = await client.post(f"/v1/reward/jobs/{job_id2}/stop", headers=headers)
     assert stop_resp.status_code == 200
     assert stop_resp.json()["status"] == "stopped"
+
+
+# ── Chống kẹt `unknown`: đối soát thủ công + gửi lại bằng 1 lần bấm ─────────────────────────────────
+
+async def _create_and_run(client, headers, name: str, raw: str):
+    job_id = (await client.post(
+        "/v1/reward/jobs", headers=headers,
+        json={"name": name, "raw_text": raw, "overrides": {"delay_ms": 0, "jitter_ms": 0}},
+    )).json()["job_id"]
+    assert (await client.post(f"/v1/reward/jobs/{job_id}/run", headers=headers)).status_code == 202
+    return job_id
+
+
+async def test_reconcile_endpoint_rescues_unknown_when_reply_arrives_late(client, db_conn, fake):
+    fake.reply_plan = [{"late_s": 1.6}]  # reply tới sau cửa sổ xác nhận (1s) ⇒ job kết thúc với item unknown
+    _, _, headers = await _setup_credential(client, db_conn, fake, channel="777777777777777771")
+    job_id = await _create_and_run(client, headers, "late", f"{RECIPIENT}|5\n")
+    job = await _poll_job(client, headers, job_id, statuses=("completed",), timeout_s=15.0)
+    assert job["counts"]["unknown"] == 1
+
+    await asyncio.sleep(1.2)  # reply đã xuất hiện trong kênh
+    resp = await client.post(f"/v1/reward/jobs/{job_id}/reconcile", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["summary"]["success"] == 1
+    assert body["counts"]["success"] == 1 and body["counts"]["unknown"] == 0
+
+
+async def test_retry_unknown_reopens_completed_job_and_resume_finishes_it(client, db_conn, fake):
+    fake.interaction_plan = [500]  # lần 1: Discord lỗi, KHÔNG có reply nào ⇒ unknown + đối soát kết luận no_reply
+    _, _, headers = await _setup_credential(client, db_conn, fake, channel="777777777777777772")
+    job_id = await _create_and_run(client, headers, "retry", f"{RECIPIENT}|5\n")
+    job = await _poll_job(client, headers, job_id, statuses=("completed",), timeout_s=15.0)
+    assert job["counts"]["unknown"] == 1
+    assert (await client.post(f"/v1/reward/jobs/{job_id}/resume", headers=headers)).status_code == 409  # completed ≠ chạy lại được
+
+    fake.interaction_plan = None  # Discord hết lỗi
+    resp = await client.post(f"/v1/reward/jobs/{job_id}/retry-unknown", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["requeued"] == 1 and body["status"] == "paused"
+    assert body["counts"]["pending"] == 1 and body["counts"]["unknown"] == 0
+
+    assert (await client.post(f"/v1/reward/jobs/{job_id}/resume", headers=headers)).status_code == 202
+    final = await _poll_job(client, headers, job_id, statuses=("completed",), timeout_s=15.0)
+    assert final["counts"]["success"] == 1 and final["counts"]["unknown"] == 0
+    assert len(fake.interactions) == 2  # đúng 1 lần gửi lại, sau khi đã chứng minh lần đầu không có reply
+
+
+async def test_retry_unknown_does_not_resend_items_whose_reply_exists(client, db_conn, fake):
+    # Item đã được cộng nhưng bot trả lời muộn ⇒ retry-unknown phải đối soát RA success, không gửi lại (không cộng đôi).
+    fake.reply_plan = [{"late_s": 1.6}]
+    _, _, headers = await _setup_credential(client, db_conn, fake, channel="777777777777777773")
+    job_id = await _create_and_run(client, headers, "no-dup", f"{RECIPIENT}|5\n")
+    await _poll_job(client, headers, job_id, statuses=("completed",), timeout_s=15.0)
+    await asyncio.sleep(1.2)
+    body = (await client.post(f"/v1/reward/jobs/{job_id}/retry-unknown", headers=headers)).json()
+    assert body["requeued"] == 0 and body["counts"]["success"] == 1
+    assert len(fake.interactions) == 1

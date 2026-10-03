@@ -7,6 +7,11 @@ from typing import Any
 import asyncpg
 
 
+async def set_token(conn: asyncpg.Connection, *, attempt_id: int, token_id: int) -> None:
+    """Ghi token (tài khoản Discord) dùng cho attempt này — audit khi xoay vòng nhiều token."""
+    await conn.execute("UPDATE reward_attempts SET token_id=$1 WHERE id=$2", token_id, attempt_id)
+
+
 async def mark_sent(
     conn: asyncpg.Connection, *, attempt_id: int, command_text: str | None,
     message_id: str | None, http_status: int | None, posted_at: Any = None,

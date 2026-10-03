@@ -30,14 +30,17 @@ class ExecutorConfig:
     api_base: str
     guild_id: str
     channel_id: str
-    user_token: str
-    read_authorization: str
     account_id: str
+    # (token gửi lệnh + đọc kênh được truyền theo từng lần `execute(token=...)` — xoay vòng nhiều token)
+
+
+class SessionUnavailable(Exception):
+    """Gateway của token này không dùng được (không kết nối/IDENTIFY lỗi) — lệnh CHƯA được gửi."""
 
 
 @dataclass
 class ExecuteOutcome:
-    outcome: str  # 'fail' | 'invoked' | 'http_error' | 'network_error'
+    outcome: str  # 'fail' | 'invoked' | 'http_error' | 'network_error' | 'session_error' (chưa gửi gì)
     resolve_level: str | None = None
     resolved_user_id: str | None = None
     failure_code: str | None = None
@@ -62,8 +65,9 @@ async def _resolve(
 
     try:
         members = await session.request_guild_members(guild_id=config.guild_id, query=normalized, limit=5)
-    except Exception:  # noqa: BLE001 — resolve op8 thất bại → coi như không tìm thấy, KHÔNG throw
-        members = []
+    except Exception as exc:  # noqa: BLE001
+        # Gateway chết ≠ "không có người này": KHÔNG được kết luận USER_NOT_FOUND (failed vĩnh viễn) vì lỗi kết nối.
+        raise SessionUnavailable(type(exc).__name__) from exc
     for m in members or []:
         user = m.get("user") or {}
         username = (user.get("username") or "").lower()
@@ -83,10 +87,13 @@ async def _resolve(
 
 async def execute(
     item: dict[str, Any], attempt: dict[str, Any], *,
-    http_client: DiscordHttpClient, session: GatewaySession, config: ExecutorConfig,
+    http_client: DiscordHttpClient, session: GatewaySession, token: str, config: ExecutorConfig,
     command: SlashCommand, pool_conn: asyncpg.Connection,
 ) -> ExecuteOutcome:
-    user_id, resolve_level = await _resolve(session=session, config=config, conn=pool_conn, item=item)
+    try:
+        user_id, resolve_level = await _resolve(session=session, config=config, conn=pool_conn, item=item)
+    except SessionUnavailable as exc:
+        return ExecuteOutcome(outcome="session_error", error_exc=exc)
     if not user_id:
         return ExecuteOutcome(outcome="fail", failure_code="USER_NOT_FOUND", resolve_level=resolve_level)
 
@@ -101,7 +108,7 @@ async def execute(
     try:
         latest = await fetch_channel_messages(
             http_client, api_base=config.api_base, channel_id=config.channel_id,
-            authorization=config.read_authorization, limit=1)
+            authorization=token, limit=1)
         if latest.ok and latest.messages:
             anchor = latest.messages[0]["id"]
     except Exception:  # noqa: BLE001 — không lấy được neo → giữ mặc định '0' (giống Node)
@@ -110,13 +117,14 @@ async def execute(
     try:
         session_id = await session.get_session_id()
     except Exception as exc:  # noqa: BLE001
+        # Chưa gọi /interactions ⇒ chắc chắn CHƯA gửi: không phải `unknown` (runner requeue + đổi token).
         return ExecuteOutcome(
-            outcome="network_error", command_text=command_text,
+            outcome="session_error", command_text=command_text,
             resolve_level=resolve_level, resolved_user_id=user_id, error_exc=exc)
 
     try:
         res = await invoke_slash_command(
-            http_client, api_base=config.api_base, token=config.user_token, command=command,
+            http_client, api_base=config.api_base, token=token, command=command,
             guild_id=config.guild_id, channel_id=config.channel_id, session_id=session_id,
             user_id=user_id, amount=point, nonce=attempt["nonce"])
     except Exception as exc:  # noqa: BLE001

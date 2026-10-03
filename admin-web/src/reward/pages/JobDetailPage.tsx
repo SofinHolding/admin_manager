@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Download, Loader2, Pause, Play, Search, Square, X } from "lucide-react";
+import { Download, Loader2, Pause, Play, RefreshCw, RotateCcw, Search, Square, X } from "lucide-react";
 import {
   jobsApi, type JobAttempt, type JobDetail, type JobEvent, type JobItem,
 } from "../api";
@@ -115,6 +115,51 @@ export default function JobDetailPage() {
     }
   };
 
+  const unknownCount = (stream.counts ?? job?.counts)?.unknown ?? 0;
+  const canRecover = unknownCount > 0 && effectiveStatus !== "running";
+
+  const reconcile = async () => {
+    if (!id) return;
+    setActionLoading(true);
+    try {
+      const r = await jobsApi.reconcile(id);
+      const s = r.summary;
+      toast.success(
+        `Đối soát xong: ${s.success} thành công, ${s.failed} thất bại, ${s.no_reply} không có reply` +
+        (s.inconclusive ? `, ${s.inconclusive} chưa kết luận được` : ""),
+      );
+      await loadItems();
+      await loadJob();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const retryUnknown = async () => {
+    if (!id) return;
+    if (!confirm(
+      "Hệ thống sẽ đối soát với lịch sử kênh Discord trước. Item nào đã được cộng điểm sẽ chuyển thành công " +
+      "(KHÔNG gửi lại). Chỉ item đã chứng minh không có reply mới được gửi lại. Tiếp tục?",
+    )) return;
+    setActionLoading(true);
+    try {
+      const r = await jobsApi.retryUnknown(id);
+      toast.success(`Đã cộng ${r.summary.success} item đối soát được; mở lại ${r.requeued} item để gửi lại`);
+      if (r.requeued > 0) {
+        await jobsApi.resume(id);
+        toast.success("Đã chạy tiếp để gửi lại các item còn thiếu");
+      }
+      await loadItems();
+      await loadJob();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const openItem = async (item: JobItem) => {
     setSelectedItem(item);
     if (!id) return;
@@ -197,6 +242,14 @@ export default function JobDetailPage() {
           <Button size="sm" variant="destructive" disabled={actionLoading || !["running", "paused"].includes(effectiveStatus)} onClick={() => runControl("stop")}>
             <Square className="size-4" /> Dừng
           </Button>
+          <Button size="sm" variant="outline" disabled={actionLoading || !canRecover} onClick={reconcile}
+                  title="Kiểm tra lịch sử kênh Discord để tìm reply thật của các item không rõ">
+            <RefreshCw className="size-4" /> Đối soát ({unknownCount})
+          </Button>
+          <Button size="sm" variant="outline" disabled={actionLoading || !canRecover} onClick={retryUnknown}
+                  title="Đối soát rồi gửi lại các item chắc chắn chưa được cộng">
+            <RotateCcw className="size-4" /> Gửi lại item không rõ
+          </Button>
           <Button size="sm" variant="outline" onClick={exportCsv}>
             <Download className="size-4" /> Xuất CSV
           </Button>
@@ -206,6 +259,13 @@ export default function JobDetailPage() {
         </div>
       </div>
 
+      {canRecover && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+          Có <b>{unknownCount}</b> item chưa xác nhận được. "Không rõ" KHÔNG có nghĩa là chưa cộng điểm — bấm{" "}
+          <b>Đối soát</b> để kiểm tra lịch sử kênh Discord (reply thật sẽ chuyển item sang thành công), hoặc{" "}
+          <b>Gửi lại item không rõ</b> để hệ thống đối soát rồi chỉ gửi lại những item chắc chắn chưa được cộng.
+        </div>
+      )}
       {effectiveCounts && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
           {METRIC_KEYS.map((key) => (
