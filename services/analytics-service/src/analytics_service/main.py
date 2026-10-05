@@ -8,4 +8,4 @@ from analytics_service.config import load_settings
 
 _settings = load_settings()
 configure_logging(SERVICE_NAME, __version__, _settings.log_level)
-app = create_app()
+app = create_app(_settings)

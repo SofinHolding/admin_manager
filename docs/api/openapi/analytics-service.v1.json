@@ -1,0 +1,4533 @@
+{
+  "components": {
+    "schemas": {
+      "AddMemberBody": {
+        "properties": {
+          "channel_ref": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Channel Ref",
+            "type": "string"
+          },
+          "country_override": {
+            "default": "",
+            "maxLength": 50,
+            "title": "Country Override",
+            "type": "string"
+          },
+          "platform_tag": {
+            "default": "",
+            "maxLength": 50,
+            "title": "Platform Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel_ref"
+        ],
+        "title": "AddMemberBody",
+        "type": "object"
+      },
+      "CanonicalBody": {
+        "properties": {
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CanonicalBody",
+        "type": "object"
+      },
+      "CountryAliasBody": {
+        "properties": {
+          "alias": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Alias",
+            "type": "string"
+          },
+          "canonical": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Canonical",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias",
+          "canonical"
+        ],
+        "title": "CountryAliasBody",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "NameBody": {
+        "properties": {
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "NameBody",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "analytics-service",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/admin/cache/flush": {
+      "post": {
+        "operationId": "flush_cache__v1_admin_cache_flush_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Flush Cache  V1 Admin Cache Flush Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Xoá cache Redis — ép tổng hợp lại từ PostgreSQL",
+        "tags": [
+          "cache"
+        ]
+      }
+    },
+    "/v1/admin/country-aliases": {
+      "get": {
+        "operationId": "list_aliases__v1_admin_country_aliases_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Aliases  V1 Admin Country Aliases Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách chuẩn hoá quốc gia (alias → tên chuẩn)",
+        "tags": [
+          "country-config"
+        ]
+      },
+      "post": {
+        "operationId": "upsert_alias__v1_admin_country_aliases_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CountryAliasBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Upsert Alias  V1 Admin Country Aliases Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thêm/sửa 1 dòng chuẩn hoá quốc gia",
+        "tags": [
+          "country-config"
+        ]
+      }
+    },
+    "/v1/admin/country-aliases/{alias}": {
+      "delete": {
+        "operationId": "delete_alias__v1_admin_country_aliases_alias__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alias",
+            "required": true,
+            "schema": {
+              "title": "Alias",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Alias  V1 Admin Country Aliases Alias  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Xoá 1 dòng chuẩn hoá quốc gia",
+        "tags": [
+          "country-config"
+        ]
+      }
+    },
+    "/v1/admin/country-canonicals": {
+      "get": {
+        "operationId": "list_canonicals__v1_admin_country_canonicals_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Canonicals  V1 Admin Country Canonicals Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách tên quốc gia chuẩn",
+        "tags": [
+          "country-config"
+        ]
+      },
+      "post": {
+        "operationId": "create_canonical__v1_admin_country_canonicals_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanonicalBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Canonical  V1 Admin Country Canonicals Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tạo tên quốc gia chuẩn mới",
+        "tags": [
+          "country-config"
+        ]
+      }
+    },
+    "/v1/admin/country-canonicals/{name}": {
+      "delete": {
+        "operationId": "delete_canonical__v1_admin_country_canonicals_name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Canonical  V1 Admin Country Canonicals Name  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Xoá 1 tên quốc gia chuẩn",
+        "tags": [
+          "country-config"
+        ]
+      },
+      "patch": {
+        "operationId": "rename_canonical__v1_admin_country_canonicals_name__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanonicalBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rename Canonical  V1 Admin Country Canonicals Name  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Đổi tên 1 tên quốc gia chuẩn (cascade sang alias)",
+        "tags": [
+          "country-config"
+        ]
+      }
+    },
+    "/v1/analytics/admin/cache/flush": {
+      "post": {
+        "operationId": "flush_cache__v1_analytics_admin_cache_flush_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Flush Cache  V1 Analytics Admin Cache Flush Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Xoá cache Redis — ép tổng hợp lại từ PostgreSQL",
+        "tags": [
+          "cache"
+        ]
+      }
+    },
+    "/v1/analytics/admin/country-aliases": {
+      "get": {
+        "operationId": "list_aliases__v1_analytics_admin_country_aliases_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Aliases  V1 Analytics Admin Country Aliases Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách chuẩn hoá quốc gia (alias → tên chuẩn)",
+        "tags": [
+          "country-config"
+        ]
+      },
+      "post": {
+        "operationId": "upsert_alias__v1_analytics_admin_country_aliases_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CountryAliasBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Upsert Alias  V1 Analytics Admin Country Aliases Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thêm/sửa 1 dòng chuẩn hoá quốc gia",
+        "tags": [
+          "country-config"
+        ]
+      }
+    },
+    "/v1/analytics/admin/country-aliases/{alias}": {
+      "delete": {
+        "operationId": "delete_alias__v1_analytics_admin_country_aliases_alias__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alias",
+            "required": true,
+            "schema": {
+              "title": "Alias",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Alias  V1 Analytics Admin Country Aliases Alias  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Xoá 1 dòng chuẩn hoá quốc gia",
+        "tags": [
+          "country-config"
+        ]
+      }
+    },
+    "/v1/analytics/admin/country-canonicals": {
+      "get": {
+        "operationId": "list_canonicals__v1_analytics_admin_country_canonicals_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Canonicals  V1 Analytics Admin Country Canonicals Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách tên quốc gia chuẩn",
+        "tags": [
+          "country-config"
+        ]
+      },
+      "post": {
+        "operationId": "create_canonical__v1_analytics_admin_country_canonicals_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanonicalBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Canonical  V1 Analytics Admin Country Canonicals Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tạo tên quốc gia chuẩn mới",
+        "tags": [
+          "country-config"
+        ]
+      }
+    },
+    "/v1/analytics/admin/country-canonicals/{name}": {
+      "delete": {
+        "operationId": "delete_canonical__v1_analytics_admin_country_canonicals_name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Canonical  V1 Analytics Admin Country Canonicals Name  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Xoá 1 tên quốc gia chuẩn",
+        "tags": [
+          "country-config"
+        ]
+      },
+      "patch": {
+        "operationId": "rename_canonical__v1_analytics_admin_country_canonicals_name__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanonicalBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rename Canonical  V1 Analytics Admin Country Canonicals Name  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Đổi tên 1 tên quốc gia chuẩn (cascade sang alias)",
+        "tags": [
+          "country-config"
+        ]
+      }
+    },
+    "/v1/analytics/admin/dead-letters": {
+      "get": {
+        "operationId": "dead_letters__v1_analytics_admin_dead_letters_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Dead Letters  V1 Analytics Admin Dead Letters Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dead-letter còn mở",
+        "tags": [
+          "analytics-admin"
+        ]
+      }
+    },
+    "/v1/analytics/admin/dead-letters/replay": {
+      "post": {
+        "operationId": "replay_dead_letters__v1_analytics_admin_dead_letters_replay_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Replay Dead Letters  V1 Analytics Admin Dead Letters Replay Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thử lại các dead-letter còn mở",
+        "tags": [
+          "analytics-admin"
+        ]
+      }
+    },
+    "/v1/analytics/admin/rebuild": {
+      "post": {
+        "operationId": "rebuild__v1_analytics_admin_rebuild_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rebuild  V1 Analytics Admin Rebuild Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Đặt revision về 0 và dựng lại read model (nguyên tử)",
+        "tags": [
+          "analytics-admin"
+        ]
+      }
+    },
+    "/v1/analytics/admin/reconcile": {
+      "post": {
+        "operationId": "reconcile__v1_analytics_admin_reconcile_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reconcile  V1 Analytics Admin Reconcile Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Đối soát read model với canonical/summary (đếm + checksum)",
+        "tags": [
+          "analytics-admin"
+        ]
+      }
+    },
+    "/v1/analytics/admin/sync": {
+      "post": {
+        "operationId": "sync_now__v1_analytics_admin_sync_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Sync Now  V1 Analytics Admin Sync Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chạy ngay một vòng đồng bộ (feed + canonical)",
+        "tags": [
+          "analytics-admin"
+        ]
+      }
+    },
+    "/v1/analytics/channel-breakdown": {
+      "get": {
+        "operationId": "get_channel_breakdown__v1_analytics_channel_breakdown_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Channel Breakdown  V1 Analytics Channel Breakdown Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Kênh/page theo nền tảng + chủ đề + quốc gia",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/analytics/compare/{dimension}": {
+      "get": {
+        "operationId": "get_compare__v1_analytics_compare_dimension__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "dimension",
+            "required": true,
+            "schema": {
+              "title": "Dimension",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Compare  V1 Analytics Compare Dimension  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "So sánh lượt xem theo chiều: platform|owner|country|channel|group|project",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/analytics/country-tags": {
+      "get": {
+        "operationId": "get_country_tags__v1_analytics_country_tags_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Country Tags  V1 Analytics Country Tags Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách quốc gia có trong dữ liệu",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/analytics/freshness": {
+      "get": {
+        "operationId": "get_freshness__v1_analytics_freshness_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Freshness  V1 Analytics Freshness Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trạng thái đồng bộ",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/analytics/groups": {
+      "get": {
+        "operationId": "list_groups__v1_analytics_groups_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Groups  V1 Analytics Groups Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Nhóm của chính mình, hoặc của account chỉ định nếu admin/dash_admin",
+        "tags": [
+          "groups"
+        ]
+      },
+      "post": {
+        "operationId": "create_group__v1_analytics_groups_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Group  V1 Analytics Groups Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tạo nhóm kênh",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/analytics/groups/{group_id}": {
+      "delete": {
+        "operationId": "delete_group__v1_analytics_groups_group_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Group  V1 Analytics Groups Group Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Xoá nhóm",
+        "tags": [
+          "groups"
+        ]
+      },
+      "patch": {
+        "operationId": "rename_group__v1_analytics_groups_group_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rename Group  V1 Analytics Groups Group Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Đổi tên nhóm",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/analytics/groups/{group_id}/members": {
+      "post": {
+        "operationId": "add_member__v1_analytics_groups_group_id_members_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemberBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Member  V1 Analytics Groups Group Id Members Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thêm/cập nhật kênh vào nhóm",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/analytics/groups/{group_id}/members/{channel_ref}": {
+      "delete": {
+        "operationId": "remove_member__v1_analytics_groups_group_id_members_channel_ref__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_ref",
+            "required": true,
+            "schema": {
+              "title": "Channel Ref",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove Member  V1 Analytics Groups Group Id Members Channel Ref  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Gỡ kênh khỏi nhóm",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/analytics/metrics": {
+      "get": {
+        "operationId": "get_metrics__v1_analytics_metrics_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Metrics  V1 Analytics Metrics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách metric khả dụng",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/analytics/platform-tags": {
+      "get": {
+        "operationId": "platform_tags__v1_analytics_platform_tags_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Platform Tags  V1 Analytics Platform Tags Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách nhãn nền tảng đã gắn (tự do, từ nhóm kênh)",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/analytics/summary": {
+      "get": {
+        "operationId": "get_summary__v1_analytics_summary_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Summary  V1 Analytics Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "KPI tổng hợp (AnalyticsSummary + filter + freshness)",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/analytics/top-channels": {
+      "get": {
+        "operationId": "get_top_channels__v1_analytics_top_channels_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 15,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Top Channels  V1 Analytics Top Channels Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Top kênh/page theo lượt xem",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/analytics/traffic": {
+      "get": {
+        "operationId": "get_traffic__v1_analytics_traffic_get",
+        "parameters": [
+          {
+            "description": "views|interactions|comments|videos",
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "views|interactions|comments|videos",
+              "title": "Metric",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Traffic  V1 Analytics Traffic Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Traffic theo chỉ số (TrafficMetricSeries + filter + freshness)",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/analytics/views-by-country": {
+      "get": {
+        "operationId": "get_views_by_country__v1_analytics_views_by_country_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Views By Country  V1 Analytics Views By Country Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lượt xem theo quốc gia/ngày (biểu đồ so sánh quốc gia riêng)",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/viewer/channel-breakdown": {
+      "get": {
+        "operationId": "get_channel_breakdown__v1_viewer_channel_breakdown_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Channel Breakdown  V1 Viewer Channel Breakdown Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Kênh/page theo nền tảng + chủ đề + quốc gia",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/viewer/country-tags": {
+      "get": {
+        "operationId": "get_country_tags__v1_viewer_country_tags_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Country Tags  V1 Viewer Country Tags Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách quốc gia có trong dữ liệu",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/viewer/groups": {
+      "get": {
+        "operationId": "list_groups__v1_viewer_groups_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Groups  V1 Viewer Groups Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Nhóm của chính mình, hoặc của account chỉ định nếu admin/dash_admin",
+        "tags": [
+          "groups"
+        ]
+      },
+      "post": {
+        "operationId": "create_group__v1_viewer_groups_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Group  V1 Viewer Groups Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tạo nhóm kênh",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/groups/{group_id}": {
+      "delete": {
+        "operationId": "delete_group__v1_viewer_groups_group_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Group  V1 Viewer Groups Group Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Xoá nhóm",
+        "tags": [
+          "groups"
+        ]
+      },
+      "patch": {
+        "operationId": "rename_group__v1_viewer_groups_group_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rename Group  V1 Viewer Groups Group Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Đổi tên nhóm",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/groups/{group_id}/members": {
+      "post": {
+        "operationId": "add_member__v1_viewer_groups_group_id_members_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemberBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Member  V1 Viewer Groups Group Id Members Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Thêm/cập nhật kênh vào nhóm",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/groups/{group_id}/members/{channel_ref}": {
+      "delete": {
+        "operationId": "remove_member__v1_viewer_groups_group_id_members_channel_ref__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_ref",
+            "required": true,
+            "schema": {
+              "title": "Channel Ref",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove Member  V1 Viewer Groups Group Id Members Channel Ref  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Gỡ kênh khỏi nhóm",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/metrics": {
+      "get": {
+        "operationId": "get_metrics__v1_viewer_metrics_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Metrics  V1 Viewer Metrics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách metric khả dụng",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/viewer/platform-tags": {
+      "get": {
+        "operationId": "platform_tags__v1_viewer_platform_tags_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Platform Tags  V1 Viewer Platform Tags Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách nhãn nền tảng đã gắn (tự do, từ nhóm kênh)",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/summary": {
+      "get": {
+        "operationId": "get_summary__v1_viewer_summary_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Summary  V1 Viewer Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "KPI tổng hợp (AnalyticsSummary + filter + freshness)",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/viewer/top-channels": {
+      "get": {
+        "operationId": "get_top_channels__v1_viewer_top_channels_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 15,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Top Channels  V1 Viewer Top Channels Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Top kênh/page theo lượt xem",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/viewer/traffic": {
+      "get": {
+        "operationId": "get_traffic__v1_viewer_traffic_get",
+        "parameters": [
+          {
+            "description": "views|interactions|comments|videos",
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "views|interactions|comments|videos",
+              "title": "Metric",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Traffic  V1 Viewer Traffic Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Traffic theo chỉ số (TrafficMetricSeries + filter + freshness)",
+        "tags": [
+          "analytics"
+        ]
+      }
+    },
+    "/v1/viewer/views-by-country": {
+      "get": {
+        "operationId": "get_views_by_country__v1_viewer_views_by_country_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "project_key (chủ đề/nguồn)",
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "project_key (chủ đề/nguồn)",
+              "maxLength": 100,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Views By Country  V1 Viewer Views By Country Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lượt xem theo quốc gia/ngày (biểu đồ so sánh quốc gia riêng)",
+        "tags": [
+          "analytics"
+        ]
+      }
+    }
+  }
+}
