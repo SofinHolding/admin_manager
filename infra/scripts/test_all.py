@@ -29,7 +29,8 @@ def suites(fast: bool, legacy: bool) -> list[tuple[str, Path]]:
     out = [("arch", ROOT / "tests" / "arch"),
            ("contract", ROOT / "tests" / "contract"),
            ("pkg:contracts", ROOT / "packages" / "contracts" / "python"),
-           ("pkg:observability", ROOT / "packages" / "observability")]
+           ("pkg:observability", ROOT / "packages" / "observability"),
+           ("pkg:sdk-python", ROOT / "packages" / "sdk-python")]
     for name, svc in REGISTRY["services"].items():
         if svc["status"] == "scaffold":
             out.append((f"svc:{name}", ROOT / svc["path"]))

@@ -28,7 +28,7 @@ def role_of(db: str) -> str:
 
 # ── Template Postgres ───────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("name", sorted(REGISTRY["services"]))
+@pytest.mark.parametrize("name", sorted(n for n, s in REGISTRY["services"].items() if s["database"]))
 def test_database_and_dedicated_role_exist(name):
     db = REGISTRY["services"][name]["database"]
     role = role_of(db)
@@ -50,7 +50,7 @@ def test_service_roles_are_not_privileged():
 
 def test_no_extra_databases_beyond_registry():
     created = set(re.findall(r"CREATE DATABASE (\w+)", INITDB))
-    assert created == {s["database"] for s in REGISTRY["services"].values()}
+    assert created == {s["database"] for s in REGISTRY["services"].values() if s["database"]}
 
 
 def test_templates_use_placeholders_never_literal_passwords():

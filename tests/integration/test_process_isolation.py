@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT / "infra" / "scripts"))
 import devenv  # noqa: E402
 
 PG_HOST = devenv.pg_ready()
+FERNET = __import__("cryptography.fernet", fromlist=["Fernet"]).Fernet.generate_key().decode()
 DEAD_DSN = "postgresql://identity_svc:x@127.0.0.1:1/identity_db"  # cổng 1: không ai nghe
 
 
@@ -58,7 +59,7 @@ class Proc:
         extra = {}
         if self.key == "identity":  # cấu hình bắt buộc của identity-service (thiếu thì nó từ chối khởi động)
             extra = {"IDENTITY_DATABASE_URL": identity_dsn(self.db_alive), "IDENTITY_ENV": "test",
-                     "IDENTITY_JWT_COMPAT_SECRET": "isolation-test-secret-16+"}
+                     "IDENTITY_KEY_ENCRYPTION_KEY": FERNET}
         env = {**os.environ, **extra, "PYTHONIOENCODING": "utf-8",
                "PYTHONPATH": os.pathsep.join([str(path / "src"),
                                               str(ROOT / "packages" / "observability" / "src"),
@@ -207,7 +208,7 @@ def test_every_log_line_of_a_running_service_is_json():
     path = ROOT / "services" / "identity-service"
     port = _free_port()
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "IDENTITY_DATABASE_URL": DEAD_DSN, "IDENTITY_ENV": "test",
-           "IDENTITY_JWT_COMPAT_SECRET": "isolation-test-secret-16+",
+           "IDENTITY_KEY_ENCRYPTION_KEY": FERNET,
            "PYTHONPATH": os.pathsep.join([str(path / "src"), str(ROOT / "packages" / "observability" / "src"),
                                           str(ROOT / "packages" / "contracts" / "python")])}
     proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "identity_service.main:app", "--host", "127.0.0.1",

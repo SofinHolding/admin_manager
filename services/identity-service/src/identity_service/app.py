@@ -28,6 +28,12 @@ from identity_service.db import Database
 from identity_service.errors import DomainError
 from identity_service.notifications.adapters import build_mailer
 from identity_service.notifications.port import Mailer
+from identity_service.outbox.router import router as feed_router
+from identity_service.permissions.router import router as permissions_router
+from identity_service.permissions.service import PermissionService
+from identity_service.tokens.keys import KeyStore
+from identity_service.tokens.router import router as jwks_router
+from identity_service.tokens.service import TokenService
 from identity_service.registration_keys.router import router as keys_router
 from identity_service.registration_keys.service import RegistrationKeyService
 from identity_service.security import utcnow
@@ -67,11 +73,15 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
                              lifespan=lifespan)
 
     resolved_mailer = mailer or build_mailer(settings)
+    keystore = (KeyStore(db, settings.key_encryption_key, grace_seconds=settings.jwks_grace_seconds)
+                if settings.access_token_alg == "RS256" else None)
+    tokens = TokenService(settings, keystore)
     app.state.container = Container(
         settings=settings, db=db,
-        auth=AuthService(db, settings, resolved_mailer, now=now, sleep=sleep),
+        auth=AuthService(db, settings, resolved_mailer, tokens, now=now, sleep=sleep),
         keys=RegistrationKeyService(db, now=now),
         accounts_admin=AccountAdminService(db, now=now),
+        permissions=PermissionService(db, now=now), tokens=tokens, keystore=keystore,
         limiter=RateLimiter())
 
     @app.exception_handler(DomainError)
@@ -95,4 +105,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
     app.include_router(auth_router)
     app.include_router(keys_router)
     app.include_router(users_router)
+    app.include_router(permissions_router)
+    app.include_router(jwks_router)
+    app.include_router(feed_router)
     return app

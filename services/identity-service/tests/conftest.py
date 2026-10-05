@@ -24,7 +24,7 @@ from identity_service.config import Settings
 from identity_service.db import Database
 
 PG_REASON = devenv.SKIP_REASON
-_TABLES = "auth_audit, refresh_tokens, accounts, invite_keys"
+_TABLES = ("outbox, auth_audit, account_permissions, sessions, refresh_tokens, accounts, invite_keys")
 
 
 def _dsn() -> str | None:
@@ -45,6 +45,8 @@ def pytest_configure(config):
 
 
 TEST_JWT_SECRET = __import__("secrets").token_urlsafe(32)  # ngẫu nhiên mỗi lần chạy
+TEST_FERNET_KEY = __import__("cryptography.fernet", fromlist=["Fernet"]).Fernet.generate_key().decode()
+ISSUER = "http://identity.test"
 
 
 class CapturingMailer:
@@ -85,9 +87,19 @@ class FakeClock:
 
 @pytest.fixture
 def settings() -> Settings:
+    """Cấu hình mặc định: RS256 + JWKS (không có secret chung)."""
     return Settings(port=8430, log_level="INFO", database_url=_dsn() or "postgresql://x:y@127.0.0.1:1/z",
-                    env="test", jwt_compat_secret=TEST_JWT_SECRET,
-                    login_fail_delay_s=0.0)
+                    env="test", login_fail_delay_s=0.0, issuer=ISSUER, audience="manager-api",
+                    key_encryption_key=TEST_FERNET_KEY,
+                    feed_keys=(("analytics", "feed-key-analytics-0123456789abcdef"),
+                               ("integration", "feed-key-integration-0123456789abc")))
+
+
+@pytest.fixture
+def settings_hs256(settings) -> Settings:
+    """Chế độ cùng tồn tại với admin-server/reward legacy: HS256 dùng chung secret."""
+    from dataclasses import replace
+    return replace(settings, access_token_alg="HS256", jwt_compat_secret=TEST_JWT_SECRET)
 
 
 @pytest.fixture(scope="session")
@@ -108,6 +120,14 @@ def migrated() -> None:
             await migrate.run(dsn)
 
     asyncio.run(_go())
+
+    async def _reset_keys() -> None:
+        import asyncpg
+        conn = await asyncpg.connect(dsn)
+        await conn.execute("TRUNCATE signing_keys")  # khoá của lần chạy trước mã hoá bằng Fernet key khác
+        await conn.close()
+
+    asyncio.run(_reset_keys())
 
 
 @pytest_asyncio.fixture
@@ -136,17 +156,38 @@ def sleeps() -> list[float]:
     return []
 
 
-@pytest_asyncio.fixture
-async def client(db, settings, mailer, clock, sleeps):
+async def _make_client(db, settings, mailer, clock, sleeps):
     async def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
     app = create_app(settings, database=db, mailer=mailer, now=clock, sleep=fake_sleep)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://identity.test",
-                                 headers={"X-Real-IP": "10.0.0." + str(uuid.uuid4().int % 250)}) as c:
-        c.app = app
+    c = httpx.AsyncClient(transport=transport, base_url="http://identity.test",
+                          headers={"X-Real-IP": "10.0.0." + str(uuid.uuid4().int % 250)})
+    c.app = app
+    return c
+
+
+@pytest_asyncio.fixture
+async def client(db, settings, mailer, clock, sleeps):
+    async with await _make_client(db, settings, mailer, clock, sleeps) as c:
         yield c
+
+
+@pytest_asyncio.fixture
+async def client_hs256(db, settings_hs256, mailer, clock, sleeps):
+    async with await _make_client(db, settings_hs256, mailer, clock, sleeps) as c:
+        yield c
+
+
+async def claims(client, token: str) -> dict:
+    """Verify token RS256 bằng JWKS công khai của chính service (như một service khác sẽ làm) và trả claims."""
+    import jwt
+    jwks = (await client.get("/.well-known/jwks.json")).json()["keys"]
+    kid = jwt.get_unverified_header(token)["kid"]
+    jwk = next(k for k in jwks if k["kid"] == kid)
+    key = jwt.algorithms.RSAAlgorithm.from_jwk(jwk)
+    return jwt.decode(token, key, algorithms=["RS256"], audience="manager-api", issuer=ISSUER)
 
 
 # ── Trợ giúp nghiệp vụ ──────────────────────────────────────────────────────────

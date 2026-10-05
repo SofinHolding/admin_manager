@@ -25,13 +25,14 @@ def test_registry_required_keys():
 
 def test_ports_databases_packages_are_unique():
     for key in ("port", "database", "package"):
-        values = [s[key] for s in ALL.values()]
+        values = [s[key] for s in ALL.values() if s[key] is not None]
         assert len(values) == len(set(values)), f"{key} bị trùng: {values}"
 
 
 def test_each_service_has_its_own_database():
     for name, svc in ALL.items():
-        assert svc["database"].endswith("_db"), name
+        assert svc["database"] is None or svc["database"].endswith("_db"), name
+    assert [n for n, s in ALL.items() if s["database"] is None] == ["api-gateway"], "chỉ gateway được phép không có DB"
 
 
 def test_owned_tables_do_not_overlap_between_services():
@@ -112,9 +113,10 @@ def test_service_dockerfile_and_env_are_isolated(name):
         if other != name:
             assert o["path"] not in docker, f"Dockerfile của {name} COPY {other}"
     env = (ROOT / svc["path"] / ".env.example").read_text(encoding="utf-8")
-    assert svc["database"] in env
+    if svc["database"]:
+        assert svc["database"] in env
     for other, o in ALL.items():
-        if other != name:
+        if other != name and o["database"]:
             assert o["database"] not in env, f".env của {name} trỏ DB của {other}"
 
 

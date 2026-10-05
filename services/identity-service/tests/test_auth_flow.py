@@ -9,7 +9,7 @@ import pytest
 from identity_service.auth import legacy_jwt
 from identity_service.security import hash_token
 
-from conftest import TEST_JWT_SECRET, login, make_key, register, register_verified, token_for
+from conftest import TEST_JWT_SECRET, claims, login, make_key, register, register_verified, token_for
 
 pytestmark = pytest.mark.needs_pg
 
@@ -171,8 +171,10 @@ async def test_login_success_response_shape_and_token_claims(client, db, mailer)
     body = r.json()
     assert r.status_code == 200 and set(body) == {"access_token", "refresh_token", "expires_in", "user"}
     assert body["expires_in"] == 900 and set(body["user"]) == {"id", "username", "email", "role"}
-    claims = legacy_jwt.decode_access_token(SECRET, body["access_token"])
-    assert claims["sub"] == body["user"]["id"] and claims["role"] == "viewer" and claims["client_type"] == "web"
+    c = await claims(client, body["access_token"])
+    assert c["sub"] == body["user"]["id"] and c["role"] == "viewer" and c["client_type"] == "web"
+    assert c["iss"] == "http://identity.test" and c["aud"] == ["manager-api"] and c["perms"] == []
+    assert c["sid"] and c["jti"] and c["exp"] - c["iat"] == 900 and c["nbf"] == c["iat"]
     async with db.connection() as conn:
         assert await conn.fetchval("SELECT last_login FROM accounts WHERE username='dang_nhap'") is not None
 
@@ -209,14 +211,14 @@ async def test_fallback_tool_login_only_for_admin_roles_and_is_audited(client, d
     assert (r.status_code, r.json()["detail"]) == (403, "Tool B chỉ cho phép tài khoản admin hoặc dash_admin đăng nhập")
     ok = await login(client, "quan_tri", **h)
     assert ok.status_code == 200
-    assert legacy_jwt.decode_access_token(SECRET, ok.json()["access_token"])["client_type"] == "local_fallback_tool"
+    assert (await claims(client, ok.json()["access_token"]))["client_type"] == "local_fallback_tool"
     async with db.connection() as conn:
         assert await conn.fetchval(
             "SELECT count(*) FROM auth_audit WHERE event_type='login_fallback_tool'") == 1
     # header lạ hoặc thiếu -> coi là web
     other = await login(client, "nguoi_xem", **{"X-Client-Type": "gi-do-la"})
     assert other.status_code == 200
-    assert legacy_jwt.decode_access_token(SECRET, other.json()["access_token"])["client_type"] == "web"
+    assert (await claims(client, other.json()["access_token"]))["client_type"] == "web"
 
 
 # ── refresh / logout / me ───────────────────────────────────────────────────────
@@ -265,7 +267,8 @@ async def test_me_for_suspended_is_403_and_for_deleted_is_401(client, db, mailer
     async with db.connection() as conn:
         await conn.execute("DELETE FROM accounts WHERE id=$1", t["id"])
     r = await client.get("/v1/auth/me", headers=t["auth"])
-    assert (r.status_code, r.json()["detail"]) == (401, "Tài khoản không tồn tại")
+    # RS256: phiên bị xóa cùng tài khoản nên token bị từ chối ở bước kiểm phiên (HS256 legacy: "Tài khoản không tồn tại")
+    assert (r.status_code, r.json()["detail"]) == (401, "Phiên đã bị thu hồi")
 
 
 # ── quên / đặt lại mật khẩu ─────────────────────────────────────────────────────

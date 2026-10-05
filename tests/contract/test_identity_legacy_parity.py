@@ -167,7 +167,7 @@ async def identity():
     async def instant(_seconds): return None
 
     settings = Settings(port=8430, log_level="INFO", database_url=_dsn(), env="test",
-                        jwt_compat_secret=SECRET, login_fail_delay_s=0.0)
+                        access_token_alg="HS256", jwt_compat_secret=SECRET, login_fail_delay_s=0.0)
     app = create_app(settings, database=db, mailer=Mailer(), sleep=instant)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         side = NewSide(c, db)

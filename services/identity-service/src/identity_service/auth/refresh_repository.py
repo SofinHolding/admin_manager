@@ -8,10 +8,14 @@ import asyncpg
 
 
 async def create(conn: asyncpg.Connection, *, token_hash: str, account_id: str, now: datetime,
-                 expires_at: datetime) -> None:
+                 expires_at: datetime, sid: str | None = None) -> None:
     await conn.execute(
-        "INSERT INTO refresh_tokens (token_hash, account_id, created_at, expires_at) "
-        "VALUES ($1, $2, $3, $4)", token_hash, account_id, now, expires_at)
+        "INSERT INTO refresh_tokens (token_hash, account_id, created_at, expires_at, sid) "
+        "VALUES ($1, $2, $3, $4, $5)", token_hash, account_id, now, expires_at, sid)
+
+
+async def attach_session(conn: asyncpg.Connection, token_hash: str, sid: str) -> None:
+    await conn.execute("UPDATE refresh_tokens SET sid = $2 WHERE token_hash = $1", token_hash, sid)
 
 
 async def get_valid(conn: asyncpg.Connection, token_hash: str, now: datetime) -> dict | None:

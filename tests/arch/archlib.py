@@ -15,8 +15,9 @@ ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_PATH = ROOT / "infra" / "service-registry.json"
 
 # Tên bảng được phép trùng giữa các service: mỗi service giữ BẢN SAO RIÊNG trong DB riêng của nó
-# (outbox của chính nó; account_projection là read model cục bộ nuôi bằng event, không phải bảng accounts).
-PER_SERVICE_COPIES = {"outbox", "account_projection"}
+# (outbox của chính nó; account_projection là read model cục bộ nuôi bằng event, không phải bảng accounts;
+# feed_cursor/processed_events/dead_letters là sổ sách consumer của riêng từng service).
+PER_SERVICE_COPIES = {"outbox", "account_projection", "feed_cursor", "processed_events", "dead_letters"}
 
 _SQL_TABLE_REF = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE|TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?)\s+"
                             r"(?:[a-z_]+\.)?([a-z_][a-z0-9_]*)\b", re.I)

@@ -24,9 +24,17 @@ class Settings:
     log_level: str
     database_url: str
     env: str = "production"
-    # Khóa HS256 CHỈ để tương thích với admin-server/reward-service cũ trong giai đoạn Strangler.
-    # Phase 1.4 thay bằng RS256 + JWKS; sau cửa sổ chuyển tiếp thì xóa khóa này.
+    # Khóa HS256 CHỈ để cùng tồn tại với admin-server/reward-service legacy trong giai đoạn Strangler
+    # (access_token_alg="HS256"). Mặc định hệ thống dùng RS256 + JWKS, KHÔNG cần secret chung.
     jwt_compat_secret: str = ""
+    access_token_alg: str = "RS256"
+    issuer: str = "http://127.0.0.1:8430"
+    audience: str = "manager-api"
+    key_encryption_key: str = ""        # Fernet: mã hoá khoá ký private trong DB
+    jwks_grace_seconds: int = 3600      # khoá retired vẫn publish thêm khoảng này
+    feed_keys: tuple = ()               # ((reader, key), ...) từ IDENTITY_FEED_KEY_<READER>
+    integration_feed_url: str = ""      # nguồn feed provisioning (tuỳ chọn)
+    integration_feed_key: str = ""
     access_token_ttl_s: int = 15 * 60
     refresh_token_ttl_days: int = 30
     login_fail_delay_s: float = 1.0
@@ -85,7 +93,21 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if delay < 0:
         raise ConfigError("IDENTITY_LOGIN_FAIL_DELAY_S không được âm")
 
+    alg = _env(env, "ACCESS_TOKEN_ALG", "RS256").upper()
+    if alg not in ("RS256", "HS256"):
+        raise ConfigError("IDENTITY_ACCESS_TOKEN_ALG phải là RS256 hoặc HS256")
+    feed_keys = tuple(sorted((k[len("IDENTITY_FEED_KEY_"):].lower(), (v or "").strip())
+                             for k, v in env.items() if k.startswith("IDENTITY_FEED_KEY_") and (v or "").strip()))
+    for reader, key in feed_keys:
+        if len(key) < 24:
+            raise ConfigError(f"IDENTITY_FEED_KEY_{reader.upper()} quá ngắn (tối thiểu 24 ký tự)")
+
     return Settings(
+        access_token_alg=alg, issuer=_env(env, "ISSUER", "http://127.0.0.1:8430").rstrip("/"),
+        audience=_env(env, "AUDIENCE", "manager-api"), key_encryption_key=_env(env, "KEY_ENCRYPTION_KEY"),
+        jwks_grace_seconds=_int(env, "JWKS_GRACE_SECONDS", 3600, 300, 7 * 86400), feed_keys=feed_keys,
+        integration_feed_url=_env(env, "INTEGRATION_FEED_URL").rstrip("/"),
+        integration_feed_key=_env(env, "INTEGRATION_FEED_KEY"),
         port=port, log_level=level, database_url=database_url, env=mode, jwt_compat_secret=secret,
         access_token_ttl_s=_int(env, "ACCESS_TOKEN_TTL_S", 15 * 60, 60, 24 * 3600),
         refresh_token_ttl_days=_int(env, "REFRESH_TOKEN_TTL_DAYS", 30, 1, 365),
@@ -101,7 +123,18 @@ def require_serving_config(settings: Settings) -> None:
     """Điều kiện BẮT BUỘC để phục vụ request (không bắt buộc khi chỉ chạy migrate/test cấu hình)."""
     if not settings.database_url:
         raise ConfigError("Thiếu IDENTITY_DATABASE_URL")
-    if not settings.jwt_compat_secret:
-        raise ConfigError("Thiếu IDENTITY_JWT_COMPAT_SECRET")
-    if settings.env == "production" and settings.jwt_compat_secret.startswith("dev-"):
+    if settings.access_token_alg == "HS256":
+        if not settings.jwt_compat_secret:
+            raise ConfigError("Thiếu IDENTITY_JWT_COMPAT_SECRET (bắt buộc khi IDENTITY_ACCESS_TOKEN_ALG=HS256)")
+    else:
+        if not settings.key_encryption_key:
+            raise ConfigError("Thiếu IDENTITY_KEY_ENCRYPTION_KEY (khoá Fernet mã hoá khoá ký RS256)")
+        try:
+            from cryptography.fernet import Fernet
+            Fernet(settings.key_encryption_key.encode())
+        except Exception as exc:  # noqa: BLE001
+            raise ConfigError("IDENTITY_KEY_ENCRYPTION_KEY không phải khoá Fernet hợp lệ") from exc
+    if settings.jwt_compat_secret and settings.env == "production" and settings.jwt_compat_secret.startswith("dev-"):
         raise ConfigError("IDENTITY_JWT_COMPAT_SECRET kiểu dev không được dùng ở production")
+    if settings.env == "production" and not settings.issuer.startswith("https://"):
+        raise ConfigError("IDENTITY_ISSUER phải là https:// ở production")

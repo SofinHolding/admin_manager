@@ -69,7 +69,7 @@ ${prefix}_DATABASE_URL=postgresql://$database_user:CHANGE_ME@127.0.0.1:5432/$dat
 $redis_line""")
 
 PYTEST_INI = """[pytest]
-pythonpath = src ../../packages/observability/src ../../packages/contracts/python
+pythonpath = src ../../packages/observability/src ../../packages/contracts/python ../../packages/sdk-python
 testpaths = tests
 asyncio_mode = auto
 """
@@ -81,11 +81,12 @@ COPY $path/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY packages/contracts/python /app/packages/contracts/python
 COPY packages/observability/src /app/packages/observability/src
+COPY packages/sdk-python /app/packages/sdk-python
 COPY $path/src /app/src
 COPY $path/migrations /app/migrations
 RUN useradd --system --uid 10001 --no-create-home app && chown -R app /app
 USER app
-ENV PYTHONPATH=/app/src:/app/packages/observability/src:/app/packages/contracts/python
+ENV PYTHONPATH=/app/src:/app/packages/observability/src:/app/packages/contracts/python:/app/packages/sdk-python
 EXPOSE $port
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:$port/health/live').status==200 else 1)"
 CMD ["uvicorn", "$package.main:app", "--host", "0.0.0.0", "--port", "$port"]
@@ -267,12 +268,13 @@ def planned_files(name: str, svc: dict) -> dict[str, str]:
     prefix = _prefix(name)
     has_cache = "cache" in svc["modules"]
     ctx = {
-        "name": name, "package": svc["package"], "port": svc["port"], "database": svc["database"],
-        "database_user": svc["database"].replace("_db", "_svc"), "path": svc["path"],
+        "name": name, "package": svc["package"], "port": svc["port"],
+        "database_user": (svc["database"] or "").replace("_db", "_svc"), "path": svc["path"],
         "prefix": prefix, "responsibility": svc["responsibility"],
         "tables": ", ".join(f"`{t}`" for t in svc["owned_tables"]) or "—",
         "emits": ", ".join(f"`{e}`" for e in svc["emits"]) or "—",
         "consumes": ", ".join(f"`{e}`" for e in svc["consumes"]) or "—",
+        "database": svc["database"] or "—",
         "module_rows": "\n".join(
             f"| `{m}` | {v['phase']} | {v['responsibility']} |" for m, v in svc["modules"].items()),
         "redis_line": f"{prefix}_REDIS_URL=redis://127.0.0.1:6379/0  # cache thuần; ACL user riêng\n" if has_cache else "",
@@ -281,13 +283,19 @@ def planned_files(name: str, svc: dict) -> dict[str, str]:
         "redis_ctor": ", redis_url=redis_url" if has_cache else "",
     }
     pkg = f"{svc['path']}/src/{svc['package']}"
+    has_db = bool(svc["database"])
+    dockerfile = DOCKERFILE.substitute(ctx)
+    env_example = ENV_EXAMPLE.substitute(ctx)
+    if not has_db:  # service không trạng thái (vd gateway): không migration, không DB
+        dockerfile = "\n".join(ln for ln in dockerfile.splitlines() if "/migrations" not in ln) + "\n"
+        env_example = "\n".join(ln for ln in env_example.splitlines() if "DATABASE" not in ln
+                                 and "Database RIÊNG" not in ln) + "\n"
     files = {
         f"{svc['path']}/README.md": README.substitute(ctx),
         f"{svc['path']}/requirements.txt": REQUIREMENTS,
-        f"{svc['path']}/.env.example": ENV_EXAMPLE.substitute(ctx),
+        f"{svc['path']}/.env.example": env_example,
         f"{svc['path']}/pytest.ini": PYTEST_INI,
-        f"{svc['path']}/Dockerfile": DOCKERFILE.substitute(ctx),
-        f"{svc['path']}/migrations/README.md": MIGRATIONS_README.substitute(ctx),
+        f"{svc['path']}/Dockerfile": dockerfile,
         f"{pkg}/__init__.py": Template(INIT_PKG).substitute(ctx),
         f"{pkg}/config.py": CONFIG.substitute(ctx),
         f"{pkg}/app.py": APP.substitute(ctx),
@@ -295,6 +303,8 @@ def planned_files(name: str, svc: dict) -> dict[str, str]:
         f"{svc['path']}/tests/test_health.py": TEST_HEALTH.substitute(ctx),
         f"{svc['path']}/tests/test_config.py": TEST_CONFIG.substitute(ctx),
     }
+    if has_db:
+        files[f"{svc['path']}/migrations/README.md"] = MIGRATIONS_README.substitute(ctx)
     for module, meta in svc["modules"].items():
         files[f"{pkg}/{module}/__init__.py"] = MODULE_INIT.substitute(
             module=module, name=name, phase=meta["phase"], responsibility=meta["responsibility"])

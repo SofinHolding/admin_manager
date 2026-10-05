@@ -17,7 +17,8 @@
   ],
   "allowed_shared_packages": [
     "manager_observability",
-    "manager_contracts"
+    "manager_contracts",
+    "manager_sdk"
   ],
   "services": {
     "identity-service": {
@@ -43,7 +44,10 @@
         "oidc_clients",
         "signing_keys",
         "auth_audit",
-        "outbox"
+        "outbox",
+        "sessions",
+        "integration_provisioning",
+        "feed_cursor"
       ],
       "emits": [
         "account.registered",
@@ -72,7 +76,7 @@
         },
         "tokens": {
           "phase": "1.4",
-          "responsibility": "phát hành JWT RS256, JWKS, xoay khóa ký"
+          "responsibility": "phát hành access token RS256, JWKS, xoay khoá ký, phiên (sid) và thu hồi"
         },
         "permissions": {
           "phase": "1.4",
@@ -93,6 +97,10 @@
         "notifications": {
           "phase": "1.2",
           "responsibility": "adapter gửi email (verify, reset); interface tách được thành service riêng"
+        },
+        "feed_consumer": {
+          "phase": "1.7",
+          "responsibility": "kéo feed Integration để cập nhật kết quả provisioning client"
         }
       }
     },
@@ -323,6 +331,32 @@
         "store": {
           "phase": "existing",
           "responsibility": "repositories và migrations reward_*"
+        }
+      }
+    },
+    "api-gateway": {
+      "status": "scaffold",
+      "path": "services/api-gateway",
+      "package": "api_gateway",
+      "port": 8400,
+      "database": null,
+      "responsibility": "Điểm vào công khai duy nhất: route theo route-map, bảo mật biên (CORS allowlist, header, giới hạn body, rate limit). Không chứa nghiệp vụ.",
+      "public_prefixes": [],
+      "owned_tables": [],
+      "emits": [],
+      "consumes": [],
+      "modules": {
+        "routing": {
+          "phase": "5",
+          "responsibility": "route theo infra/gateway/route-map.json, proxy streaming, không bao giờ route /internal"
+        },
+        "edge_security": {
+          "phase": "5",
+          "responsibility": "security headers, CORS allowlist, giới hạn kích thước body, rate limit nền, xoá header nhạy cảm"
+        },
+        "access_log": {
+          "phase": "5",
+          "responsibility": "request-id, access log đã che secret, tách health khỏi traffic công khai"
         }
       }
     }

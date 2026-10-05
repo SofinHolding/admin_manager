@@ -10,6 +10,8 @@ import asyncpg
 
 from identity_service.accounts import repository as accounts
 from identity_service.audit import repository as audit
+from identity_service.auth import refresh_repository as refresh_tokens, session_repository as sessions
+from identity_service.outbox import events
 from identity_service.db import Database
 from identity_service.errors import DomainError
 from identity_service.security import iso, utcnow
@@ -37,8 +39,15 @@ class AccountAdminService:
         if user_id == actor.get("sub"):
             raise DomainError(400, "Không thể khoá chính mình")
         async with self.db.transaction() as conn:
-            if not await accounts.set_status(conn, user_id, new_status):
+            before = await accounts.get_by_id(conn, user_id)
+            if not before or not await accounts.set_status(conn, user_id, new_status):
                 raise DomainError(404, "Tài khoản không tồn tại")
+            if before["status"] != new_status:
+                await events.status_changed(conn, user_id, new_status, before["status"])
+            if new_status == "suspended":  # khoá tài khoản: thu hồi mọi phiên NGAY, không chờ token hết hạn
+                await refresh_tokens.revoke_all(conn, user_id)
+                await sessions.revoke_all(conn, user_id, self.now())
+                await events.session_revoked(conn, user_id)
             await audit.record(conn, account_id=actor.get("sub", ""), event_type="account_status_changed",
                                now=self.now(), target_type="account", target_id=user_id,
                                payload={"status": new_status})
@@ -68,8 +77,16 @@ class AccountAdminService:
                 updates["role"] = role
             if not updates:
                 return {"ok": True, "message": "Không có thay đổi."}
+            before = await accounts.get_by_id(conn, user_id)
             try:
                 ok = await accounts.update_by_admin(conn, user_id, updates)
+                if ok and before:
+                    if "role" in updates and updates["role"] != before["role"]:
+                        await events.role_changed(conn, user_id, updates["role"], before["role"])
+                        await sessions.revoke_all(conn, user_id, self.now())  # đổi role: bắt cấp token mới
+                        await events.session_revoked(conn, user_id)
+                    if "username" in updates:
+                        await events.profile_updated(conn, user_id, updates["username"])
             except asyncpg.UniqueViolationError as exc:
                 if "email" in (exc.constraint_name or ""):
                     raise DomainError(409, "Email đã được đăng ký") from None
@@ -88,6 +105,8 @@ class AccountAdminService:
         async with self.db.transaction() as conn:
             if not await accounts.delete(conn, user_id):
                 raise DomainError(404, "Tài khoản không tồn tại")
+            await events.session_revoked(conn, user_id)
+            await events.deleted(conn, user_id)
             await audit.record(conn, account_id=actor.get("sub", ""), event_type="account_deleted",
                                now=self.now(), target_type="account", target_id=user_id)
         logger.info("Xoá user %s", user_id)

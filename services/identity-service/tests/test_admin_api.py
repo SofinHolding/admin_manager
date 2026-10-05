@@ -104,7 +104,9 @@ async def test_suspend_and_unsuspend_user(client, db, mailer):
     r = await client.patch(f"/v1/admin/users/{u['id']}/status", headers=a["auth"], json={"status": "suspended"})
     assert r.json() == {"ok": True, "status": "suspended"}
     assert (await login(client, "bi_khoa_boi_admin")).status_code == 403
-    assert (await client.get("/v1/auth/me", headers=u["auth"])).status_code == 403
+    # RS256: khoá tài khoản thu hồi phiên NGAY, access token cũ bị từ chối 401 (legacy HS256 chỉ 403 ở /me)
+    r = await client.get("/v1/auth/me", headers=u["auth"])
+    assert (r.status_code, r.json()["detail"]) == (401, "Phiên đã bị thu hồi")
     await client.patch(f"/v1/admin/users/{u['id']}/status", headers=a["auth"], json={"status": "active"})
     assert (await login(client, "bi_khoa_boi_admin")).status_code == 200
 

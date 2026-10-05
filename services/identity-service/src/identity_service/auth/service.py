@@ -24,11 +24,15 @@ import asyncpg
 
 from identity_service.accounts import repository as accounts
 from identity_service.audit import repository as audit
-from identity_service.auth import legacy_jwt, refresh_repository as refresh_tokens
+from identity_service.auth import refresh_repository as refresh_tokens, session_repository as sessions
 from identity_service.config import Settings
 from identity_service.db import Database
 from identity_service.errors import DomainError
 from identity_service.notifications.port import Mailer
+from identity_service.outbox import events
+from identity_service.permissions import repository as perms_repo
+from identity_service.permissions.service import effective_permissions
+from identity_service.tokens.service import TokenService
 from identity_service.registration_keys import repository as keys
 from identity_service.security import (hash_password, hash_token, iso, new_numeric_code, new_token,
                                        utcnow, verify_password)
@@ -52,24 +56,31 @@ async def _dummy_password_hash() -> str:
 
 
 class AuthService:
-    def __init__(self, db: Database, settings: Settings, mailer: Mailer, *,
+    def __init__(self, db: Database, settings: Settings, mailer: Mailer, tokens: TokenService, *,
                  now: Callable[[], datetime] = utcnow,
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
         self.db = db
         self.settings = settings
         self.mailer = mailer
+        self.tokens = tokens
         self.now = now
         self._sleep = sleep
 
     # ── tiện ích ────────────────────────────────────────────────────────────────
 
-    def _access_token(self, account: dict, client_type: str = "web") -> str:
-        return legacy_jwt.create_access_token(
-            self.settings.jwt_compat_secret, account_id=account["id"], username=account["username"],
-            role=account["role"], client_type=client_type, ttl_s=self.settings.access_token_ttl_s)
+    async def _access_token(self, conn, account: dict, sid: str, client_type: str = "web") -> str:
+        perms = effective_permissions(account["role"], await perms_repo.granted(conn, account["id"]))
+        return await self.tokens.issue(account=account, perms=perms, sid=sid, client_type=client_type)
 
-    def decode_access_token(self, token: str) -> dict:
-        return legacy_jwt.decode_access_token(self.settings.jwt_compat_secret, token)
+    async def verify_access_token(self, token: str) -> dict:
+        """Verify chữ ký/iss/aud/exp; nếu token mang `sid` thì phiên phải còn hiệu lực (thu hồi có tác dụng ngay)."""
+        payload = await self.tokens.verify(token)
+        sid = payload.get("sid")
+        if sid:
+            async with self.db.connection() as conn:
+                if not await sessions.is_active(conn, sid):
+                    raise DomainError(401, "Phiên đã bị thu hồi")
+        return payload
 
     async def _safe_send(self, send: Callable[..., Awaitable[None]], email: str, secret: str,
                          username: str) -> None:
@@ -135,6 +146,7 @@ class AuthService:
             await audit.record(conn, account_id=account["id"], event_type="register", now=now,
                                target_type="account", target_id=account["id"],
                                payload={"role": account["role"]})
+            await events.registered(conn, account)
 
         await self._safe_send(self.mailer.send_verify, account["email"], verify_token, account["username"])
         return {"ok": True, "email": account["email"],
@@ -153,6 +165,7 @@ class AuthService:
             await accounts.mark_verified(conn, account["id"])
             await audit.record(conn, account_id=account["id"], event_type="email_verified",
                                now=self.now(), target_type="account", target_id=account["id"])
+            await events.verified(conn, account["id"])
         return {"ok": True, "message": "Xác thực email thành công. Đăng nhập ngay."}
 
     async def resend_verify(self, email: str) -> dict:
@@ -190,17 +203,20 @@ class AuthService:
 
         now = self.now()
         refresh_raw = new_token()
+        sid = uuid.uuid4().hex
         async with self.db.transaction() as conn:
+            await sessions.create(conn, sid=sid, account_id=account["id"], client_type=client_type, now=now)
             await refresh_tokens.create(
                 conn, token_hash=hash_token(refresh_raw), account_id=account["id"], now=now,
-                expires_at=now + timedelta(days=self.settings.refresh_token_ttl_days))
+                expires_at=now + timedelta(days=self.settings.refresh_token_ttl_days), sid=sid)
             await accounts.update_last_login(conn, account["id"], now)
             if client_type == _FALLBACK_TOOL:
                 await audit.record(conn, account_id=account["id"], event_type="login_fallback_tool",
                                    now=now, target_type="account", target_id=account["id"],
                                    payload={"username": account["username"]})
+            access = await self._access_token(conn, account, sid, client_type)
         return {
-            "access_token": self._access_token(account, client_type),
+            "access_token": access,
             "refresh_token": refresh_raw,
             "expires_in": self.settings.access_token_ttl_s,
             "user": {"id": account["id"], "username": account["username"],
@@ -208,24 +224,36 @@ class AuthService:
         }
 
     async def refresh(self, refresh_token: str) -> dict:
-        async with self.db.connection() as conn:
+        async with self.db.transaction() as conn:
             record = await refresh_tokens.get_valid(conn, hash_token(refresh_token), self.now())
             if not record:
                 raise DomainError(401, "Refresh token không hợp lệ hoặc đã hết hạn")
             account = await accounts.get_by_id(conn, record["account_id"])
-        if not account or account["status"] != "active":
-            raise DomainError(401, "Tài khoản không khả dụng")
-        return {"access_token": self._access_token(account),
-                "expires_in": self.settings.access_token_ttl_s}
+            if not account or account["status"] != "active":
+                raise DomainError(401, "Tài khoản không khả dụng")
+            sid = record.get("sid")
+            if not sid:  # refresh token nhập từ legacy chưa có phiên: tạo phiên ngay lần dùng đầu
+                sid = uuid.uuid4().hex
+                await sessions.create(conn, sid=sid, account_id=account["id"], client_type="web", now=self.now())
+                await refresh_tokens.attach_session(conn, hash_token(refresh_token), sid)
+            elif not await sessions.is_active(conn, sid):
+                raise DomainError(401, "Refresh token không hợp lệ hoặc đã hết hạn")
+            access = await self._access_token(conn, account, sid)
+        return {"access_token": access, "expires_in": self.settings.access_token_ttl_s}
 
     async def logout(self, refresh_token: str) -> dict:
         """Fire-and-forget: luôn trả ok dù token không tồn tại (như legacy)."""
-        async with self.db.connection() as conn:
+        async with self.db.transaction() as conn:
+            record = await conn.fetchrow("SELECT account_id, sid FROM refresh_tokens WHERE token_hash = $1",
+                                         hash_token(refresh_token))
             await refresh_tokens.revoke(conn, hash_token(refresh_token))
+            if record and record["sid"]:
+                await sessions.revoke(conn, record["sid"], self.now())
+                await events.session_revoked(conn, record["account_id"], record["sid"])
         return {"ok": True}
 
     async def current_account(self, access_token: str) -> dict:
-        payload = self.decode_access_token(access_token)
+        payload = await self.verify_access_token(access_token)
         async with self.db.connection() as conn:
             account = await accounts.get_by_id(conn, payload["sub"])
         if not account:
@@ -264,6 +292,8 @@ class AuthService:
             await accounts.update_password(conn, account["id"], pw_hash)
             await accounts.clear_reset_token(conn, account["id"])
             await refresh_tokens.revoke_all(conn, account["id"])  # bắt đăng nhập lại ở mọi nơi
+            await sessions.revoke_all(conn, account["id"], self.now())
+            await events.session_revoked(conn, account["id"])
             await audit.record(conn, account_id=account["id"], event_type="password_reset",
                                now=self.now(), target_type="account", target_id=account["id"])
         return {"ok": True, "message": "Mật khẩu đã đặt lại. Đăng nhập với mật khẩu mới."}
@@ -300,6 +330,8 @@ class AuthService:
                 raise DomainError(400, "Chưa yêu cầu mã xác thực. Gửi mã trước.")
             await accounts.update_password(conn, account["id"], pw_hash)
             await refresh_tokens.revoke_all(conn, account["id"])
+            await sessions.revoke_all(conn, account["id"], self.now())
+            await events.session_revoked(conn, account["id"])
             await audit.record(conn, account_id=account["id"], event_type="password_changed",
                                now=self.now(), target_type="account", target_id=account["id"])
         return {"ok": True, "message": "Mật khẩu đã thay đổi. Đăng nhập lại với mật khẩu mới."}
@@ -321,6 +353,8 @@ class AuthService:
                 return {"ok": True, "message": "Không có thay đổi."}
             try:
                 await accounts.update_profile(conn, account["id"], updates)
+                if "username" in updates:
+                    await events.profile_updated(conn, account["id"], updates["username"])
             except asyncpg.UniqueViolationError as exc:
                 if "email" in (exc.constraint_name or ""):
                     raise DomainError(409, "Email đã được đăng ký") from None
