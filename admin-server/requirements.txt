@@ -3,6 +3,6 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 asyncpg>=0.29
 bcrypt>=4.1
-pyjwt>=2.8
+pyjwt>=2.15.0
 pydantic[email]>=2.7
 redis>=5.0

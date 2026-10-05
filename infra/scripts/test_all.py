@@ -1,52 +1,126 @@
 #!/usr/bin/env python3
-"""Chạy MỌI bộ test, mỗi bộ trong tiến trình pytest riêng (giống CI từng service chạy độc lập).
+"""Cổng chất lượng DUY NHẤT: dựng hạ tầng DEV riêng, migrate, rồi chạy mọi bộ test (mỗi bộ một tiến trình riêng).
 
-  python infra/scripts/test_all.py              # arch + contract + packages + từng service + integration
-  python infra/scripts/test_all.py --fast       # bỏ integration (test tiến trình thật, ~25s)
-  python infra/scripts/test_all.py --legacy     # thêm test của admin-server legacy
-  python infra/scripts/test_all.py --only arch  # chỉ bộ có tên chứa 'arch'
+  python infra/scripts/test_all.py                # tất cả: arch, contract, packages, từng service, integration, e2e, frontend
+  python infra/scripts/test_all.py --fast         # bỏ test tiến trình thật + e2e + frontend build
+  python infra/scripts/test_all.py --legacy       # thêm test của admin-server legacy
+  python infra/scripts/test_all.py --only e2e     # chỉ bộ có tên chứa chuỗi này
+  python infra/scripts/test_all.py --no-bootstrap # không đụng Docker/pip (đã có sẵn hạ tầng)
 
-Cần: pip install -r tests/arch/requirements.txt
-Thoát 0 khi tất cả xanh. SKIP không tính là đã kiểm chứng: bảng tổng kết hiển thị số SKIP riêng.
+Các bước chuẩn bị (có thể bỏ bằng --no-bootstrap):
+  1. `.env.dev` (secret DEV ngẫu nhiên) qua bootstrap_dev.py;  2. thư viện Python còn thiếu (pip, chỉ khi thiếu);
+  3. Postgres + Redis DEV RIÊNG (`docker compose -f infra/docker/compose.dev.yml up -d`, project `manager-platform-dev`);
+  4. migration từng service (job riêng).
+Thoát 0 CHỈ khi mọi bước và mọi bộ test xanh. SKIP không phải PASS: bảng tổng kết liệt kê SKIP riêng và coi
+SKIP vì thiếu hạ tầng là LỖI khi chạy bản đầy đủ (không bootstrap được hạ tầng thì không được báo xanh).
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "infra" / "scripts"))
 REGISTRY = json.loads((ROOT / "infra" / "service-registry.json").read_text(encoding="utf-8"))
+COMPOSE = ROOT / "infra" / "docker" / "compose.dev.yml"
+MIGRATING = ("identity-service", "integration-service", "analytics-service")
+PY_DEPS = {"pytest": "pytest>=8", "yaml": "pyyaml>=6", "jsonschema": "jsonschema>=4.18", "pytest_asyncio": "pytest-asyncio",
+           "fastapi": "fastapi>=0.115", "uvicorn": "uvicorn[standard]>=0.30", "asyncpg": "asyncpg>=0.29",
+           "httpx": "httpx>=0.27", "jwt": "pyjwt[crypto]>=2.15.0", "cryptography": "cryptography>=42", "bcrypt": "bcrypt>=4.1",
+           "redis": "redis>=5.0", "email_validator": "pydantic[email]>=2.7", "tzdata": "tzdata>=2024.1"}
 
 
-def suites(fast: bool, legacy: bool) -> list[tuple[str, Path]]:
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+# ── Chuẩn bị ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+def step_env() -> bool:
+    import bootstrap_dev
+    if not bootstrap_dev.ENV_FILE.exists():
+        log("… bootstrap_dev (sinh .env.dev ngẫu nhiên)")
+        r = subprocess.run([sys.executable, str(ROOT / "infra" / "scripts" / "bootstrap_dev.py")], cwd=ROOT)
+        if r.returncode != 0:
+            return False
+    bootstrap_dev.load_into_environ()
+    return True
+
+
+def step_python_deps() -> bool:
+    missing = [spec for mod, spec in PY_DEPS.items() if importlib.util.find_spec(mod) is None]
+    if not missing:
+        return True
+    log(f"… pip install (thiếu: {', '.join(missing)})")
+    return subprocess.run([sys.executable, "-m", "pip", "install", "-q", *missing]).returncode == 0
+
+
+def step_infra() -> bool:
+    import devenv
+    if devenv.pg_ready() and devenv.redis_ready():
+        return True
+    if not shutil.which("docker"):
+        log("LỖI: không có docker và hạ tầng DEV chưa chạy.")
+        return False
+    log("… docker compose up (stack DEV riêng manager-platform-dev: Postgres 55440, Redis 56390)")
+    r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "up", "-d", "--wait"], cwd=ROOT)
+    if r.returncode != 0:
+        return False
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if devenv.pg_ready() and devenv.redis_ready():
+            return True
+        time.sleep(1)
+    log("LỖI: Postgres/Redis DEV không sẵn sàng sau 60s.")
+    return False
+
+
+def step_migrate() -> bool:
+    from dev_stack import DevStack
+    stack = DevStack()
+    for name in ("identity", "integration", "analytics"):
+        log(f"… migrate {name}")
+        try:
+            stack.migrate(name)
+        except RuntimeError as exc:
+            log(f"LỖI: {exc}")
+            return False
+    return True
+
+
+# ── Bộ test ──────────────────────────────────────────────────────────────────────────────────────────────────────
+
+def pytest_suites(fast: bool, legacy: bool) -> list[tuple[str, Path]]:
     out = [("arch", ROOT / "tests" / "arch"),
            ("contract", ROOT / "tests" / "contract"),
            ("pkg:contracts", ROOT / "packages" / "contracts" / "python"),
            ("pkg:observability", ROOT / "packages" / "observability"),
            ("pkg:sdk-python", ROOT / "packages" / "sdk-python")]
     for name, svc in REGISTRY["services"].items():
-        if svc["status"] == "scaffold":
+        if (ROOT / svc["path"]).is_dir() and ((ROOT / svc["path"] / "tests").is_dir() or name == "reward-service"):
             out.append((f"svc:{name}", ROOT / svc["path"]))
     if not fast:
         out.append(("integration", ROOT / "tests" / "integration"))
+        out.append(("e2e", ROOT / "tests" / "e2e"))
     if legacy:
         out.append(("legacy:admin-server", ROOT / "admin-server"))
     return out
 
 
-def run(label: str, cwd: Path) -> dict:
+def run_pytest(label: str, cwd: Path) -> dict:
     started = time.time()
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     proc = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rs"],
-                          cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace")
+                          cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     text = proc.stdout + proc.stderr
     counts = {k: int(n) for n, k in re.findall(r"(\d+) (passed|failed|skipped|error|errors)", text)}
     return {"label": label, "code": proc.returncode, "seconds": time.time() - started,
@@ -54,42 +128,77 @@ def run(label: str, cwd: Path) -> dict:
             + counts.get("errors", 0), "skipped": counts.get("skipped", 0), "output": text}
 
 
+def run_cmd(label: str, cmd: list[str], cwd: Path) -> dict:
+    started = time.time()
+    npm = shutil.which(cmd[0])
+    if not npm:
+        return {"label": label, "code": 127, "seconds": 0.0, "passed": 0, "failed": 1, "skipped": 0,
+                "output": f"không tìm thấy lệnh `{cmd[0]}` (cần Node.js để kiểm frontend)"}
+    proc = subprocess.run([npm, *cmd[1:]], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    text = proc.stdout + proc.stderr
+    m = re.search(r"Tests\s+(?:\x1b\[[0-9;]*m)*\s*(\d+) passed", text)
+    return {"label": label, "code": proc.returncode, "seconds": time.time() - started,
+            "passed": int(m.group(1)) if m else (1 if proc.returncode == 0 else 0),
+            "failed": 0 if proc.returncode == 0 else 1, "skipped": 0, "output": text}
+
+
+def frontend_suites() -> list[tuple[str, list[str]]]:
+    web = ROOT / "admin-web"
+    if not (web / "package.json").is_file():
+        return []
+    steps = []
+    if not (web / "node_modules").is_dir():
+        steps.append(("web:install", ["npm", "ci", "--no-audit", "--no-fund"]))
+    steps += [("web:typecheck", ["npm", "run", "typecheck"]), ("web:test", ["npm", "test"]), ("web:build", ["npm", "run", "build"])]
+    return steps
+
+
+# ── Điều phối ────────────────────────────────────────────────────────────────────────────────────────────────────
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    sys.path.insert(0, str(ROOT / "infra" / "scripts"))
-    import bootstrap_dev
-    if bootstrap_dev.ENV_FILE.exists():
-        bootstrap_dev.load_into_environ()  # secret DEV ngẫu nhiên của máy này (không nằm trong repo)
-    else:
-        print("CHÚ Ý: chưa có .env.dev — chạy `python infra/scripts/bootstrap_dev.py` để bật test cần Postgres/Redis.")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fast", action="store_true")
     ap.add_argument("--legacy", action="store_true")
+    ap.add_argument("--no-bootstrap", action="store_true")
     ap.add_argument("--only", help="chỉ chạy bộ có tên chứa chuỗi này")
     args = ap.parse_args()
 
+    if not args.no_bootstrap:
+        for name, fn in (("môi trường DEV", step_env), ("thư viện Python", step_python_deps), ("hạ tầng DEV", step_infra),
+                         ("migration", step_migrate)):
+            if not fn():
+                print(f"\nKẾT QUẢ: LỖI ở bước chuẩn bị `{name}` — không chạy test (không báo xanh khi hạ tầng chưa dựng được).")
+                return 1
+    else:
+        import bootstrap_dev
+        if bootstrap_dev.ENV_FILE.exists():
+            bootstrap_dev.load_into_environ()
+
     results = []
-    for label, cwd in suites(args.fast, args.legacy):
+    todo: list[tuple[str, object]] = [(label, cwd) for label, cwd in pytest_suites(args.fast, args.legacy)]
+    if not args.fast:
+        todo += [(label, cmd) for label, cmd in frontend_suites()]
+    for label, target in todo:
         if args.only and args.only not in label:
             continue
-        print(f"… {label}", flush=True)
-        r = run(label, cwd)
+        log(f"… {label}")
+        r = run_pytest(label, target) if isinstance(target, Path) else run_cmd(label, target, ROOT / "admin-web")
         results.append(r)
         if r["code"] != 0:
             print(r["output"][-2500:])
-            if "ModuleNotFoundError" in r["output"]:
-                print("  → thiếu thư viện: pip install -r tests/arch/requirements.txt")
 
-    print("\n{:<22} {:>7} {:>7} {:>7} {:>8}  {}".format("bộ test", "pass", "fail", "skip", "giây", ""))
+    print("\n{:<24} {:>7} {:>7} {:>7} {:>8}  {}".format("bộ test", "pass", "fail", "skip", "giây", ""))
     for r in results:
-        status = "OK" if r["code"] == 0 else "LỖI"
-        print("{:<22} {:>7} {:>7} {:>7} {:>8.1f}  {}".format(
-            r["label"], r["passed"], r["failed"], r["skipped"], r["seconds"], status))
+        print("{:<24} {:>7} {:>7} {:>7} {:>8.1f}  {}".format(
+            r["label"], r["passed"], r["failed"], r["skipped"], r["seconds"], "OK" if r["code"] == 0 else "LỖI"))
     total_skip = sum(r["skipped"] for r in results)
     bad = [r["label"] for r in results if r["code"] != 0]
     if total_skip:
-        print(f"\nCHÚ Ý: {total_skip} test bị SKIP (thiếu hạ tầng) — chưa được kiểm chứng.")
+        print(f"\nCHÚ Ý: {total_skip} test bị SKIP — chưa được kiểm chứng (xem lý do bằng -rs ở từng bộ).")
+        if not args.fast and not args.only and not args.no_bootstrap:
+            bad.append("skipped-tests")  # bản đầy đủ đã dựng hạ tầng: SKIP nghĩa là còn kẽ hở kiểm chứng
     if not results:
         print("Không có bộ test nào được chọn.")
         return 2

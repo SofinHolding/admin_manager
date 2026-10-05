@@ -3,7 +3,7 @@ uvicorn[standard]>=0.30
 asyncpg>=0.29
 httpx
 websockets
-pyjwt>=2.8
+pyjwt>=2.15.0
 cryptography
 pydantic>=2.7
 openpyxl
