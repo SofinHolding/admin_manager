@@ -1,0 +1,57 @@
+name: CI tests (chạy tay)
+
+# CHỈ chạy test, KHÔNG deploy. Trigger tự động đang tắt trong giai đoạn tái cấu trúc
+# (xem CLAUDE.md mục 7 và tests/arch/test_ci_guard.py). Mỗi service test trong job riêng.
+on:
+  workflow_dispatch:
+
+jobs:
+  arch-and-contracts:
+    name: Kiến trúc + hợp đồng
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r tests/arch/requirements.txt fastapi httpx
+      - run: cd tests/arch && python -m pytest -q
+      - run: cd tests/contract && python -m pytest -q
+
+  service:
+    name: Service ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [identity-service, integration-service, analytics-service]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r services/${{ matrix.service }}/requirements.txt pytest pytest-asyncio httpx
+      - run: cd services/${{ matrix.service }} && python -m pytest -q
+
+  packages:
+    name: Package dùng chung
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install fastapi httpx pytest pytest-asyncio pydantic
+      - run: cd packages/contracts/python && python -m pytest -q
+      - run: cd packages/observability && python -m pytest -q
+
+  isolation:
+    name: Cách ly tiến trình
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install fastapi "uvicorn[standard]" httpx pytest pydantic
+      - run: cd tests/integration && python -m pytest -q

@@ -1,0 +1,29 @@
+# Hạ tầng dữ liệu cho dev: Postgres (DB + user riêng từng service) và Redis (ACL theo service).
+# Chưa gồm các service ứng dụng: ảnh Docker của service chưa được build/kiểm chứng ở bước scaffold.
+#   docker compose -f infra/docker/compose.dev.yml up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: dev_postgres_admin_change_me
+    ports: ["127.0.0.1:55432:5432"]
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--aclfile", "/etc/redis/users.acl", "--appendonly", "yes"]
+    ports: ["127.0.0.1:56379:6379"]
+    volumes:
+      - ./redis/users.acl:/etc/redis/users.acl:ro
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:
