@@ -120,6 +120,27 @@ class DevStack:
         for n in MIGRATABLE:
             self.migrate(n)
 
+    def reset_data(self, names: tuple[str, ...] = MIGRATABLE + ("reward",)) -> None:
+        """Xoá DỮ LIỆU (giữ schema + schema_migrations) trong DB DEV của từng service để E2E bắt đầu sạch.
+
+        Chỉ chạm DB `<service>_db` bằng chính user của service (không có đường sang DB khác)."""
+        import asyncio
+
+        import asyncpg
+
+        async def run(svc: str) -> None:
+            conn = await asyncpg.connect(devenv.pg_dsn(svc))
+            try:
+                tables = [r["tablename"] for r in await conn.fetch(
+                    "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> 'schema_migrations'")]
+                if tables:
+                    await conn.execute("TRUNCATE " + ", ".join(f'"{t}"' for t in tables) + " RESTART IDENTITY CASCADE")
+            finally:
+                await conn.close()
+
+        for svc in names:
+            asyncio.run(run(svc))
+
     def start(self, name: str, *, wait: float = 30.0) -> None:
         if self.alive(name):
             return
@@ -130,8 +151,11 @@ class DevStack:
         else:
             cmd = [sys.executable, "-m", "uvicorn", f"{pkg}.main:app", "--host", "127.0.0.1", "--port",
                    str(self.ports[name]), "--log-level", "warning", "--no-access-log"]
-        self.procs[name] = subprocess.Popen(cmd, cwd=ROOT / d, env=self._full_env(name), stdout=subprocess.DEVNULL,
-                                            stderr=subprocess.DEVNULL)
+        log_dir = ROOT / ".dev" / "logs"  # .dev/ nằm trong .gitignore
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log = open(log_dir / f"{name}.log", "ab")
+        self.procs[name] = subprocess.Popen(cmd, cwd=ROOT / d, env=self._full_env(name), stdout=log, stderr=log)
+        log.close()  # tiến trình con giữ handle riêng
         self._wait_live(name, wait)
 
     def _wait_live(self, name: str, timeout: float) -> None:
@@ -172,6 +196,10 @@ class DevStack:
 
     def pid(self, name: str) -> int:
         return self.procs[name].pid
+
+    def log_text(self, name: str) -> str:
+        path = ROOT / ".dev" / "logs" / f"{name}.log"
+        return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
 
     def ready_status(self, name: str) -> int | None:
         try:
