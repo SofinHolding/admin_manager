@@ -30,7 +30,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("admin.auth")
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-thay-doi-khi-deploy")
+def _resolve_jwt_secret() -> str:
+    """Không có secret mặc định cố định. Thiếu JWT_SECRET: MODE=dev thì sinh secret ngẫu nhiên cho tiến trình này
+    (token mất hiệu lực khi restart), còn lại thì từ chối khởi động. Giá trị kiểu `dev-...` bị chặn ngoài dev."""
+    import secrets as _secrets
+
+    mode = os.environ.get("MODE", "production").lower()
+    value = os.environ.get("JWT_SECRET", "").strip()
+    if not value:
+        if mode == "dev":
+            logging.getLogger("admin.auth").warning(
+                "JWT_SECRET chưa đặt: dùng secret ngẫu nhiên cho DEV (token mất hiệu lực khi restart)")
+            return _secrets.token_urlsafe(48)
+        raise RuntimeError("Thiếu JWT_SECRET (bắt buộc ngoài MODE=dev, không có giá trị mặc định)")
+    if mode != "dev" and (value.startswith("dev-") or value.upper().startswith("REPLACE")):
+        raise RuntimeError("JWT_SECRET là giá trị placeholder/dev, không dùng được ngoài MODE=dev")
+    return value
+
+
+JWT_SECRET = _resolve_jwt_secret()
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_TTL = 15 * 60          # 15 phút
 REFRESH_TOKEN_TTL_DAYS = 30

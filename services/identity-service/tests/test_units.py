@@ -15,7 +15,7 @@ from identity_service.errors import DomainError
 from identity_service.security import (hash_password, hash_token, iso, new_numeric_code, new_token,
                                        verify_password)
 
-SECRET = "test-secret-at-least-16-chars"
+SECRET = __import__("secrets").token_urlsafe(32)
 
 
 # ── security ────────────────────────────────────────────────────────────────────

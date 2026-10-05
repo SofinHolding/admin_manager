@@ -1,7 +1,9 @@
 # Hạ tầng dữ liệu dev RIÊNG cho dự án: Postgres (DB + user riêng từng service) và Redis (ACL theo service).
 # Xem infra/docker/README.md. Mọi tên đều có tiền tố `mp-dev` / `mp_dev` và được đặt TƯỜNG MINH để không
 # bao giờ trùng hay ghi đè tài nguyên của project khác trên máy (từng xảy ra khi thiếu `name:`).
-#   docker compose -f infra/docker/compose.dev.yml up -d
+#
+# Secret KHÔNG nằm trong file này: chạy trước  python infra/scripts/bootstrap_dev.py  (sinh .env.dev + .dev/).
+#   docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d
 name: manager-platform-dev
 
 services:
@@ -9,10 +11,10 @@ services:
     image: postgres:16-alpine
     container_name: mp-dev-postgres
     environment:
-      POSTGRES_PASSWORD: dev_postgres_admin_change_me
+      POSTGRES_PASSWORD: ${DEV_PG_ADMIN_PASSWORD:?chạy infra/scripts/bootstrap_dev.py trước}
     ports: ["127.0.0.1:55440:5432"]
     volumes:
-      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ../../.dev/initdb:/docker-entrypoint-initdb.d:ro
       - mp_dev_pgdata:/var/lib/postgresql/data
     networks: [mp_dev_net]
     healthcheck:
@@ -26,12 +28,14 @@ services:
     container_name: mp-dev-redis
     command: ["redis-server", "--aclfile", "/etc/redis/users.acl", "--appendonly", "yes"]
     ports: ["127.0.0.1:56390:6379"]
+    environment:
+      REDISCLI_AUTH: ${DEV_REDIS_ANALYTICS_PASSWORD:?chạy infra/scripts/bootstrap_dev.py trước}
     volumes:
-      - ./redis/users.acl:/etc/redis/users.acl:ro
+      - ../../.dev/redis/users.acl:/etc/redis/users.acl:ro
       - mp_dev_redisdata:/data
     networks: [mp_dev_net]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli --user analytics_cache --pass dev_analytics_change_me --no-auth-warning ping | grep -q PONG"]
+      test: ["CMD-SHELL", "redis-cli --user analytics_cache --no-auth-warning ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10

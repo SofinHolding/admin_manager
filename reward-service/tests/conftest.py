@@ -33,10 +33,9 @@ from store.pool import Pool
 # BUG đã vá: trước đây conftest chỉ nhìn REWARD_TEST_DATABASE_URL, bỏ qua DATABASE_URL CI đặt sẵn
 # (cổng 5432 trong service Postgres của Actions) → luôn rơi về fallback cổng 5544 (Docker dev máy
 # tác giả) → CI báo ConnectionRefusedError vì cổng 5544 không tồn tại trên runner GitHub.
-TEST_DATABASE_URL = (os.environ.get("REWARD_TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
-                      or "postgres://postgres:postgres@127.0.0.1:5544/ufsync_dev")
+TEST_DATABASE_URL = (os.environ.get("REWARD_TEST_DATABASE_URL") or os.environ.get("DATABASE_URL") or "")
 TEST_JWT_SECRET = (os.environ.get("REWARD_TEST_JWT_SECRET") or os.environ.get("JWT_SECRET")
-                    or "dev-secret-thay-doi-khi-deploy")
+                    or __import__("secrets").token_urlsafe(32))  # ngẫu nhiên mỗi lần chạy, không viết cứng
 TEST_ADMIN_API_BASE = (os.environ.get("REWARD_TEST_ADMIN_API_BASE") or os.environ.get("ADMIN_API_BASE")
                         or "http://127.0.0.1:8421")
 

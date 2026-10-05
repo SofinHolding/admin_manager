@@ -9,11 +9,11 @@ import pytest
 from identity_service.auth import legacy_jwt
 from identity_service.security import hash_token
 
-from conftest import login, make_key, register, register_verified, token_for
+from conftest import TEST_JWT_SECRET, login, make_key, register, register_verified, token_for
 
 pytestmark = pytest.mark.needs_pg
 
-SECRET = "test-secret-at-least-16-chars"
+SECRET = TEST_JWT_SECRET
 
 
 # ── validate-key / check ────────────────────────────────────────────────────────

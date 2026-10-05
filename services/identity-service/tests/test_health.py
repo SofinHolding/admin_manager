@@ -11,7 +11,7 @@ from identity_service.db import Database
 
 def _settings(**kw) -> Settings:
     base = dict(port=8430, log_level="INFO", database_url="postgresql://identity_svc:x@127.0.0.1:1/identity_db",
-                env="test", jwt_compat_secret="test-secret-at-least-16-chars")
+                env="test", jwt_compat_secret=__import__("secrets").token_urlsafe(32))
     base.update(kw)
     return Settings(**base)
 
@@ -62,4 +62,4 @@ def test_serving_config_is_required_to_start():
     with pytest.raises(ConfigError, match="IDENTITY_JWT_COMPAT_SECRET"):
         create_app(_settings(jwt_compat_secret=""))
     with pytest.raises(ConfigError, match="dev"):
-        create_app(_settings(env="production", jwt_compat_secret="dev-secret-thay-doi-khi-deploy"))
+        create_app(_settings(env="production", jwt_compat_secret="dev-insecure-secret-1234567890"))

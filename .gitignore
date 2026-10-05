@@ -28,3 +28,7 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# ── Secret & file sinh tự động cho DEV (infra/scripts/bootstrap_dev.py) — KHÔNG BAO GIỜ commit ──
+.env.dev
+.dev/

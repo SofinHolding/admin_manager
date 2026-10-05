@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -14,22 +15,20 @@ import httpx
 import pytest
 import pytest_asyncio
 
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[3] / "infra" / "scripts"))
+import devenv  # noqa: E402  (đọc secret DEV từ .env.dev; không có secret nào nằm trong repo)
+
 from identity_service import migrate
 from identity_service.app import create_app
 from identity_service.config import Settings
 from identity_service.db import Database
 
-PG_REASON = ("cần Postgres đã khởi tạo bằng infra/docker (docker compose up). "
-             "Đặt TEST_PG_HOST/TEST_PG_PORT. SKIP KHÔNG phải là đã kiểm chứng.")
+PG_REASON = devenv.SKIP_REASON
 _TABLES = "auth_audit, refresh_tokens, accounts, invite_keys"
 
 
 def _dsn() -> str | None:
-    host = os.environ.get("TEST_PG_HOST")
-    if not host:
-        return None
-    port = os.environ.get("TEST_PG_PORT", "5432")
-    return f"postgresql://identity_svc:dev_identity_change_me@{host}:{port}/identity_db"
+    return devenv.pg_dsn("identity") if devenv.pg_ready() else None
 
 
 def pytest_collection_modifyitems(config, items):
@@ -43,6 +42,9 @@ def pytest_collection_modifyitems(config, items):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "needs_pg: cần Postgres thật")
+
+
+TEST_JWT_SECRET = __import__("secrets").token_urlsafe(32)  # ngẫu nhiên mỗi lần chạy
 
 
 class CapturingMailer:
@@ -84,7 +86,7 @@ class FakeClock:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(port=8430, log_level="INFO", database_url=_dsn() or "postgresql://x:y@127.0.0.1:1/z",
-                    env="test", jwt_compat_secret="test-secret-at-least-16-chars",
+                    env="test", jwt_compat_secret=TEST_JWT_SECRET,
                     login_fail_delay_s=0.0)
 
 

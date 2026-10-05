@@ -30,17 +30,17 @@ for p in (ROOT / "admin-server", ROOT / "services" / "identity-service" / "src",
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-pg_host = os.environ.get("TEST_PG_HOST")
-pytestmark = pytest.mark.skipif(
-    not pg_host, reason="cần Postgres (TEST_PG_HOST/TEST_PG_PORT). SKIP KHÔNG phải là đã kiểm chứng.")
+sys.path.insert(0, str(ROOT / "infra" / "scripts"))
+import devenv  # noqa: E402
 
-SECRET = "parity-secret-at-least-16-chars"
+pytestmark = pytest.mark.skipif(not devenv.pg_ready(), reason=devenv.SKIP_REASON)
+
+SECRET = __import__("secrets").token_urlsafe(32)
 TABLES = "auth_audit, refresh_tokens, accounts, invite_keys"
 
 
 def _dsn() -> str:
-    return (f"postgresql://identity_svc:dev_identity_change_me@{pg_host}:"
-            f"{os.environ.get('TEST_PG_PORT', '5432')}/identity_db")
+    return devenv.pg_dsn("identity")
 
 
 # ── Hai phía ────────────────────────────────────────────────────────────────────
@@ -98,6 +98,8 @@ class NewSide(Side):
 
 @pytest.fixture
 def legacy_modules(monkeypatch):
+    monkeypatch.setenv("MODE", "dev")  # legacy không còn JWT secret mặc định: dev thì tự sinh ngẫu nhiên
+    monkeypatch.delenv("JWT_SECRET", raising=False)
     auth = importlib.import_module("auth")
     admin_api = importlib.import_module("admin_api")
     legacy_db = importlib.import_module("db")

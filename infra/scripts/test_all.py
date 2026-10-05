@@ -56,6 +56,12 @@ def run(label: str, cwd: Path) -> dict:
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    sys.path.insert(0, str(ROOT / "infra" / "scripts"))
+    import bootstrap_dev
+    if bootstrap_dev.ENV_FILE.exists():
+        bootstrap_dev.load_into_environ()  # secret DEV ngẫu nhiên của máy này (không nằm trong repo)
+    else:
+        print("CHÚ Ý: chưa có .env.dev — chạy `python infra/scripts/bootstrap_dev.py` để bật test cần Postgres/Redis.")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--fast", action="store_true")
     ap.add_argument("--legacy", action="store_true")

@@ -257,9 +257,9 @@ async def test_parity_before_any_sync_reports_everything_missing(db, source):
 
 # ── Nguồn Postgres thật (mô phỏng DB legacy `ufsync` bằng một database tạm) ────────
 
-ADMIN_URL = os.environ.get("TEST_PG_ADMIN_URL") or (
-    f"postgresql://postgres:dev_postgres_admin_change_me@{os.environ.get('TEST_PG_HOST')}:"
-    f"{os.environ.get('TEST_PG_PORT', '5432')}/postgres")
+import devenv  # noqa: E402
+
+ADMIN_URL = devenv.pg_dsn(admin=True) if devenv.pg_ready() else ""
 
 
 async def test_postgres_source_end_to_end_and_it_is_read_only(db):

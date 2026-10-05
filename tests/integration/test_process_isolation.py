@@ -32,14 +32,16 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-PG_HOST = os.environ.get("TEST_PG_HOST")
+sys.path.insert(0, str(ROOT / "infra" / "scripts"))
+import devenv  # noqa: E402
+
+PG_HOST = devenv.pg_ready()
 DEAD_DSN = "postgresql://identity_svc:x@127.0.0.1:1/identity_db"  # cổng 1: không ai nghe
 
 
 def identity_dsn(alive: bool) -> str:
     if alive and PG_HOST:
-        port = os.environ.get("TEST_PG_PORT", "5432")
-        return f"postgresql://identity_svc:dev_identity_change_me@{PG_HOST}:{port}/identity_db"
+        return devenv.pg_dsn("identity")
     return DEAD_DSN
 
 

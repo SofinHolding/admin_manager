@@ -13,7 +13,7 @@ Chế độ chạy (đặt trong .env):
       lập tức hiển thị khi reload trang admin
 
   MODE=production
-    • DATABASE_URL=postgresql://ufsync:password@127.0.0.1:5432/ufsync
+    • DATABASE_URL=postgresql://ufsync:<MAT_KHAU>@127.0.0.1:5432/ufsync
     • Admin web đọc từ Postgres VPS — cùng DB mà Electron sync dữ liệu lên
 
 Chạy dev:

@@ -1,2 +1,0 @@
-user default off
-user analytics_cache on >dev_analytics_change_me ~analytics:* &analytics:* +@read +@write +@keyspace +@connection -@dangerous
