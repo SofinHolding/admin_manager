@@ -1,14 +1,178 @@
-"""Dựng ứng dụng: chassis chuẩn + (các router của module sẽ được gắn ở đây theo phase)."""
+"""Dựng ứng dụng integration-service: chassis (envelope lỗi kiểu MỚI) + các router theo module.
+
+CORS không đặt ở đây (thuộc gateway). Mặt phẳng: USER (token RS256 qua JWKS), MÁY (API key `mpk_`), NỘI BỘ (`X-Service-Key`).
+"""
 
 from __future__ import annotations
 
-from fastapi import FastAPI
-from manager_observability import create_service_app
+import asyncio
+import contextlib
+import logging
+from collections.abc import Callable
+from contextlib import asynccontextmanager
+from datetime import datetime
 
-from integration_service import SERVICE_NAME, __version__
+import asyncpg
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from manager_contracts import ErrorCode, error_envelope
+from manager_observability import create_service_app, current_request_id
+from manager_sdk import FeedClient, ServiceKeyAuth, TokenVerifier, install_auth_error_handler
+
+from integration_service import SERVICE_NAME, __version__, maintenance, migrate
+from integration_service.api_models import ClientPatch, CredentialCreate, RotateRequest
+from integration_service.audit.router import router as audit_router
+from integration_service.audit.service import AuditService
+from integration_service.clients.router import router as clients_router
+from integration_service.clients.service import ClientService
+from integration_service.config import Settings, load_settings, require_serving_config
+from integration_service.container import Container
+from integration_service.credentials.router import router as credentials_router
+from integration_service.credentials.service import CredentialService
+from integration_service.db import Database
+from integration_service.errors import ApiProblem
+from integration_service.feed.router import build_router as build_feed_router
+from integration_service.http_utils import BodyLimitMiddleware, EnvelopeResponse, install_openapi_models
+from integration_service.ingest import schemas
+from integration_service.installations.router import router as installations_router
+from integration_service.installations.service import HandshakeRequest, InstallationService
+from integration_service.machine_runner import MachineRunner
+from integration_service.platforms.router import router as platforms_router
+from integration_service.projects.router import router as projects_router
+from integration_service.projects.service import ProjectService, ProjectUpsert
+from integration_service.provisioning.consumer import ProvisioningConsumer
+from integration_service.ratelimit import FixedWindowLimiter
+from integration_service.resources.router import admin_router as resources_admin_router
+from integration_service.resources.router import router as resources_router
+from integration_service.resources.service import ResourceService
+from integration_service.security import utcnow
+from integration_service.snapshots.router import router as snapshots_router
+from integration_service.snapshots.service import SnapshotService
+
+logger = logging.getLogger("integration.app")
+
+# Dependency (DB) tạm chết: trả 503 thay vì 500 và KHÔNG làm sập tiến trình.
+_DB_DOWN = (OSError, asyncpg.PostgresConnectionError, asyncpg.InterfaceError, TimeoutError, asyncio.TimeoutError)
+FAILED_AUTH_PER_MIN = 30   # số lần xác thực API key SAI tối đa mỗi phút mỗi IP
+
+_DOC_MODELS = [schemas.ResourceBatch, schemas.ResourceUpsertBatch, schemas.ContentBatch, schemas.MetricsBatch,
+               schemas.EventBatch, schemas.CommitRequest, schemas.SnapshotCreate, HandshakeRequest, ProjectUpsert,
+               CredentialCreate, RotateRequest, ClientPatch]
+
+DESCRIPTION = (
+    "Cổng duy nhất cho Tool/hệ thống ngoài. Ba mặt phẳng xác thực độc lập: **user** (access token RS256 do Identity ký), "
+    "**máy** (API key `mpk_<key_id>.<secret>`, scope + platform) và **nội bộ** (`X-Service-Key`, không nằm trong tài liệu "
+    "này). Mọi phản hồi dùng envelope `{ok, data, meta}` / `{ok:false, error:{code,message,details}, meta}`; Tool rẽ nhánh theo "
+    "`error.code`, KHÔNG parse `message`. Hợp đồng dữ liệu: `docs/api/ingest-data-contract-v1.md` (contract `2026-10-01`).")
 
 
-def create_app() -> FastAPI:
-    # Readiness chỉ kiểm tài nguyên CỦA CHÍNH service (DB riêng). Thêm check ở đây khi có kết nối DB.
-    return create_service_app(service_name=SERVICE_NAME, service_version=__version__,
-                              readiness_checks={})
+def create_app(settings: Settings | None = None, *, database: Database | None = None,
+               verifier: TokenVerifier | None = None, now: Callable[[], datetime] = utcnow,
+               identity_feed: FeedClient | None = None, clock=None) -> FastAPI:
+    settings = settings or load_settings()
+    require_serving_config(settings)  # thiếu cấu hình bắt buộc -> fail-fast lúc khởi động
+    owns_db = database is None
+    db = database or Database(settings.database_url)
+
+    async def database_ready() -> bool:
+        try:
+            async with db.connection() as conn:
+                return await migrate.is_up_to_date(conn)
+        except Exception:  # noqa: BLE001 — DB chết/chưa migrate = chưa sẵn sàng
+            return False
+
+    background: list[asyncio.Task] = []
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if owns_db:
+            await db.open()  # pool lười (min_size=0): DB chết lúc boot không làm sập tiến trình
+        container: Container = app.state.container
+        if settings.maintenance_interval_s > 0:
+            background.append(asyncio.create_task(maintenance.loop(container), name="integration-maintenance"))
+        consumer = app.state.provisioning
+        if consumer is not None:
+            background.append(asyncio.create_task(consumer.run_forever(), name="integration-provisioning"))
+        try:
+            yield
+        finally:
+            for task in background:
+                task.cancel()
+            for task in background:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+            background.clear()
+            if owns_db:
+                await db.close()
+            await container.verifier.aclose()
+
+    app = create_service_app(service_name=SERVICE_NAME, service_version=__version__,
+                             readiness_checks={"database": database_ready}, lifespan=lifespan,
+                             description=DESCRIPTION)
+
+    verifier = verifier or TokenVerifier(issuer=settings.issuer, audience=settings.audience, jwks_url=settings.jwks_url)
+    rate_clock = clock or __import__("time").monotonic
+    rate_limiter = FixedWindowLimiter(settings.rate_limit_per_min, clock=rate_clock)
+    fail_limiter = FixedWindowLimiter(FAILED_AUTH_PER_MIN, clock=rate_clock)
+    audit = AuditService(db, now)
+    clients = ClientService(db, settings, now)
+    app.state.container = Container(
+        settings=settings, db=db, now=now, verifier=verifier, service_auth=ServiceKeyAuth(dict(settings.feed_keys)),
+        audit=audit, clients=clients,
+        credentials=CredentialService(db, settings, now, clients, rate_limiter, fail_limiter),
+        installations=InstallationService(now), projects=ProjectService(db, now), resources=ResourceService(db, now),
+        snapshots=SnapshotService(db, settings, now), runner=MachineRunner(db, now, audit),
+        rate_limiter=rate_limiter, fail_limiter=fail_limiter)
+
+    # Consumer provisioning: thiếu URL/khoá => tắt (service vẫn chạy bình thường).
+    app.state.provisioning = None
+    if identity_feed is not None or settings.provisioning_enabled:
+        feed = identity_feed or FeedClient(settings.identity_feed_url, settings.identity_feed_key)
+        app.state.provisioning = ProvisioningConsumer(db, settings, clients, feed, now)
+
+    app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_body_bytes)
+    install_auth_error_handler(app, "envelope")
+
+    @app.exception_handler(ApiProblem)
+    async def _api_problem(_: Request, exc: ApiProblem) -> JSONResponse:
+        return EnvelopeResponse(status_code=exc.status_code, headers=exc.headers or None,
+                                content=error_envelope(exc.code.value, exc.message, request_id=current_request_id(),
+                                                       details=exc.details))
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # Chỉ vị trí + loại lỗi, KHÔNG phản chiếu giá trị đầu vào. Mặt phẳng máy dùng mã RECORD_VALIDATION_FAILED.
+        machine_plane = getattr(request.state, "plane", "user") == "machine"
+        fields = [{"loc": [str(p) for p in e.get("loc", ())], "type": e.get("type", "")} for e in exc.errors()[:20]]
+        owner = any(f["loc"] and f["loc"][-1].lower().startswith("owner") and f["type"] == "extra_forbidden"
+                    for f in fields)
+        code = ErrorCode.RECORD_VALIDATION_FAILED if machine_plane else ErrorCode.REQUEST_VALIDATION_FAILED
+        if machine_plane and request.url.path.startswith("/v1/integrations/projects/"):
+            code = ErrorCode.PROJECT_VALIDATION_FAILED
+        message = ("Trường owner_* không được gửi: quyền sở hữu suy ra từ credential" if owner
+                   else "Request validation failed")
+        return EnvelopeResponse(status_code=422, content=error_envelope(
+            code.value, message, request_id=current_request_id(), details={"fields": fields}))
+
+    async def _db_down(_: Request, exc: Exception) -> JSONResponse:
+        logger.warning("Database không khả dụng: %s", type(exc).__name__)
+        return EnvelopeResponse(status_code=503, content=error_envelope(
+            ErrorCode.UNAVAILABLE.value, "Dịch vụ tạm thời không khả dụng", request_id=current_request_id()))
+
+    for error_type in _DB_DOWN:  # Starlette nhận từng lớp lỗi, không nhận tuple
+        app.add_exception_handler(error_type, _db_down)
+
+    @app.exception_handler(asyncpg.DataError)
+    async def _bad_data(_: Request, exc: Exception) -> JSONResponse:
+        # Đầu vào mà Postgres không chấp nhận (vd ký tự NUL): lỗi của người gọi, không phải lỗi máy chủ.
+        logger.info("Dữ liệu không hợp lệ: %s", type(exc).__name__)
+        return EnvelopeResponse(status_code=422, content=error_envelope(
+            ErrorCode.RECORD_VALIDATION_FAILED.value, "Dữ liệu không hợp lệ", request_id=current_request_id()))
+
+    for router in (clients_router, credentials_router, installations_router, projects_router, resources_router,
+                   snapshots_router, platforms_router, audit_router, resources_admin_router):
+        app.include_router(router)
+    app.include_router(build_feed_router(app.state.container.service_auth))
+    install_openapi_models(app, _DOC_MODELS)
+    return app
