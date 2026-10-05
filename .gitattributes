@@ -1,9 +1,7 @@
-# Shell scripts phải dùng LF — CRLF khiến bash trên Linux báo lỗi "no such file or directory"
+# File được mount/chạy trong container Linux phải giữ LF. Git trên Windows (autocrlf) có thể đổi sang CRLF
+# và làm Redis từ chối file ACL, shell script lỗi `\r`.
+*.acl text eol=lf
 *.sh text eol=lf
-*.yml text eol=lf
-*.yaml text eol=lf
-*.py text eol=lf
-*.ts text eol=lf
-*.tsx text eol=lf
-*.md text eol=lf
-*.json text eol=lf
+*.sql text eol=lf
+Dockerfile text eol=lf
+infra/docker/** text eol=lf

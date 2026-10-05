@@ -106,6 +106,15 @@ def test_redis_acl_file_has_no_comments_or_blank_directives():
     assert lines and all(ln.startswith("user ") for ln in lines), lines
 
 
+def test_container_files_are_pinned_to_lf():
+    """Git trên Windows có thể đổi sang CRLF; Redis từ chối file ACL có ."""
+    attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    for pattern in ("*.acl text eol=lf", "*.sql text eol=lf", "Dockerfile text eol=lf"):
+        assert pattern in attrs, pattern
+    acl_bytes = (ROOT / "infra" / "docker" / "redis" / "users.acl").read_bytes()
+    assert b"" not in acl_bytes
+
+
 def test_compose_mounts_isolation_config():
     assert "./initdb:/docker-entrypoint-initdb.d" in COMPOSE
     assert "--aclfile" in COMPOSE
