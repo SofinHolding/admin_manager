@@ -45,3 +45,8 @@ def configure_logging(service_name: str, service_version: str, level: str = "INF
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
+    # uvicorn cài handler riêng (chữ thường) cho log truy cập/lỗi; bỏ nó để mọi dòng log đều là JSON.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        lg.handlers[:] = []
+        lg.propagate = True

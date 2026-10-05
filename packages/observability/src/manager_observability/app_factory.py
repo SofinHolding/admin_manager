@@ -1,8 +1,15 @@
-"""Dựng FastAPI với chassis chuẩn: request-id, health, envelope lỗi ổn định."""
+"""Dựng FastAPI với chassis chuẩn: request-id, health, envelope lỗi ổn định.
+
+`error_style`:
+  - "envelope" (mặc định): `{ok:false, error:{code,message,details}, meta:{request_id}}` — contract mới.
+  - "legacy": `{"detail": ...}` đúng hình dạng FastAPI cũ, để frontend/Tool cũ không vỡ trong giai đoạn Strangler.
+    Chế độ này KHÔNG phản chiếu giá trị đầu vào khi lỗi validation (không lộ mật khẩu).
+"""
 
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -27,14 +34,19 @@ _STATUS_TO_CODE = {
 
 def create_service_app(*, service_name: str, service_version: str,
                        readiness_checks: dict[str, ReadinessCheck] | None = None,
+                       error_style: Literal["envelope", "legacy"] = "envelope",
                        **fastapi_kwargs) -> FastAPI:
     app = FastAPI(title=service_name, version=service_version, **fastapi_kwargs)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(make_health_router(service_name, service_version, CONTRACT_VERSION,
                                           readiness_checks))
+    legacy = error_style == "legacy"
 
-    def _respond(status: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
-        return JSONResponse(status_code=status,
+    def _respond(status: int, code: str, message: str, details: dict | None = None,
+                 headers: dict | None = None) -> JSONResponse:
+        if legacy:
+            return JSONResponse(status_code=status, content={"detail": message}, headers=headers)
+        return JSONResponse(status_code=status, headers=headers,
                             content=error_envelope(code, message, request_id=current_request_id(),
                                                    details=details))
 
@@ -46,11 +58,16 @@ def create_service_app(*, service_name: str, service_version: str,
     async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         default = ErrorCode.SERVER_ERROR if exc.status_code >= 500 else ErrorCode.REQUEST_VALIDATION_FAILED
         code = _STATUS_TO_CODE.get(exc.status_code, default)
-        return _respond(exc.status_code, code.value, str(exc.detail))
+        return _respond(exc.status_code, code.value, str(exc.detail),
+                        headers=dict(exc.headers) if exc.headers else None)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         # Chỉ trả vị trí và loại lỗi, KHÔNG phản chiếu giá trị đầu vào (có thể là mật khẩu).
+        if legacy:
+            items = [{"type": e.get("type", ""), "loc": list(e.get("loc", [])), "msg": e.get("msg", "")}
+                     for e in exc.errors()]
+            return JSONResponse(status_code=422, content={"detail": items})
         fields = [{"loc": list(e.get("loc", [])), "type": e.get("type", "")} for e in exc.errors()]
         return _respond(422, ErrorCode.REQUEST_VALIDATION_FAILED.value, "Request validation failed",
                         {"fields": fields})

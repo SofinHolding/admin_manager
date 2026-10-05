@@ -2,10 +2,23 @@
   "_comment": "NGUỒN SỰ THẬT về cấu trúc service. Test kiến trúc (tests/arch) và script scaffold đều đọc file này. Sửa file này TRƯỚC khi thêm module, bảng hay event.",
   "contract_version": "2026-10-01",
   "forbidden_legacy_modules": [
-    "admin_api", "auth", "db", "viewer", "links", "groups", "resources", "ops",
-    "stats_core", "cache", "email_service", "main"
+    "admin_api",
+    "auth",
+    "db",
+    "viewer",
+    "links",
+    "groups",
+    "resources",
+    "ops",
+    "stats_core",
+    "cache",
+    "email_service",
+    "main"
   ],
-  "allowed_shared_packages": ["manager_observability", "manager_contracts"],
+  "allowed_shared_packages": [
+    "manager_observability",
+    "manager_contracts"
+  ],
   "services": {
     "identity-service": {
       "status": "scaffold",
@@ -14,20 +27,73 @@
       "port": 8430,
       "database": "identity_db",
       "responsibility": "Nguồn sự thật duy nhất cho account, đăng nhập/đăng ký, token, role, permission, registration key và OIDC.",
-      "public_prefixes": ["/v1/auth", "/v1/accounts", "/v1/admin/accounts", "/.well-known", "/oauth"],
-      "owned_tables": ["accounts", "invite_keys", "refresh_tokens", "permissions", "account_permissions", "oidc_clients", "signing_keys", "auth_audit", "outbox"],
-      "emits": ["account.registered", "account.verified", "account.status_changed", "account.deleted", "account.permission_changed", "session.revoked"],
-      "consumes": ["integration.client.provisioned", "integration.client.provision_failed"],
+      "public_prefixes": [
+        "/v1/auth",
+        "/v1/accounts",
+        "/v1/admin/accounts",
+        "/.well-known",
+        "/oauth"
+      ],
+      "owned_tables": [
+        "accounts",
+        "invite_keys",
+        "refresh_tokens",
+        "permissions",
+        "account_permissions",
+        "oidc_clients",
+        "signing_keys",
+        "auth_audit",
+        "outbox"
+      ],
+      "emits": [
+        "account.registered",
+        "account.verified",
+        "account.status_changed",
+        "account.deleted",
+        "account.permission_changed",
+        "session.revoked"
+      ],
+      "consumes": [
+        "integration.client.provisioned",
+        "integration.client.provision_failed"
+      ],
       "modules": {
-        "auth": {"phase": "1.2", "responsibility": "register, login, logout, refresh, verify-email, forgot/reset/change password"},
-        "accounts": {"phase": "1.3", "responsibility": "profile, quản trị user, trạng thái tài khoản"},
-        "registration_keys": {"phase": "1.3", "responsibility": "invite/registration key, integration_policy, allowed_apps"},
-        "tokens": {"phase": "1.4", "responsibility": "phát hành JWT RS256, JWKS, xoay khóa ký"},
-        "permissions": {"phase": "1.4", "responsibility": "role, permission catalog và grant"},
-        "oidc": {"phase": "1.6", "responsibility": "discovery, authorize, token, userinfo, introspection, back-channel logout, registry client"},
-        "audit": {"phase": "1.3", "responsibility": "audit đăng nhập và thay đổi quyền"},
-        "outbox": {"phase": "1.4", "responsibility": "transactional outbox và phát event account.*"},
-        "notifications": {"phase": "1.3", "responsibility": "adapter gửi email (verify, reset); interface tách được thành service riêng"}
+        "auth": {
+          "phase": "1.2",
+          "responsibility": "register, login, logout, refresh, verify-email, forgot/reset/change password (tương thích contract legacy)"
+        },
+        "accounts": {
+          "phase": "1.2",
+          "responsibility": "profile, quản trị user, trạng thái tài khoản"
+        },
+        "registration_keys": {
+          "phase": "1.2",
+          "responsibility": "invite/registration key, integration_policy, allowed_apps"
+        },
+        "tokens": {
+          "phase": "1.4",
+          "responsibility": "phát hành JWT RS256, JWKS, xoay khóa ký"
+        },
+        "permissions": {
+          "phase": "1.4",
+          "responsibility": "role, permission catalog và grant"
+        },
+        "oidc": {
+          "phase": "1.6",
+          "responsibility": "discovery, authorize, token, userinfo, introspection, back-channel logout, registry client"
+        },
+        "audit": {
+          "phase": "1.2",
+          "responsibility": "audit đăng nhập và thay đổi quyền"
+        },
+        "outbox": {
+          "phase": "1.4",
+          "responsibility": "transactional outbox và phát event account.*"
+        },
+        "notifications": {
+          "phase": "1.2",
+          "responsibility": "adapter gửi email (verify, reset); interface tách được thành service riêng"
+        }
       }
     },
     "integration-service": {
@@ -37,25 +103,103 @@
       "port": 8431,
       "database": "integration_db",
       "responsibility": "Cổng duy nhất cho Tool/hệ thống ngoài: client, credential, resource, snapshot, ingest, job, audit.",
-      "public_prefixes": ["/v1/integrations", "/v1/resources"],
-      "owned_tables": ["integration_clients", "integration_credentials", "installations", "platform_registry", "metric_registry", "projects", "resources", "resource_project_bindings", "snapshots", "snapshot_items", "content_items", "daily_metrics", "activity_events", "idempotency_keys", "jobs", "audit_log", "account_projection", "outbox", "documents", "user_meta", "account_links", "link_codes"],
-      "emits": ["snapshot.committed", "resource.changed", "integration.client.provisioned", "integration.client.provision_failed"],
-      "consumes": ["account.registered", "account.verified", "account.status_changed", "account.deleted"],
+      "public_prefixes": [
+        "/v1/integrations",
+        "/v1/resources"
+      ],
+      "owned_tables": [
+        "integration_clients",
+        "integration_credentials",
+        "installations",
+        "platform_registry",
+        "metric_registry",
+        "projects",
+        "resources",
+        "resource_project_bindings",
+        "snapshots",
+        "snapshot_items",
+        "content_items",
+        "daily_metrics",
+        "activity_events",
+        "idempotency_keys",
+        "jobs",
+        "audit_log",
+        "account_projection",
+        "outbox",
+        "documents",
+        "user_meta",
+        "account_links",
+        "link_codes"
+      ],
+      "emits": [
+        "snapshot.committed",
+        "resource.changed",
+        "integration.client.provisioned",
+        "integration.client.provision_failed"
+      ],
+      "consumes": [
+        "account.registered",
+        "account.verified",
+        "account.status_changed",
+        "account.deleted"
+      ],
       "modules": {
-        "clients": {"phase": "2.1", "responsibility": "Integration Client và liên kết với account"},
-        "credentials": {"phase": "2.1", "responsibility": "cấp, xoay, thu hồi API key (lưu hash), scope"},
-        "installations": {"phase": "2.1", "responsibility": "installation/thiết bị và handshake"},
-        "platforms": {"phase": "2.2", "responsibility": "Platform Registry và Metric Registry (dữ liệu, không phải code)"},
-        "projects": {"phase": "2.2", "responsibility": "project/source namespace, tự upsert"},
-        "resources": {"phase": "2.2", "responsibility": "resource (page/channel/profile), liên kết project, execution_mode"},
-        "idempotency": {"phase": "2.2", "responsibility": "kho Idempotency-Key và phát lại response"},
-        "snapshots": {"phase": "2.3", "responsibility": "state machine snapshot, commit atomic, current pointer"},
-        "ingest": {"phase": "2.3", "responsibility": "validate và canonicalize resources/content/metrics/events"},
-        "feed": {"phase": "2.3", "responsibility": "outbox và change feed (pull) cho snapshot.committed"},
-        "legacy_acl": {"phase": "2.4", "responsibility": "Anti-Corruption Layer: dịch documents cũ sang canonical, pairing tương thích"},
-        "jobs": {"phase": "2.5", "responsibility": "hàng đợi job cho Fallback Tool, claim/complete/fail với lease"},
-        "provisioning": {"phase": "2.6", "responsibility": "tạo client từ event account.registered, báo kết quả"},
-        "audit": {"phase": "2.2", "responsibility": "audit client/installation/request"}
+        "clients": {
+          "phase": "2.1",
+          "responsibility": "Integration Client và liên kết với account"
+        },
+        "credentials": {
+          "phase": "2.1",
+          "responsibility": "cấp, xoay, thu hồi API key (lưu hash), scope"
+        },
+        "installations": {
+          "phase": "2.1",
+          "responsibility": "installation/thiết bị và handshake"
+        },
+        "platforms": {
+          "phase": "2.2",
+          "responsibility": "Platform Registry và Metric Registry (dữ liệu, không phải code)"
+        },
+        "projects": {
+          "phase": "2.2",
+          "responsibility": "project/source namespace, tự upsert"
+        },
+        "resources": {
+          "phase": "2.2",
+          "responsibility": "resource (page/channel/profile), liên kết project, execution_mode"
+        },
+        "idempotency": {
+          "phase": "2.2",
+          "responsibility": "kho Idempotency-Key và phát lại response"
+        },
+        "snapshots": {
+          "phase": "2.3",
+          "responsibility": "state machine snapshot, commit atomic, current pointer"
+        },
+        "ingest": {
+          "phase": "2.3",
+          "responsibility": "validate và canonicalize resources/content/metrics/events"
+        },
+        "feed": {
+          "phase": "2.3",
+          "responsibility": "outbox và change feed (pull) cho snapshot.committed"
+        },
+        "legacy_acl": {
+          "phase": "2.4",
+          "responsibility": "Anti-Corruption Layer: dịch documents cũ sang canonical, pairing tương thích"
+        },
+        "jobs": {
+          "phase": "2.5",
+          "responsibility": "hàng đợi job cho Fallback Tool, claim/complete/fail với lease"
+        },
+        "provisioning": {
+          "phase": "2.6",
+          "responsibility": "tạo client từ event account.registered, báo kết quả"
+        },
+        "audit": {
+          "phase": "2.2",
+          "responsibility": "audit client/installation/request"
+        }
       }
     },
     "analytics-service": {
@@ -65,22 +209,75 @@
       "port": 8432,
       "database": "analytics_db",
       "responsibility": "Toàn bộ thống kê và Dashboard: KPI, traffic, nền tảng, cá nhân, quốc gia, kênh, nhóm, freshness.",
-      "public_prefixes": ["/v1/analytics"],
-      "owned_tables": ["read_resources", "read_content", "read_daily_metrics", "read_events", "agg_daily", "channel_groups", "channel_group_members", "country_aliases", "country_canonicals", "feed_cursor", "processed_events", "account_projection"],
+      "public_prefixes": [
+        "/v1/analytics"
+      ],
+      "owned_tables": [
+        "read_resources",
+        "read_content",
+        "read_daily_metrics",
+        "read_events",
+        "agg_daily",
+        "channel_groups",
+        "channel_group_members",
+        "country_aliases",
+        "country_canonicals",
+        "feed_cursor",
+        "processed_events",
+        "account_projection"
+      ],
       "emits": [],
-      "consumes": ["snapshot.committed", "resource.changed", "account.status_changed", "account.deleted"],
+      "consumes": [
+        "snapshot.committed",
+        "resource.changed",
+        "account.status_changed",
+        "account.deleted"
+      ],
       "modules": {
-        "filters": {"phase": "3", "responsibility": "FilterContext duy nhất cho mọi KPI và biểu đồ"},
-        "feed_consumer": {"phase": "3", "responsibility": "kéo change feed, idempotent theo event id, replay từ cursor"},
-        "readmodels": {"phase": "3", "responsibility": "dựng và cập nhật read model từ dữ liệu canonical"},
-        "kpi": {"phase": "3", "responsibility": "summary: tổng lượt xem, video đăng, kênh quản lý/hoạt động"},
-        "traffic": {"phase": "3", "responsibility": "chuỗi traffic theo chỉ số"},
-        "breakdown": {"phase": "3", "responsibility": "theo nền tảng, cá nhân, quốc gia, kênh/page, nhóm kênh"},
-        "country_comparison": {"phase": "3", "responsibility": "so sánh quốc gia (biểu đồ riêng)"},
-        "groups": {"phase": "3", "responsibility": "nhóm kênh và nhãn nền tảng do viewer quản lý"},
-        "country_config": {"phase": "3", "responsibility": "alias và tên chuẩn quốc gia"},
-        "freshness": {"phase": "3", "responsibility": "as_of, lag, cảnh báo dữ liệu cũ"},
-        "cache": {"phase": "3", "responsibility": "Cache-Aside với Redis, invalidate sau commit"}
+        "filters": {
+          "phase": "3",
+          "responsibility": "FilterContext duy nhất cho mọi KPI và biểu đồ"
+        },
+        "feed_consumer": {
+          "phase": "3",
+          "responsibility": "kéo change feed, idempotent theo event id, replay từ cursor"
+        },
+        "readmodels": {
+          "phase": "3",
+          "responsibility": "dựng và cập nhật read model từ dữ liệu canonical"
+        },
+        "kpi": {
+          "phase": "3",
+          "responsibility": "summary: tổng lượt xem, video đăng, kênh quản lý/hoạt động"
+        },
+        "traffic": {
+          "phase": "3",
+          "responsibility": "chuỗi traffic theo chỉ số"
+        },
+        "breakdown": {
+          "phase": "3",
+          "responsibility": "theo nền tảng, cá nhân, quốc gia, kênh/page, nhóm kênh"
+        },
+        "country_comparison": {
+          "phase": "3",
+          "responsibility": "so sánh quốc gia (biểu đồ riêng)"
+        },
+        "groups": {
+          "phase": "3",
+          "responsibility": "nhóm kênh và nhãn nền tảng do viewer quản lý"
+        },
+        "country_config": {
+          "phase": "3",
+          "responsibility": "alias và tên chuẩn quốc gia"
+        },
+        "freshness": {
+          "phase": "3",
+          "responsibility": "as_of, lag, cảnh báo dữ liệu cũ"
+        },
+        "cache": {
+          "phase": "3",
+          "responsibility": "Cache-Aside với Redis, invalidate sau commit"
+        }
       }
     },
     "reward-service": {
@@ -91,16 +288,42 @@
       "port": 8422,
       "database": "reward_db",
       "responsibility": "Phân phối điểm thưởng qua Discord. Giữ nguyên tại chỗ; git mv sang services/ ở Phase 1.5.",
-      "public_prefixes": ["/v1/rewards", "/v1/reward"],
-      "owned_tables": ["reward_*", "account_denylist", "account_projection"],
+      "public_prefixes": [
+        "/v1/rewards",
+        "/v1/reward"
+      ],
+      "owned_tables": [
+        "reward_*",
+        "account_denylist",
+        "account_projection"
+      ],
       "emits": [],
-      "consumes": ["account.permission_changed", "account.status_changed", "account.deleted"],
+      "consumes": [
+        "account.permission_changed",
+        "account.status_changed",
+        "account.deleted"
+      ],
       "modules": {
-        "api": {"phase": "existing", "responsibility": "auth_proxy, admin, credentials, jobs"},
-        "domain": {"phase": "existing", "responsibility": "state machine, idempotency, parser"},
-        "engine": {"phase": "existing", "responsibility": "job_runner, executor, recovery, worker_manager, token_pool"},
-        "discord": {"phase": "existing", "responsibility": "gateway, http, slash commands"},
-        "store": {"phase": "existing", "responsibility": "repositories và migrations reward_*"}
+        "api": {
+          "phase": "existing",
+          "responsibility": "auth_proxy, admin, credentials, jobs"
+        },
+        "domain": {
+          "phase": "existing",
+          "responsibility": "state machine, idempotency, parser"
+        },
+        "engine": {
+          "phase": "existing",
+          "responsibility": "job_runner, executor, recovery, worker_manager, token_pool"
+        },
+        "discord": {
+          "phase": "existing",
+          "responsibility": "gateway, http, slash commands"
+        },
+        "store": {
+          "phase": "existing",
+          "responsibility": "repositories và migrations reward_*"
+        }
       }
     }
   }

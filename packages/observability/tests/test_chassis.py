@@ -160,3 +160,72 @@ def test_logs_are_json_with_service_and_request_id():
     assert rec["service_name"] == "demo-service" and rec["service_version"] == "9.9.9"
     assert rec["request_id"] == "req-for-log-1" and rec["client_id"] == "cli_1"
     assert rec["level"] == "INFO"
+
+
+# ── Kiểu lỗi legacy (tương thích frontend cũ) ───────────────────────────────────
+
+def _legacy_app():
+    app = create_service_app(service_name="demo-service", service_version="9.9.9",
+                             error_style="legacy")
+
+    @app.post("/login")
+    async def login(body: Login):  # noqa: ARG001
+        return {"ok": True}
+
+    @app.get("/denied")
+    async def denied():
+        from fastapi import HTTPException
+        raise HTTPException(429, "Quá nhiều lần thử", headers={"Retry-After": "7"})
+
+    @app.get("/boom")
+    async def boom():
+        raise RuntimeError("secret-internal-detail")
+
+    return app
+
+
+def test_legacy_style_http_error_keeps_detail_shape_and_headers():
+    r = _client(_legacy_app()).get("/denied")
+    assert r.status_code == 429 and r.json() == {"detail": "Quá nhiều lần thử"}
+    assert r.headers["Retry-After"] == "7"
+
+
+def test_legacy_style_404_is_fastapi_default_shape():
+    r = _client(_legacy_app()).get("/khong-co")
+    assert r.status_code == 404 and r.json() == {"detail": "Not Found"}
+
+
+def test_legacy_style_validation_has_detail_list_without_input_echo():
+    r = _client(_legacy_app()).post("/login", json={"username": "alice", "password": 12345678})
+    body = r.json()
+    assert r.status_code == 422 and isinstance(body["detail"], list)
+    assert set(body["detail"][0]) == {"type", "loc", "msg"}  # không có `input`
+    assert "12345678" not in r.text and "alice" not in r.text
+
+
+def test_legacy_style_500_has_no_internal_detail():
+    r = _client(_legacy_app()).get("/boom")
+    assert r.status_code == 500 and r.json() == {"detail": "Internal server error"}
+    assert "secret-internal-detail" not in r.text
+
+
+def test_default_style_is_still_envelope():
+    assert _client(_app()).get("/khong-co").json()["ok"] is False
+
+
+async def test_slow_readiness_check_times_out_fast_instead_of_hanging():
+    """Check treo (DB chết) không được làm probe treo theo: quá hạn thì trả 503 nhanh."""
+    import asyncio
+    import time
+
+    async def hangs():
+        await asyncio.sleep(30)
+        return True
+
+    import httpx
+    app = _app({"own_db": hangs})
+    started = time.time()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get("/health/ready")
+    assert r.status_code == 503 and r.json()["checks"] == {"own_db": False}
+    assert time.time() - started < 5
