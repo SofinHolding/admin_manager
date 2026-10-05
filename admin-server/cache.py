@@ -24,7 +24,7 @@ from typing import Any
 logger = logging.getLogger("admin.cache")
 
 NS = "adm"
-SCHEMA = "v1"          # tăng khi shape kết quả của stats_core đổi → mọi khoá cũ thành vô hiệu
+SCHEMA = "v3"          # tăng khi shape kết quả của stats_core đổi → mọi khoá cũ thành vô hiệu
 VERSION_KEY = f"{NS}:{SCHEMA}:docver"
 
 
@@ -226,34 +226,65 @@ class CachedDb:
 
     # ── 5 phương thức được cache ─────────────────────────────────────────────────
 
-    async def traffic_metric(self, date_from: str, date_to: str,
-                             scope: str = "", country: str = "") -> dict:
+    async def traffic_metric(self, date_from: str, date_to: str, scope: str = "", country: str = "",
+                             user_ids: list[str] | None = None,
+                             channel_refs: set[str] | None = None,
+                             country_overrides: dict[str, str] | None = None) -> dict:
+        uid_key = None if user_ids is None else tuple(sorted(user_ids))
+        cr_key = None if channel_refs is None else tuple(sorted(channel_refs))
+        co_key = None if not country_overrides else tuple(sorted(country_overrides.items()))
         return await self._aside(
-            "traffic_metric", (date_from, date_to, scope, country),
-            lambda: self._inner.traffic_metric(date_from, date_to, scope, country),
+            "traffic_metric", (date_from, date_to, scope, country, uid_key, cr_key, co_key),
+            lambda: self._inner.traffic_metric(date_from, date_to, scope, country,
+                                               user_ids, channel_refs, country_overrides),
         )
 
-    async def summary(self, date_from: str, date_to: str, country: str = "") -> dict:
+    async def summary(self, date_from: str, date_to: str, country: str = "",
+                      user_ids: list[str] | None = None,
+                      channel_refs: set[str] | None = None,
+                      country_overrides: dict[str, str] | None = None) -> dict:
+        uid_key = None if user_ids is None else tuple(sorted(user_ids))
+        cr_key = None if channel_refs is None else tuple(sorted(channel_refs))
+        co_key = None if not country_overrides else tuple(sorted(country_overrides.items()))
         return await self._aside(
-            "summary", (date_from, date_to, country),
-            lambda: self._inner.summary(date_from, date_to, country),
+            "summary", (date_from, date_to, country, uid_key, cr_key, co_key),
+            lambda: self._inner.summary(date_from, date_to, country, user_ids, channel_refs,
+                                        country_overrides),
         )
 
-    async def top_channels(self, date_from: str, date_to: str, country: str = "",
-                           limit: int = 15) -> list[dict]:
+    async def top_channels(self, date_from: str, date_to: str, country: str = "", limit: int = 15,
+                           user_ids: list[str] | None = None,
+                           channel_refs: set[str] | None = None,
+                           country_overrides: dict[str, str] | None = None) -> list[dict]:
+        uid_key = None if user_ids is None else tuple(sorted(user_ids))
+        cr_key = None if channel_refs is None else tuple(sorted(channel_refs))
+        co_key = None if not country_overrides else tuple(sorted(country_overrides.items()))
         return await self._aside(
-            "top_channels", (date_from, date_to, country, limit),
-            lambda: self._inner.top_channels(date_from, date_to, country, limit),
+            "top_channels", (date_from, date_to, country, limit, uid_key, cr_key, co_key),
+            lambda: self._inner.top_channels(date_from, date_to, country, limit,
+                                             user_ids, channel_refs, country_overrides),
         )
 
-    async def views_by_country(self, date_from: str, date_to: str) -> dict:
+    async def views_by_country(self, date_from: str, date_to: str,
+                               user_ids: list[str] | None = None,
+                               channel_refs: set[str] | None = None,
+                               country_overrides: dict[str, str] | None = None) -> dict:
+        uid_key = None if user_ids is None else tuple(sorted(user_ids))
+        cr_key = None if channel_refs is None else tuple(sorted(channel_refs))
+        co_key = None if not country_overrides else tuple(sorted(country_overrides.items()))
         return await self._aside(
-            "views_by_country", (date_from, date_to),
-            lambda: self._inner.views_by_country(date_from, date_to),
+            "views_by_country", (date_from, date_to, uid_key, cr_key, co_key),
+            lambda: self._inner.views_by_country(date_from, date_to, user_ids, channel_refs,
+                                                 country_overrides),
         )
 
-    async def country_tags(self) -> list[str]:
+    async def country_tags(self, user_ids: list[str] | None = None,
+                           channel_refs: set[str] | None = None,
+                           country_overrides: dict[str, str] | None = None) -> list[str]:
+        uid_key = None if user_ids is None else tuple(sorted(user_ids))
+        cr_key = None if channel_refs is None else tuple(sorted(channel_refs))
+        co_key = None if not country_overrides else tuple(sorted(country_overrides.items()))
         return await self._aside(
-            "country_tags", (),
-            lambda: self._inner.country_tags(),
+            "country_tags", (uid_key, cr_key, co_key),
+            lambda: self._inner.country_tags(user_ids, channel_refs, country_overrides),
         )

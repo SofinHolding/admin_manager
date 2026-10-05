@@ -5,11 +5,11 @@
  * Luồng: Gửi mã → Nhập mã + mật khẩu mới → Đổi thành công → Đăng nhập lại.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { KeyRound, Mail, RefreshCw, Save, Send, User } from "lucide-react";
+import { Copy, KeyRound, Link2, Mail, RefreshCw, Save, Send, Trash2, User } from "lucide-react";
 import { useAuth } from "../auth";
-import { profileApi } from "../api";
+import { linksApi, profileApi, type ViewerLink } from "../api";
 import { Button } from "../components/ui/button";
 
 export default function ProfilePage() {
@@ -19,6 +19,7 @@ export default function ProfilePage() {
     <div className="mx-auto max-w-xl space-y-6">
       <h1 className="text-xl font-bold">Hồ sơ cá nhân</h1>
       {user && <ProfileForm user={user} />}
+      <ToolLinksCard />
       <ChangePasswordForm />
     </div>
   );
@@ -94,6 +95,154 @@ function ProfileForm({ user }: { user: { username: string; email: string; role: 
             Lưu thay đổi
           </Button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Liên kết Tool ───────────────────────────────────────────────────────────
+function fmtCountdown(ms: number): string {
+  if (ms <= 0) return "Đã hết hạn";
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function errMsg(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message ? e.message : fallback;
+}
+
+function ToolLinksCard() {
+  const [links, setLinks] = useState<ViewerLink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [code, setCode] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { items } = await linksApi.list();
+      setLinks(items);
+    } catch (e) {
+      toast.error(errMsg(e, "Không tải được danh sách liên kết"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!expiresAt) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [expiresAt]);
+
+  const remainingMs = expiresAt ? new Date(expiresAt).getTime() - now : 0;
+
+  const handleCreate = async () => {
+    setCreating(true);
+    try {
+      const res = await linksApi.createCode();
+      setCode(res.code);
+      setExpiresAt(res.expires_at);
+      setNow(Date.now());
+      toast.success("Đã tạo mã liên kết. Mã hết hạn sau 15 phút.");
+    } catch (e) {
+      toast.error(errMsg(e, "Tạo mã thất bại"));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleCopy = () => {
+    if (!code) return;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(code).then(() => toast.success("Đã copy mã")).catch(() => {});
+    }
+  };
+
+  const handleRevoke = async (link: ViewerLink) => {
+    if (!confirm(`Gỡ liên kết Tool "${link.label || link.tool_user_id}"?`)) return;
+    setRevokingId(link.tool_user_id);
+    try {
+      await linksApi.revoke(link.tool_user_id);
+      setLinks((prev) => prev.filter((l) => l.tool_user_id !== link.tool_user_id));
+      toast.success("Đã gỡ liên kết");
+    } catch (e) {
+      toast.error(errMsg(e, "Gỡ liên kết thất bại"));
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-elev-1 p-5">
+      <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
+        <Link2 className="size-4" /> Liên kết Tool
+      </h3>
+
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Tạo mã và dán vào Tool để liên kết tài khoản của bạn với dữ liệu thu thập.
+        </p>
+
+        {code && remainingMs > 0 ? (
+          <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+            <span className="flex-1 font-mono text-2xl font-bold tracking-widest text-primary-text">{code}</span>
+            <Button variant="ghost" size="sm" onClick={handleCopy} title="Copy mã">
+              <Copy className="size-4" />
+            </Button>
+            <span className="text-xs text-muted-foreground">{fmtCountdown(remainingMs)}</span>
+          </div>
+        ) : (
+          <Button onClick={handleCreate} disabled={creating} className="gap-1.5">
+            {creating ? <RefreshCw className="size-4 animate-spin" /> : <Link2 className="size-4" />}
+            Tạo mã liên kết Tool
+          </Button>
+        )}
+        {code && remainingMs <= 0 && (
+          <p className="text-xs text-red-500">Mã đã hết hạn — tạo mã mới ở trên.</p>
+        )}
+
+        <div className="pt-2">
+          <h4 className="mb-2 text-xs font-semibold text-muted-foreground">Tool đã liên kết</h4>
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Đang tải…</p>
+          ) : links.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Chưa liên kết Tool nào.</p>
+          ) : (
+            <ul className="space-y-2">
+              {links.map((l) => (
+                <li
+                  key={l.tool_user_id}
+                  className="flex items-center justify-between rounded-md border border-border/60 px-3 py-2 text-sm"
+                >
+                  <div>
+                    <div className="font-medium">{l.label || l.tool_user_id}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {l.status} · liên kết lúc {l.linked_at ? new Date(l.linked_at).toLocaleString("vi-VN") : "—"}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRevoke(l)}
+                    disabled={revokingId === l.tool_user_id}
+                    className="text-red-500 hover:text-red-600"
+                    title="Gỡ liên kết"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );

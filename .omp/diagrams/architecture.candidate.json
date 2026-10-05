@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Admin Manager — Kiến trúc hệ thống",
+    "quality_profile": "showcase",
+    "viewBox": [1250, 620]
+  },
+  "components": [
+    { "id": "browser", "type": "external", "label": "Admin / Viewer", "sublabel": "admin-web SPA (React 19)", "pos": [40, 260], "size": [150, 60] },
+    { "id": "nginx", "type": "cloud", "label": "nginx", "sublabel": ":443 reverse proxy", "pos": [280, 260], "size": [140, 60] },
+    { "id": "admin-server", "type": "backend", "label": "admin-server", "sublabel": "FastAPI :8421, pm2 ufadmin", "pos": [530, 150], "size": [160, 64] },
+    { "id": "reward-service", "type": "backend", "label": "reward-service", "sublabel": "FastAPI :8422, pm2 ufreward", "pos": [530, 380], "size": [160, 64] },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "cache stats :6380", "pos": [790, 60], "size": [140, 56] },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "ufsync", "pos": [790, 270], "size": [140, 64] },
+    { "id": "discord", "type": "external", "label": "Discord", "sublabel": "Gateway + REST v9", "pos": [790, 480], "size": [150, 60] },
+    { "id": "tool", "type": "external", "label": "upload-facebook (Tool)", "sublabel": "nguồn dữ liệu: Electron + sync server", "pos": [980, 270], "size": [220, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "VPS (tuncon.duckdns.org)", "wraps": ["nginx", "admin-server", "reward-service", "redis", "postgres"] }
+  ],
+  "connections": [
+    { "id": "browser-nginx", "from": "browser", "to": "nginx", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "nginx-admin", "from": "nginx", "to": "admin-server", "label": "/v1/* + static /admin/*" },
+    { "id": "nginx-reward", "from": "nginx", "to": "reward-service", "label": "/v1/reward/*" },
+    { "id": "admin-redis", "from": "admin-server", "to": "redis", "label": "cache-aside", "variant": "dashed", "fromSide": "top", "toSide": "left" },
+    { "id": "admin-postgres", "from": "admin-server", "to": "postgres", "label": "accounts/refresh_tokens (ghi) · documents/revs (đọc)", "fromSide": "right", "toSide": "top" },
+    { "id": "reward-postgres", "from": "reward-service", "to": "postgres", "label": "reward_* (ghi) · accounts (đọc)", "fromSide": "right", "toSide": "left" },
+    { "id": "reward-discord", "from": "reward-service", "to": "discord", "label": "Gateway WS + POST /interactions", "fromSide": "right", "toSide": "left" },
+    { "id": "tool-postgres", "from": "tool", "to": "postgres", "label": "ghi documents (qua sync server)", "fromSide": "left", "toSide": "right", "labelDy": -26 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Đọc dữ liệu (không sửa)", "items": ["Production: SELECT documents/revs qua Postgres, CHỈ ĐỌC", "Dev: đọc thẳng JSON trong DATA_DIR = APP_DATA_DIR của Tool (cùng máy, không qua mạng — không vẽ ở sơ đồ này)"] },
+    { "dot": "emerald", "title": "Reward (Discord)", "items": ["Tiến trình riêng, dùng chung Postgres + JWT_SECRET với admin-server", "Tự gọi slash command bot leveling bằng user token, không phải bot lắng nghe interaction"] },
+    { "dot": "rose", "title": "Ranh giới repo", "items": ["Tool + sync server là repo/tiến trình khác — không sửa code Tool từ admin_manager", "stats_core.py phải byte-identical 2 phía"] }
+  ]
+}

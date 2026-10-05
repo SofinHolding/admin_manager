@@ -12,10 +12,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  Bot, Check, Copy, History, Key, ListChecks, Pencil, Plus, RefreshCw, ShieldCheck, Trash2,
-  Unlock, UserX, UserCheck, X,
+  Bot, Check, Copy, Globe, History, Key, ListChecks, Pencil, Plus, RefreshCw, ShieldCheck,
+  Trash2, Unlock, UserX, UserCheck, X,
 } from "lucide-react";
-import { adminApi, type InviteKey, type Account } from "../api";
+import { adminApi, type InviteKey, type Account, type CountryAlias, type CountryCanonical } from "../api";
 import {
   adminApi as rewardAdminApi, type JobSummary, type RoleAuditEntry, type RunnerLock,
 } from "../reward/api";
@@ -64,18 +64,20 @@ export default function AdminPage() {
     <div className="space-y-6">
       <h1 className="text-xl font-bold">Quản trị hệ thống</h1>
       <Tabs defaultValue="keys">
-        <TabsList className="w-full max-w-2xl">
+        <TabsList className="w-full max-w-3xl">
           <TabsTrigger value="keys"><Key className="mr-1.5 size-4" /> Mã mời</TabsTrigger>
           <TabsTrigger value="users"><ShieldCheck className="mr-1.5 size-4" /> Tài khoản</TabsTrigger>
           <TabsTrigger value="jobs"><ListChecks className="mr-1.5 size-4" /> Job toàn hệ thống</TabsTrigger>
           <TabsTrigger value="locks"><Unlock className="mr-1.5 size-4" /> Khoá kênh</TabsTrigger>
           <TabsTrigger value="audit"><History className="mr-1.5 size-4" /> Nhật ký role</TabsTrigger>
+          <TabsTrigger value="countries"><Globe className="mr-1.5 size-4" /> Chuẩn hoá quốc gia</TabsTrigger>
         </TabsList>
         <TabsContent value="keys"><InviteKeysTab /></TabsContent>
         <TabsContent value="users"><AccountsTab /></TabsContent>
         <TabsContent value="jobs"><SystemJobsTab /></TabsContent>
         <TabsContent value="locks"><LocksTab /></TabsContent>
         <TabsContent value="audit"><AuditTab /></TabsContent>
+        <TabsContent value="countries"><CountryAliasesTab /></TabsContent>
       </Tabs>
     </div>
   );
@@ -165,6 +167,7 @@ function InviteKeysTab() {
               <SelectContent>
                 <SelectItem value="viewer">Viewer</SelectItem>
                 <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="dash_admin">Admin Dashboard (ADD)</SelectItem>
                 <SelectItem value="discord">Discord</SelectItem>
               </SelectContent>
             </Select>
@@ -384,6 +387,7 @@ function AccountsTab() {
               <SelectItem value="all">Tất cả</SelectItem>
               <SelectItem value="viewer">Viewer</SelectItem>
               <SelectItem value="admin">Admin</SelectItem>
+              <SelectItem value="dash_admin">Admin Dashboard (ADD)</SelectItem>
               <SelectItem value="discord">Discord</SelectItem>
             </SelectContent>
           </Select>
@@ -675,6 +679,250 @@ function AuditTab() {
         </div>
       ))}
       {entries.length === 0 && <p className="p-4 text-sm text-muted-foreground">Chưa có thay đổi role nào</p>}
+    </div>
+  );
+}
+
+// ── Tab: Chuẩn hoá quốc gia ──────────────────────────────────────────────────
+//
+// Vấn đề thật: Tool ở nhiều máy khác nhau tự gõ tay tên quốc gia khi cấu hình page/kênh (vd
+// "BR"/"Brazil"/"brazil" đều cùng 1 nước) — không validate được từ xa. Bảng này cho admin/dash_admin
+// tự gộp các biến thể về đúng 1 tên chuẩn — áp dụng NGAY cho mọi biểu đồ, KHÔNG cần sửa gì bên Tool.
+
+function CountryAliasesTab() {
+  const [items, setItems] = useState<CountryAlias[]>([]);
+  const [canonicals, setCanonicals] = useState<CountryCanonical[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [alias, setAlias] = useState("");
+  const [canonical, setCanonical] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const [newCanonical, setNewCanonical] = useState("");
+  const [savingCanonical, setSavingCanonical] = useState(false);
+  const [editingCanonical, setEditingCanonical] = useState<string | null>(null);
+  const [editCanonicalValue, setEditCanonicalValue] = useState("");
+
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([adminApi.listCountryAliases(), adminApi.listCountryCanonicals()])
+      .then(([a, c]) => { setItems(a.items); setCanonicals(c.items); })
+      .catch((e) => toast.error((e as Error).message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleAdd = async () => {
+    if (!alias.trim() || !canonical) return;
+    setSaving(true);
+    try {
+      await adminApi.upsertCountryAlias(alias.trim(), canonical);
+      toast.success("Đã lưu — số liệu tính lại ngay (cache đã tự xoá)");
+      setAlias(""); setCanonical("");
+      load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (a: string) => {
+    try {
+      await adminApi.deleteCountryAlias(a);
+      toast.success("Đã xoá");
+      load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const handleAddCanonical = async () => {
+    if (!newCanonical.trim()) return;
+    setSavingCanonical(true);
+    try {
+      await adminApi.createCountryCanonical(newCanonical.trim());
+      toast.success("Đã tạo tên chuẩn mới");
+      setNewCanonical("");
+      load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSavingCanonical(false);
+    }
+  };
+
+  const saveEditCanonical = async () => {
+    if (!editingCanonical) return;
+    const newName = editCanonicalValue.trim();
+    if (!newName) return;
+    try {
+      await adminApi.renameCountryCanonical(editingCanonical, newName);
+      toast.success("Đã đổi tên — số liệu tính lại ngay");
+      setEditingCanonical(null);
+      load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const handleDeleteCanonical = async (name: string) => {
+    try {
+      await adminApi.deleteCountryCanonical(name);
+      toast.success("Đã xoá tên chuẩn");
+      load();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  // Gộp theo canonical để dễ nhìn — 1 nhóm/1 tên chuẩn, liệt kê hết các biến thể gộp vào đó.
+  const groups: Record<string, CountryAlias[]> = {};
+  for (const it of items) {
+    (groups[it.canonical] ??= []).push(it);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-border bg-elev-1 p-4">
+        <h3 className="mb-3 text-sm font-semibold">Tên quốc gia chuẩn</h3>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-64">
+            <label className="mb-1 block text-xs text-muted-foreground">Tên chuẩn mới</label>
+            <input
+              type="text"
+              className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
+              placeholder="VD: Brazil"
+              value={newCanonical}
+              onChange={(e) => setNewCanonical(e.target.value)}
+              maxLength={100}
+              onKeyDown={(e) => e.key === "Enter" && handleAddCanonical()}
+            />
+          </div>
+          <Button onClick={handleAddCanonical} disabled={savingCanonical || !newCanonical.trim()}
+                  className="h-9 gap-1.5">
+            <Plus className="size-4" /> Tạo tên chuẩn
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Danh sách tên quốc gia "chính thức" — chọn trực tiếp khi thêm biến thể bên dưới (không gõ
+          tay) để không bao giờ gõ sai/lệch hoa-thường tạo nhầm nhóm trùng.
+        </p>
+        {canonicals.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {canonicals.map((c) => (
+              <span key={c.name}
+                    className="flex items-center gap-1.5 rounded-full bg-elev-2 px-2.5 py-1 text-xs">
+                {editingCanonical === c.name ? (
+                  <>
+                    <input
+                      autoFocus
+                      className="h-6 w-32 rounded border border-border bg-elev-1 px-1.5 text-xs outline-none focus:border-primary"
+                      value={editCanonicalValue}
+                      onChange={(e) => setEditCanonicalValue(e.target.value)}
+                      maxLength={100}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") saveEditCanonical();
+                        if (e.key === "Escape") setEditingCanonical(null);
+                      }}
+                    />
+                    <button type="button" onClick={saveEditCanonical}
+                            className="text-muted-foreground hover:text-green-500" title="Lưu">
+                      <Check className="size-3" />
+                    </button>
+                    <button type="button" onClick={() => setEditingCanonical(null)}
+                            className="text-muted-foreground hover:text-red-500" title="Huỷ">
+                      <X className="size-3" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {c.name}
+                    <button type="button"
+                            onClick={() => { setEditingCanonical(c.name); setEditCanonicalValue(c.name); }}
+                            className="text-muted-foreground hover:text-primary-text" title="Đổi tên">
+                      <Pencil className="size-3" />
+                    </button>
+                    <button type="button" onClick={() => handleDeleteCanonical(c.name)}
+                            className="text-muted-foreground hover:text-red-500" title="Xoá tên chuẩn này">
+                      <Trash2 className="size-3" />
+                    </button>
+                  </>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-border bg-elev-1 p-4">
+        <h3 className="mb-3 text-sm font-semibold">Thêm biến thể mới</h3>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-48">
+            <label className="mb-1 block text-xs text-muted-foreground">Biến thể (Tool gõ ra)</label>
+            <input
+              type="text"
+              className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
+              placeholder="VD: BR, brasil…"
+              value={alias}
+              onChange={(e) => setAlias(e.target.value)}
+              maxLength={100}
+            />
+          </div>
+          <div className="w-48">
+            <label className="mb-1 block text-xs text-muted-foreground">Tên chuẩn muốn gộp về</label>
+            <Select value={canonical} onValueChange={setCanonical}>
+              <SelectTrigger className="h-9 w-full">
+                <SelectValue placeholder={canonicals.length === 0 ? "Chưa có tên chuẩn" : "Chọn tên chuẩn…"} />
+              </SelectTrigger>
+              <SelectContent>
+                {canonicals.map((c) => (
+                  <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button onClick={handleAdd} disabled={saving || !alias.trim() || !canonical} className="h-9 gap-1.5">
+            <Plus className="size-4" /> Lưu
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {canonicals.length === 0
+            ? 'Chưa có tên chuẩn nào — tạo ở mục "Tên quốc gia chuẩn" phía trên trước.'
+            : "Tra biến thể không phân biệt hoa/thường, tự bỏ khoảng trắng thừa. Áp dụng ngay cho " +
+              "mọi biểu đồ theo quốc gia (cache tự xoá khi lưu) — không cần sửa gì bên Tool."}
+        </p>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
+          <RefreshCw className="size-4 animate-spin" /> Đang tải…
+        </div>
+      ) : items.length === 0 ? (
+        <p className="p-4 text-sm text-muted-foreground">Chưa có quy tắc chuẩn hoá nào.</p>
+      ) : (
+        <div className="space-y-3">
+          {Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)).map(([canon, rows]) => (
+            <div key={canon} className="rounded-xl border border-border bg-elev-1 p-3">
+              <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold">
+                <Globe className="size-4 text-primary-text" /> {canon}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {rows.map((r) => (
+                  <span key={r.alias}
+                        className="flex items-center gap-1.5 rounded-full bg-elev-2 px-2.5 py-1 text-xs">
+                    {r.alias}
+                    <button type="button" onClick={() => handleDelete(r.alias)}
+                            className="text-muted-foreground hover:text-red-500" title="Xoá biến thể này">
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

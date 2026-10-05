@@ -73,11 +73,13 @@ def _check_rate(ip: str, action: str, max_hits: int, window_s: int) -> None:
 
 # ── JWT helpers ─────────────────────────────────────────────────────────────────
 
-def _create_access_token(account_id: str, username: str, role: str) -> str:
+def _create_access_token(account_id: str, username: str, role: str,
+                         client_type: str = "web") -> str:
     payload = {
         "sub": account_id,
         "username": username,
         "role": role,
+        "client_type": client_type,
         "exp": int(time.time()) + ACCESS_TOKEN_TTL,
         "iat": int(time.time()),
     }
@@ -302,8 +304,14 @@ def make_router(db: Db, send_verify_email=None, send_reset_email=None) -> APIRou
     # ── 7. Login ────────────────────────────────────────────────────────────────
 
     @router.post("/login", summary="Đăng nhập bằng username + password")
-    async def login(body: LoginBody, request: Request) -> dict:
+    async def login(body: LoginBody, request: Request,
+                    x_client_type: str = Header("web", alias="X-Client-Type")) -> dict:
         _check_rate(_client_ip(request), "login", 5, 300)
+
+        # client_type phân biệt đăng nhập từ website vs Tool B (Local Fallback Tool) — mục 9 đặc tả
+        # `tasks/backlog/local-operations-hub-v1.md`. Header thiếu/khác giá trị hợp lệ → coi là "web"
+        # (không phá client cũ chưa biết gửi header này).
+        client_type = x_client_type if x_client_type == "local_fallback_tool" else "web"
 
         account = await db.get_account_by_username(body.username.strip())
 
@@ -328,10 +336,19 @@ def make_router(db: Db, send_verify_email=None, send_reset_email=None) -> APIRou
             raise HTTPException(status.HTTP_403_FORBIDDEN,
                                 "Tài khoản đã bị khoá. Liên hệ quản trị viên.")
 
+        if client_type == "local_fallback_tool" and account["role"] not in ("admin", "dash_admin"):
+            # Mục 9 đặc tả: Tool B CHỈ cho admin/dash_admin đăng nhập, không cho viewer/discord.
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Tool B chỉ cho phép tài khoản admin hoặc dash_admin đăng nhập")
+
         # Cấp token
-        access = _create_access_token(account["id"], account["username"], account["role"])
+        access = _create_access_token(account["id"], account["username"], account["role"],
+                                      client_type)
         refresh = await db.create_refresh_token(account["id"], REFRESH_TOKEN_TTL_DAYS)
         await db.update_last_login(account["id"])
+        if client_type == "local_fallback_tool":
+            await db.log_audit(account["id"], "login_fallback_tool", "account", account["id"],
+                               {"username": account["username"]})
 
         return {
             "access_token": access,

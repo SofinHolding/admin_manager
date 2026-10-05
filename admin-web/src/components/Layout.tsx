@@ -1,12 +1,13 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3, Coins, Link2, LogOut, Settings, User } from "lucide-react";
+import { BarChart3, Coins, Database, Link2, LogOut, Settings, User, Users } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "./ui/button";
 
 export function Layout() {
   const { user, logout } = useAuth();
   const role = user?.role;
-  const isAdmin = role === "admin";
+  const isTrueAdmin = role === "admin";
+  const isDashRole = role === "admin" || role === "dash_admin";
   const isDiscord = role === "discord";
 
   const navLinkCls = ({ isActive }: { isActive: boolean }) =>
@@ -23,17 +24,25 @@ export function Layout() {
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4">
           {/* Nav links — hiển thị theo vai trò, dùng chung 1 template */}
           <nav className="flex items-center gap-1">
-            {(isAdmin || role === "viewer") && (
-              <NavLink to="/dashboard" className={navLinkCls}>
-                <BarChart3 className="size-4" /> Thống kê
-              </NavLink>
+            {(isDashRole || role === "viewer") && (
+              <>
+                <NavLink to="/dashboard" className={navLinkCls}>
+                  <BarChart3 className="size-4" /> Thống kê
+                </NavLink>
+                <NavLink to="/groups" className={navLinkCls}>
+                  <Users className="size-4" /> Nhóm kênh
+                </NavLink>
+                <NavLink to="/resources" className={navLinkCls}>
+                  <Database className="size-4" /> Nguồn &amp; Resource
+                </NavLink>
+              </>
             )}
-            {isAdmin && (
+            {isDashRole && (
               <NavLink to="/manage" className={navLinkCls}>
                 <Settings className="size-4" /> Quản trị
               </NavLink>
             )}
-            {(isDiscord || isAdmin) && (
+            {(isDiscord || isTrueAdmin) && (
               <>
                 <NavLink to="/reward/credentials" className={navLinkCls}>
                   <Link2 className="size-4" /> Kết nối Discord

@@ -1,6 +1,6 @@
 """Admin web server — process riêng, port 8421.
 
-Mount 2 router (auth + viewer) và phục vụ file tĩnh frontend (React build).
+Mount router (auth + viewer + links + groups + admin) và phục vụ file tĩnh frontend (React build).
 KHÔNG import gì từ `server/` — hai process độc lập, crash một bên không ảnh hưởng bên kia.
 
 Chế độ chạy (đặt trong .env):
@@ -67,6 +67,10 @@ import admin_api  # noqa: E402
 import auth  # noqa: E402
 import email_service  # noqa: E402
 import viewer  # noqa: E402
+import links  # noqa: E402
+import groups  # noqa: E402
+import resources  # noqa: E402
+import ops  # noqa: E402
 from db import make_db  # noqa: E402
 import cache as cache_mod  # noqa: E402
 
@@ -135,8 +139,12 @@ app.include_router(auth.make_router(
     send_reset_email=email_service.send_reset_email,
 ))
 app.include_router(viewer.make_router(_db, decode_token=auth._decode_access_token))
+app.include_router(links.make_router(_db))
+app.include_router(groups.make_router(_db))
 app.include_router(admin_api.make_router(_db, decode_token=auth._decode_access_token,
                                          cache=_cache))
+app.include_router(resources.make_router(_db))
+app.include_router(ops.make_router(_db))
 
 
 @app.get("/v1/health", include_in_schema=False)

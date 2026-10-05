@@ -197,6 +197,8 @@ export interface AnalyticsSummary {
   active_channels: number;
   managed_channels: number;
   days_in_range: number;
+  linked?: boolean;
+  last_synced_at?: string | null;
 }
 
 export interface AnalyticsMetric {
@@ -243,37 +245,156 @@ export interface CountryTag {
   name: string;
 }
 
+export interface ChannelBreakdownRow {
+  platform: string;
+  managed: number;
+  active: number;
+  is_custom_tag?: boolean;
+  by_group?: { group: string; managed: number; active: number }[];
+  by_country?: { country: string; managed: number; active: number }[];
+}
+
+export interface ChannelBreakdown {
+  total: { managed: number; active: number };
+  by_platform: ChannelBreakdownRow[];
+}
+
 // ── Viewer API (cần JWT) ────────────────────────────────────────────────────
 
+export interface ScopeOpts {
+  owner_account_id?: string;
+  group_id?: string;
+  platform_tag?: string;
+}
+
+function appendScope(q: URLSearchParams, opts?: ScopeOpts) {
+  if (opts?.owner_account_id) q.set("owner_account_id", opts.owner_account_id);
+  if (opts?.group_id) q.set("group_id", opts.group_id);
+  if (opts?.platform_tag) q.set("platform_tag", opts.platform_tag);
+}
+
 export const viewerApi = {
-  summary: (date_from: string, date_to: string, country = "") => {
+  summary: (date_from: string, date_to: string, country = "", opts?: ScopeOpts) => {
     const q = new URLSearchParams({ date_from, date_to });
     if (country) q.set("country", country);
+    appendScope(q, opts);
     return apiFetch<AnalyticsSummary>(`/v1/viewer/summary?${q}`);
   },
 
-  traffic: (date_from: string, date_to: string, scope = "", country = "") => {
+  traffic: (date_from: string, date_to: string, country = "", opts?: ScopeOpts) => {
     const q = new URLSearchParams({ date_from, date_to });
-    if (scope) q.set("scope", scope);
     if (country) q.set("country", country);
+    appendScope(q, opts);
     return apiFetch<TrafficMetricSeries>(`/v1/viewer/traffic?${q}`);
   },
 
-  topChannels: (date_from: string, date_to: string, country = "", limit = 15) => {
+  topChannels: (date_from: string, date_to: string, country = "", limit = 15, opts?: ScopeOpts) => {
     const q = new URLSearchParams({ date_from, date_to, limit: String(limit) });
     if (country) q.set("country", country);
+    appendScope(q, opts);
     return apiFetch<{ items: TopChannel[] }>(`/v1/viewer/top-channels?${q}`);
   },
 
-  viewsByCountry: (date_from: string, date_to: string) =>
-    apiFetch<CountryViewsSeries>(
-      `/v1/viewer/views-by-country?date_from=${date_from}&date_to=${date_to}`),
+  viewsByCountry: (date_from: string, date_to: string, opts?: ScopeOpts) => {
+    const q = new URLSearchParams({ date_from, date_to });
+    appendScope(q, opts);
+    return apiFetch<CountryViewsSeries>(`/v1/viewer/views-by-country?${q}`);
+  },
 
-  countryTags: () =>
-    apiFetch<{ items: CountryTag[] }>("/v1/viewer/country-tags"),
+  countryTags: (opts?: ScopeOpts) => {
+    const q = new URLSearchParams();
+    appendScope(q, opts);
+    const qs = q.toString();
+    return apiFetch<{ items: CountryTag[] }>(`/v1/viewer/country-tags${qs ? `?${qs}` : ""}`);
+  },
+
+  platformTags: (owner_account_id = "") => {
+    const q = new URLSearchParams();
+    if (owner_account_id) q.set("owner_account_id", owner_account_id);
+    const qs = q.toString();
+    return apiFetch<{ items: string[] }>(`/v1/viewer/platform-tags${qs ? `?${qs}` : ""}`);
+  },
+
+  channelBreakdown: (opts?: ScopeOpts) => {
+    const q = new URLSearchParams();
+    appendScope(q, opts);
+    const qs = q.toString();
+    return apiFetch<ChannelBreakdown>(`/v1/viewer/channel-breakdown${qs ? `?${qs}` : ""}`);
+  },
 
   metrics: () =>
     apiFetch<{ metrics: AnalyticsMetric[] }>("/v1/viewer/metrics"),
+};
+
+// ── Viewer Links API (liên kết Tool — cần JWT) ──────────────────────────────
+
+export interface ViewerLink {
+  tool_user_id: string;
+  label: string;
+  status: string;
+  linked_at: string;
+}
+
+export interface LinkCode {
+  code: string;
+  expires_at: string;
+}
+
+export const linksApi = {
+  createCode: () =>
+    apiFetch<LinkCode>("/v1/viewer/links/code", { method: "POST" }),
+
+  list: () =>
+    apiFetch<{ items: ViewerLink[] }>("/v1/viewer/links"),
+
+  revoke: (tool_user_id: string) =>
+    apiFetch<{ ok: boolean }>(`/v1/viewer/links/${encodeURIComponent(tool_user_id)}`, { method: "DELETE" }),
+};
+
+// ── Viewer Groups API (nhóm kênh — cần JWT) ─────────────────────────────────
+
+export interface GroupMember {
+  channel_ref: string;
+  platform_tag: string;
+  country_override: string;
+}
+
+export interface ViewerGroup {
+  id: string;
+  account_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  members: GroupMember[];
+}
+
+export const groupsApi = {
+  create: (name: string) =>
+    apiFetch<ViewerGroup>("/v1/viewer/groups", { method: "POST", body: JSON.stringify({ name }) }),
+
+  list: (owner_account_id = "") => {
+    const q = new URLSearchParams();
+    if (owner_account_id) q.set("owner_account_id", owner_account_id);
+    const qs = q.toString();
+    return apiFetch<{ items: ViewerGroup[] }>(`/v1/viewer/groups${qs ? `?${qs}` : ""}`);
+  },
+
+  rename: (id: string, name: string) =>
+    apiFetch<{ ok: boolean }>(`/v1/viewer/groups/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+
+  delete: (id: string) =>
+    apiFetch<{ ok: boolean }>(`/v1/viewer/groups/${id}`, { method: "DELETE" }),
+
+  addMember: (id: string, data: { channel_ref: string; platform_tag?: string; country_override?: string }) =>
+    apiFetch<{ ok: boolean }>(`/v1/viewer/groups/${id}/members`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  removeMember: (id: string, channel_ref: string) =>
+    apiFetch<{ ok: boolean }>(`/v1/viewer/groups/${id}/members/${encodeURIComponent(channel_ref)}`, {
+      method: "DELETE",
+    }),
 };
 
 // ── Admin API (cần JWT + role='admin') ──────────────────────────────────────
@@ -334,7 +455,50 @@ export const adminApi = {
   flushCache: () =>
     apiFetch<{ ok: boolean; removed: number; enabled: boolean }>("/v1/admin/cache/flush",
       { method: "POST" }),
+
+  listCountryAliases: () =>
+    apiFetch<{ items: CountryAlias[] }>("/v1/admin/country-aliases"),
+
+  upsertCountryAlias: (alias: string, canonical: string) =>
+    apiFetch<CountryAlias>("/v1/admin/country-aliases", {
+      method: "POST",
+      body: JSON.stringify({ alias, canonical }),
+    }),
+
+  deleteCountryAlias: (alias: string) =>
+    apiFetch<{ ok: boolean }>(`/v1/admin/country-aliases/${encodeURIComponent(alias)}`,
+      { method: "DELETE" }),
+
+  listCountryCanonicals: () =>
+    apiFetch<{ items: CountryCanonical[] }>("/v1/admin/country-canonicals"),
+
+  createCountryCanonical: (name: string) =>
+    apiFetch<CountryCanonical>("/v1/admin/country-canonicals", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  renameCountryCanonical: (name: string, newName: string) =>
+    apiFetch<{ ok: boolean; name: string }>(`/v1/admin/country-canonicals/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: newName }),
+    }),
+
+  deleteCountryCanonical: (name: string) =>
+    apiFetch<{ ok: boolean }>(`/v1/admin/country-canonicals/${encodeURIComponent(name)}`,
+      { method: "DELETE" }),
 };
+
+export interface CountryAlias {
+  alias: string;
+  canonical: string;
+  created_at: string;
+}
+
+export interface CountryCanonical {
+  name: string;
+  created_at: string;
+}
 
 // ── Profile API (user tự quản lý) ──────────────────────────────────────────
 
@@ -355,4 +519,90 @@ export const profileApi = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+};
+
+// ── Resources API (Source/Resource — Local Fallback Tool v1, cần JWT) ──────
+//
+// Theo `tasks/backlog/local-operations-hub-v1.md`. Chỉ phạm vi tài khoản đang đăng nhập — xem
+// toàn hệ thống là việc của Tool B (`/v1/ops/*`, không gọi từ admin-web).
+
+export interface ResourceSource {
+  id: string;
+  owner_account_id: string;
+  name: string;
+  platform: string;
+  project_key: string;
+  default_country: string;
+  origin: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ManagedResource {
+  id: string;
+  owner_account_id: string;
+  platform: string;
+  resource_type: string;
+  canonical_external_id: string;
+  input_ref: string;
+  username: string;
+  url: string;
+  display_name: string;
+  country: string;
+  origin: "web_manual" | "tool_sync" | string;
+  mapping_status: "unmapped" | "mapped" | string;
+  execution_mode: "primary_tool" | "fallback_local" | "disabled" | string;
+  verification_status: "unverified" | "valid" | "invalid" | string;
+  enabled: boolean | number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ImportSkip {
+  input_ref: string;
+  reason: string;
+}
+
+export const resourcesApi = {
+  listPlatforms: () =>
+    apiFetch<{ items: { platform: string }[] }>("/v1/resources/platforms"),
+
+  listSources: () =>
+    apiFetch<{ items: ResourceSource[] }>("/v1/resources/sources"),
+
+  createSource: (data: { name: string; platform: string; project_key?: string; default_country?: string }) =>
+    apiFetch<ResourceSource>("/v1/resources/sources", { method: "POST", body: JSON.stringify(data) }),
+
+  updateSource: (id: string, data: Partial<{ name: string; project_key: string; default_country: string }>) =>
+    apiFetch<{ ok: boolean }>(`/v1/resources/sources/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  listResources: (filters: Partial<{
+    platform: string; source_instance_id: string; country: string; origin: string;
+    mapping_status: string; execution_mode: string; verification_status: string;
+    enabled: boolean; q: string;
+  }> = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(filters).forEach(([k, v]) => {
+      if (v !== undefined && v !== "") q.set(k, String(v));
+    });
+    const qs = q.toString();
+    return apiFetch<{ items: ManagedResource[] }>(`/v1/resources${qs ? `?${qs}` : ""}`);
+  },
+
+  createResource: (data: {
+    source_instance_id: string; platform: string; resource_type?: string; input_ref: string;
+    username?: string; url?: string; display_name?: string; country?: string;
+  }) => apiFetch<ManagedResource>("/v1/resources", { method: "POST", body: JSON.stringify(data) }),
+
+  importResources: (data: {
+    source_instance_id: string; platform: string; resource_type?: string; lines: string[];
+  }) => apiFetch<{ created: ManagedResource[]; skipped: ImportSkip[]; created_count: number; skipped_count: number }>(
+    "/v1/resources/import", { method: "POST", body: JSON.stringify(data) }),
+
+  updateResource: (id: string, data: Partial<{
+    display_name: string; username: string; url: string; country: string; resource_type: string;
+  }>) => apiFetch<{ ok: boolean }>(`/v1/resources/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  deleteResource: (id: string) =>
+    apiFetch<{ ok: boolean }>(`/v1/resources/${id}`, { method: "DELETE" }),
 };

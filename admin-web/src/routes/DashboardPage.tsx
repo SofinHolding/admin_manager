@@ -1,37 +1,34 @@
-/**
- * Dashboard thống kê — giống hệt AnalyticsView bên Electron.
- *
- * Đồng bộ 1:1 giao diện và chức năng, chỉ KHÔNG có:
- * - Thiếu video hôm nay / Đăng ổn định 7 ngày / Video/ngày trung bình (HealthPanel)
- * - Nút quản lý thẻ quốc gia (CountryTagManager) — thẻ lấy trực tiếp từ data
- *
- * Nguồn data: viewerApi (admin-server) thay vì analytics (local API).
- */
-
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { AlertTriangle, ExternalLink, Filter, RefreshCw } from "lucide-react";
+import { AlertTriangle, ExternalLink, Filter, Maximize2, RefreshCw } from "lucide-react";
 import {
-  Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, LabelList, Line, Pie, PieChart,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, LabelList, Line, LineChart, Pie,
+  PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
   viewerApi,
   adminApi,
+  groupsApi,
+  type Account,
   type AnalyticsMetric,
   type AnalyticsSummary,
+  type ChannelBreakdown,
   type CountryTag,
   type CountryViewsSeries,
+  type ScopeOpts,
   type TopChannel,
   type TrafficMetricKey,
   type TrafficMetricPoint,
   type TrafficMetricSeries,
+  type ViewerGroup,
   type Platform,
 } from "../api";
 import { Button } from "../components/ui/button";
 import { DateInput } from "../components/ui/date-input";
 import { Skeleton } from "../components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
@@ -104,6 +101,8 @@ function useThemeColors() {
 // Radix Select cấm `value=""` — dùng sentinel cho "tất cả"
 const MOI_QUOC_GIA = "__all";
 const SCOPE_ALL = "__both";
+const MOI_NHAN_SU = "__owner_all";
+const MOI_NHOM = "__group_all";
 
 function cn(...classes: (string | false | null | undefined)[]) {
   return classes.filter(Boolean).join(" ");
@@ -182,12 +181,32 @@ export default function DashboardPage() {
   const [draftTo, setDraftTo] = useState(to);
   const [draftCountry, setDraftCountry] = useState("");
 
-  const [scope, setScope] = useState<"" | "youtube" | "facebook">("");
+  const [scope, setScope] = useState("");
   const [topLimit, setTopLimit] = useState(15);
+  const [topTab, setTopTab] = useState<"rieng" | "chung">("rieng");
 
   const { user } = useAuth();
+  const isDashRole = user?.role === "admin" || user?.role === "dash_admin";
   const [reloadKey, setReloadKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Lọc theo nhân sự (chỉ admin/dash_admin) → nhóm kênh (phụ thuộc nhân sự đang chọn). Nền tảng
+  // dùng CHUNG 1 biến `scope` với ô chọn trong Traffic chart — KHÔNG còn 2 nút nền tảng tách rời.
+  const [selectedOwner, setSelectedOwner] = useState("");
+  const [selectedGroup, setSelectedGroup] = useState("");
+  const [viewerAccounts, setViewerAccounts] = useState<Account[]>([]);
+  const [groupsList, setGroupsList] = useState<ViewerGroup[]>([]);
+  const [platformTags, setPlatformTags] = useState<string[]>([]);
+  // Danh sách nền tảng hợp nhất cho dropdown/so sánh: 2 nền tảng GỐC (suy thẳng từ dữ liệu Tool,
+  // luôn có) + nhãn tự do đã gắn ở Nhóm kênh (lọc trùng nếu ai đó lỡ gắn nhãn "youtube"/"facebook").
+  const allPlatforms = useMemo(
+    () => ["youtube", "facebook", ...platformTags.filter((p) => p !== "youtube" && p !== "facebook")],
+    [platformTags],
+  );
+  const apiOpts: ScopeOpts = useMemo(
+    () => ({ owner_account_id: selectedOwner, group_id: selectedGroup, platform_tag: scope }),
+    [selectedOwner, selectedGroup, scope],
+  );
 
   // Data
   const [tags, setTags] = useState<CountryTag[]>([]);
@@ -195,6 +214,7 @@ export default function DashboardPage() {
   const [traffic, setTraffic] = useState<TrafficMetricSeries | null>(null);
   const [byCountry, setByCountry] = useState<CountryViewsSeries | null>(null);
   const [top, setTop] = useState<TopChannel[] | null>(null);
+  const [channelBreakdown, setChannelBreakdown] = useState<ChannelBreakdown | null>(null);
   const [metricList, setMetricList] = useState<AnalyticsMetric[]>([]);
 
   // Loading
@@ -202,6 +222,7 @@ export default function DashboardPage() {
   const [lTraffic, setLTraffic] = useState(true);
   const [lByCountry, setLByCountry] = useState(true);
   const [lTop, setLTop] = useState(true);
+  const [lChannelBreakdown, setLChannelBreakdown] = useState(true);
   const [error, setError] = useState("");
 
   const [topRef, topVisible] = useLazyLoad();
@@ -211,10 +232,32 @@ export default function DashboardPage() {
     toast.error(`Lỗi tải thống kê: ${(e as Error).message}`);
   }, []);
 
+  // Danh sách nhân sự (role=viewer) — chỉ admin/dash_admin cần
+  useEffect(() => {
+    if (!isDashRole) return;
+    adminApi.listUsers()
+      .then((d) => setViewerAccounts(d.users.filter((u) => u.role === "viewer")))
+      .catch(() => setViewerAccounts([]));
+  }, [isDashRole]);
+
+  // Danh sách nhóm kênh + nhãn nền tảng theo nhân sự đang chọn (hoặc của chính mình nếu viewer).
+  // admin/dash_admin CHƯA chọn nhân sự cụ thể → không có "chủ sở hữu" rõ ràng để gộp nhóm có ý
+  // nghĩa, để rỗng thay vì gộp lẫn của mọi người (nhãn nền tảng GỐC youtube/facebook vẫn dùng được
+  // bình thường vì không phụ thuộc nhân sự nào — chỉ nhãn TỰ DO mới cần biết chủ sở hữu).
+  useEffect(() => {
+    if (isDashRole && !selectedOwner) {
+      setGroupsList([]); setPlatformTags([]); setSelectedGroup("");
+      return;
+    }
+    groupsApi.list(selectedOwner).then((d) => setGroupsList(d.items)).catch(() => setGroupsList([]));
+    viewerApi.platformTags(selectedOwner).then((d) => setPlatformTags(d.items)).catch(() => setPlatformTags([]));
+    setSelectedGroup("");
+  }, [isDashRole, selectedOwner]);
+
   // Tải tags quốc gia từ data (thay cho CountryTagManager)
   useEffect(() => {
-    viewerApi.countryTags().then((d) => setTags(d.items)).catch(() => setTags([]));
-  }, [reloadKey]);
+    viewerApi.countryTags(apiOpts).then((d) => setTags(d.items)).catch(() => setTags([]));
+  }, [apiOpts, reloadKey]);
   useEffect(() => {
     viewerApi.metrics().then((d) => setMetricList(d.metrics)).catch(() => setMetricList([]));
   }, [reloadKey]);
@@ -222,39 +265,49 @@ export default function DashboardPage() {
   // Summary
   useEffect(() => {
     setLSummary(true);
-    viewerApi.summary(from, to, country)
+    viewerApi.summary(from, to, country, apiOpts)
       .then((d) => { setSummary(d); setError(""); })
       .catch((e) => { setSummary(null); bao_loi(e); })
       .finally(() => setLSummary(false));
-  }, [from, to, country, bao_loi, reloadKey]);
+  }, [from, to, country, apiOpts, bao_loi, reloadKey]);
 
-  // Traffic
+  // Kênh/page breakdown — KHÔNG phụ thuộc khoảng ngày (trạng thái hiện tại, giống
+  // managed_channels/active_channels cũ), chỉ phụ thuộc owner/platform/group đang lọc.
+  useEffect(() => {
+    setLChannelBreakdown(true);
+    viewerApi.channelBreakdown(apiOpts)
+      .then((d) => { setChannelBreakdown(d); setError(""); })
+      .catch((e) => { setChannelBreakdown(null); bao_loi(e); })
+      .finally(() => setLChannelBreakdown(false));
+  }, [apiOpts, bao_loi, reloadKey]);
+
+  // Traffic — `scope` (nền tảng) nay đi qua `apiOpts.platform_tag`, không còn tham số riêng.
   useEffect(() => {
     setLTraffic(true);
-    viewerApi.traffic(from, to, scope, country)
+    viewerApi.traffic(from, to, country, apiOpts)
       .then((d) => { setTraffic(d); setError(""); })
       .catch((e) => { setTraffic(null); bao_loi(e); })
       .finally(() => setLTraffic(false));
-  }, [from, to, scope, country, bao_loi, reloadKey]);
+  }, [from, to, country, apiOpts, bao_loi, reloadKey]);
 
   // Views by country
   useEffect(() => {
     setLByCountry(true);
-    viewerApi.viewsByCountry(from, to)
+    viewerApi.viewsByCountry(from, to, apiOpts)
       .then((d) => { setByCountry(d); setError(""); })
       .catch((e) => { setByCountry(null); bao_loi(e); })
       .finally(() => setLByCountry(false));
-  }, [from, to, bao_loi, reloadKey]);
+  }, [from, to, apiOpts, bao_loi, reloadKey]);
 
-  // Top channels (lazy)
+  // Top channels — KHÔNG lazy nữa: cần sẵn cho tab "Biểu đồ chung" (so sánh kênh) kể cả khi
+  // TopChannelsCard chưa lọt vào viewport.
   useEffect(() => {
-    if (!topVisible) return;
     setLTop(true);
-    viewerApi.topChannels(from, to, country, topLimit)
+    viewerApi.topChannels(from, to, country, topLimit, apiOpts)
       .then((d) => { setTop(d.items); setError(""); })
       .catch((e) => { setTop(null); bao_loi(e); })
       .finally(() => setLTop(false));
-  }, [topVisible, from, to, country, topLimit, bao_loi, reloadKey]);
+  }, [from, to, country, topLimit, apiOpts, bao_loi, reloadKey]);
 
   const dirty = draftFrom !== from || draftTo !== to || draftCountry !== country;
   const applyFilter = () => {
@@ -276,8 +329,24 @@ export default function DashboardPage() {
     }
   };
 
+  // Nhóm kênh CHỈ hiện khi đã có "chủ sở hữu" rõ ràng (viewer = chính mình; admin/dash_admin =
+  // đã chọn 1 nhân sự cụ thể) VÀ người đó thật sự có nhóm — không dữ liệu thì không cần chiếm chỗ.
+  const showGroupFilter = (isDashRole ? !!selectedOwner : true) && groupsList.length > 0;
+
   return (
     <div className="flex flex-col gap-3">
+      {!isDashRole && summary?.linked === false && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-700">
+          <AlertTriangle className="size-4 shrink-0" />
+          <div className="flex-1">
+            Chưa liên kết Tool — số liệu sẽ trống cho đến khi bạn liên kết tài khoản với Tool.
+          </div>
+          <Link to="/profile" className="whitespace-nowrap font-medium underline underline-offset-2">
+            Liên kết ngay
+          </Link>
+        </div>
+      )}
+
       {/* ═══ Filter bar — giống Electron ═══ */}
       <div className="glass flex flex-wrap items-center gap-3 rounded-xl px-4 py-3">
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Khoảng ngày</span>
@@ -296,11 +365,41 @@ export default function DashboardPage() {
           </SelectContent>
         </Select>
 
+        {/* Nhân sự ĐỨNG TRƯỚC nhóm kênh — chọn WHO trước rồi mới lọc theo group/nhãn của người đó */}
+        {isDashRole && (
+          <Select value={selectedOwner || MOI_NHAN_SU}
+                  onValueChange={(v) => setSelectedOwner(v === MOI_NHAN_SU ? "" : v)}>
+            <SelectTrigger className="h-8 w-48 text-xs">
+              <SelectValue placeholder="Chọn nhân sự" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={MOI_NHAN_SU}>Tất cả nhân sự</SelectItem>
+              {viewerAccounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.username}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
+
+        {showGroupFilter && (
+          <Select value={selectedGroup || MOI_NHOM}
+                  onValueChange={(v) => setSelectedGroup(v === MOI_NHOM ? "" : v)}>
+            <SelectTrigger className="h-8 w-44 text-xs">
+              <SelectValue placeholder="Mọi nhóm kênh" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={MOI_NHOM}>Mọi nhóm kênh</SelectItem>
+              {groupsList.map((g) => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Nền tảng KHÔNG còn Select riêng ở đây — hợp nhất vào 1 ô chọn duy nhất bên trong
+            Traffic chart (mục B) áp dụng cho toàn trang, tránh 2 nút nền tảng chồng chéo. */}
+
         <Button size="sm" variant={dirty ? "default" : "outline"} onClick={applyFilter} disabled={!dirty}>
           <Filter className="size-4" /> Lọc
         </Button>
 
-        {user?.role === "admin" && (
+        {isDashRole && (
           <Button size="sm" variant="outline" onClick={lamMoi} disabled={refreshing}
                   title="Xoá cache và tổng hợp lại từ cơ sở dữ liệu">
             <RefreshCw className={cn("size-4", refreshing && "animate-spin")} />
@@ -321,19 +420,38 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ═══ A — Dải KPI ═══ */}
-      <SummaryStrip data={summary} loading={lSummary} />
+      {/* ═══ Biểu đồ riêng (theo từng lát cắt đang chọn) / Biểu đồ chung (so sánh) ═══ */}
+      <Tabs value={topTab} onValueChange={(v) => setTopTab(v as "rieng" | "chung")}>
+        <TabsList className="w-auto">
+          <TabsTrigger value="rieng">Biểu đồ riêng</TabsTrigger>
+          <TabsTrigger value="chung">Biểu đồ chung</TabsTrigger>
+        </TabsList>
 
-      {/* ═══ B — Traffic theo chỉ số ═══ */}
-      <TrafficMetricChart data={traffic} loading={lTraffic} metrics={metricList} scope={scope} onScope={setScope} />
+        <TabsContent value="rieng" className="flex flex-col gap-3">
+          <SummaryStrip data={summary} loading={lSummary} breakdown={channelBreakdown}
+                       lBreakdown={lChannelBreakdown} country={country} />
+          <TrafficMetricChart data={traffic} loading={lTraffic} metrics={metricList}
+                              scope={scope} onScope={setScope} platformTags={allPlatforms} />
+          <CountryComparisonCard byCountry={byCountry} />
+          {country && (
+            <PlatformBreakdownCard from={from} to={to} country={country} apiOpts={apiOpts}
+                                   platformTags={allPlatforms} reloadKey={reloadKey} />
+          )}
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div ref={topRef}>
+              <TopChannelsCard items={top} loading={lTop} country={country} limit={topLimit} onLimit={setTopLimit} />
+            </div>
+            <CountryViewsCard data={byCountry} loading={lByCountry} country={country} />
+          </div>
+        </TabsContent>
 
-      {/* ═══ C + D — Top kênh + View theo quốc gia ═══ */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <div ref={topRef}>
-          <TopChannelsCard items={top} loading={lTop} country={country} limit={topLimit} onLimit={setTopLimit} />
-        </div>
-        <CountryViewsCard data={byCountry} loading={lByCountry} country={country} />
-      </div>
+        <TabsContent value="chung">
+          <ComparisonView from={from} to={to} country={country} apiOpts={apiOpts}
+                          isDashRole={isDashRole} viewerAccounts={viewerAccounts}
+                          groupsList={groupsList} platformTags={allPlatforms}
+                          topChannels={top} reloadKey={reloadKey} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -354,7 +472,10 @@ function KpiCard({ label, children, footer }: {
   );
 }
 
-function SummaryStrip({ data, loading }: { data: AnalyticsSummary | null; loading: boolean }) {
+function SummaryStrip({ data, loading, breakdown, lBreakdown, country }: {
+  data: AnalyticsSummary | null; loading: boolean;
+  breakdown: ChannelBreakdown | null; lBreakdown: boolean; country: string;
+}) {
   if (loading && !data) {
     return (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -365,19 +486,97 @@ function SummaryStrip({ data, loading }: { data: AnalyticsSummary | null; loadin
   if (!data) return null;
 
   const perDay = data.days_in_range > 0 ? data.videos_posted / data.days_in_range : 0;
+  // Ngưỡng 2h: dưới đó coi là đồng bộ bình thường (Tool push định kỳ), trên đó cảnh báo số kênh
+  // có thể lệch Tool thật (mục 26 đặc tả — vấn đề VPS/Tool không đồng nhất).
+  const staleHours = data.last_synced_at
+    ? (Date.now() - new Date(data.last_synced_at).getTime()) / 3_600_000 : null;
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <KpiCard label="Tổng view (YT + FB)" footer={<>so với kỳ trước <DeltaLabel pct={deltaPct(data.total_views, data.total_views_prev)} /></>}>
-        {fmtNum(data.total_views)}
-      </KpiCard>
-      <KpiCard label="Video đã đăng trong kỳ" footer={<span className="text-muted-foreground">≈ {perDay.toFixed(1)}/ngày · <DeltaLabel pct={deltaPct(data.videos_posted, data.videos_posted_prev)} /></span>}>
-        {fmtNum(data.videos_posted)}
-      </KpiCard>
-      <KpiCard label="Kênh / page đang bật"
-               footer={<span className="text-muted-foreground">trên tổng {fmtNum(data.managed_channels)} nơi đăng quản lý</span>}>
-        {fmtNum(data.active_channels)} <span className="text-base text-muted-foreground">/ {fmtNum(data.managed_channels)}</span>
-      </KpiCard>
+    <div className="flex flex-col gap-1.5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <KpiCard label="Tổng view (YT + FB)" footer={<>so với kỳ trước <DeltaLabel pct={deltaPct(data.total_views, data.total_views_prev)} /></>}>
+          {fmtNum(data.total_views)}
+        </KpiCard>
+        <KpiCard label="Video đã đăng trong kỳ" footer={<span className="text-muted-foreground">≈ {perDay.toFixed(1)}/ngày · <DeltaLabel pct={deltaPct(data.videos_posted, data.videos_posted_prev)} /></span>}>
+          {fmtNum(data.videos_posted)}
+        </KpiCard>
+        <ChannelKpiCard breakdown={breakdown} loading={lBreakdown} country={country} />
+      </div>
+      {staleHours !== null && staleHours > 2 && (
+        <p className="flex items-center gap-1 text-[11px] text-amber-600">
+          <AlertTriangle className="size-3" />
+          Dữ liệu đồng bộ lần cuối{" "}
+          {staleHours < 48 ? `${Math.round(staleHours)} giờ` : `${Math.round(staleHours / 24)} ngày`} trước
+          — số kênh/view có thể chưa khớp Tool mới nhất.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Ô "Kênh/Page đang bật" — thay vì 1 số tổng, hiển thị breakdown theo TỪNG nền tảng (facebook,
+// youtube, + nhãn tự do như "tiktok") và theo chủ đề (ITL/Sible...) khi 1 trang chạy nhiều chủ đề
+// cùng lúc (mục 25.4 đặc tả). Khi đang lọc 1 quốc gia cụ thể, tổng + từng dòng platform đều thu
+// hẹp về đúng quốc gia đó (không hiện số toàn hệ thống trong lúc filter — mục 25.3).
+function ChannelKpiCard({ breakdown, loading, country }: {
+  breakdown: ChannelBreakdown | null; loading: boolean; country: string;
+}) {
+  if (loading && !breakdown) return <Skeleton className="h-[92px] rounded-xl" />;
+  if (!breakdown) return null;
+
+  const rows = breakdown.by_platform;
+  let managed = breakdown.total.managed;
+  let active = breakdown.total.active;
+  if (country) {
+    managed = 0; active = 0;
+    for (const p of rows) {
+      const c = p.by_country?.find((x) => x.country === country);
+      managed += c?.managed ?? 0;
+      active += c?.active ?? 0;
+    }
+  }
+
+  const platformLabel = (p: string) => (p === "youtube" ? "YouTube" : p === "facebook" ? "Facebook" : p);
+
+  return (
+    <div className="glass rounded-xl px-4 py-3.5">
+      <div className="text-2xl font-semibold tabular-nums">
+        {fmtNum(active)} <span className="text-base text-muted-foreground">/ {fmtNum(managed)}</span>
+      </div>
+      <div className="mt-0.5 text-xs text-muted-foreground">
+        Kênh / page đang bật{country ? ` · ${country}` : ""}
+      </div>
+      <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
+        {rows.map((p) => {
+          const c = country ? p.by_country?.find((x) => x.country === country) : null;
+          const m = country ? (c?.managed ?? 0) : p.managed;
+          const a = country ? (c?.active ?? 0) : p.active;
+          if (m === 0) return null;
+          return (
+            <div key={p.platform} className="text-[11px]">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">
+                  {platformLabel(p.platform)}{p.is_custom_tag ? " (nhãn)" : ""}
+                </span>
+                <span className="font-medium tabular-nums">{fmtNum(a)} / {fmtNum(m)}</span>
+              </div>
+              {!country && p.by_group && p.by_group.length > 1 && (
+                <details className="mt-0.5 ml-2">
+                  <summary className="cursor-pointer text-muted-foreground/80">
+                    {p.by_group.length} chủ đề
+                  </summary>
+                  {p.by_group.map((g) => (
+                    <div key={g.group} className="flex items-center justify-between pl-2 text-muted-foreground">
+                      <span>{g.group}</span>
+                      <span className="tabular-nums">{fmtNum(g.active)} / {fmtNum(g.managed)}</span>
+                    </div>
+                  ))}
+                </details>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -396,12 +595,13 @@ const METRIC_COLOR: Record<TrafficMetricKey, string> = {
   videos: "#22c55e",
 };
 
-function TrafficMetricChart({ data, loading, metrics, scope, onScope }: {
+function TrafficMetricChart({ data, loading, metrics, scope, onScope, platformTags }: {
   data: TrafficMetricSeries | null;
   loading: boolean;
   metrics: AnalyticsMetric[];
-  scope: "" | "youtube" | "facebook";
-  onScope: (s: "" | "youtube" | "facebook") => void;
+  scope: string;
+  onScope: (s: string) => void;
+  platformTags: string[];
 }) {
   const c = useThemeColors();
   const [kind, setKind] = useState<MetricKind>("line");
@@ -435,26 +635,25 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope }: {
 
   const rows = data?.days ?? [];
 
-  /** Dot renderer cho recharts Line — chỉ vẽ chấm + nhãn giá trị tại đỉnh cục bộ.
-   * Đỉnh cục bộ: điểm có giá trị LỚN HƠN cả hai hàng xóm (biên = không có hàng xóm → tính là đỉnh).
-   * Màu nhãn = màu đường (tham số `clr`), khớp legend. */
-  const peakDot = (k: TrafficMetricKey, clr: string) =>
+  /** Dot renderer cho recharts Line — LUÔN vẽ chấm + nhãn số cho MỌI ngày có dữ liệu (kể cả 0,
+   * phân biệt với `null` = "chưa có dữ liệu ngày đó" theo đúng ngữ nghĩa `stats_core`) — người
+   * dùng cần thấy số của từng ngày, không chỉ số cao nhất. Dùng `shortNum` (dạng rút gọn, giống
+   * nhãn cột) để đỡ tràn chữ khi khoảng ngày dài; so le trên/dưới theo chỉ số chẵn/lẻ để giảm
+   * chồng chữ giữa các điểm liền kề. Màu nhãn = màu đường (tham số `clr`), khớp legend. */
+  const dayDot = (k: TrafficMetricKey, clr: string) =>
     (props: { cx?: number; cy?: number; index?: number; payload?: TrafficMetricPoint }) => {
       const { cx, cy, index, payload } = props;
       if (cx == null || cy == null || index == null || !payload) return <g />;
       const v = payload[k];
-      if (v == null || v === 0) return <g />;
-      const pv = rows[index - 1]?.[k];
-      const nv = rows[index + 1]?.[k];
-      if ((pv != null && v <= pv) || (nv != null && v <= nv)) return <g />;
-      // Nhãn: mặc định trên chấm, cạnh mép trên → dịch xuống dưới
-      const ty = cy < 18 ? cy + 14 : cy - 6;
+      if (v == null) return <g />;
+      const baseTy = cy < 18 ? cy + 14 : cy - 6;
+      const ty = index % 2 === 0 ? baseTy : baseTy + (baseTy > cy ? 9 : -9);
       return (
         <g>
-          <circle cx={cx} cy={cy} r={3} fill={clr} stroke="none" />
-          <text x={cx} y={ty} textAnchor="middle" fontSize={9} fontWeight="600"
+          <circle cx={cx} cy={cy} r={2.5} fill={clr} stroke="none" />
+          <text x={cx} y={ty} textAnchor="middle" fontSize={8} fontWeight="600"
                 fill={clr} style={{ fontVariantNumeric: "tabular-nums" }}>
-            {v.toLocaleString("vi-VN")}
+            {shortNum(v)}
           </text>
         </g>
       );
@@ -465,7 +664,9 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope }: {
     [data, shown.join("|"), c],
   );
 
-  const scopeLabel = { "": "cả hai nền tảng", youtube: "chỉ YouTube", facebook: "chỉ Facebook" }[scope];
+  const customTags = platformTags.filter((p) => p !== "youtube" && p !== "facebook");
+  const scopeLabel = scope === "" ? "cả hai nền tảng" : scope === "youtube" ? "chỉ YouTube"
+    : scope === "facebook" ? "chỉ Facebook" : `nhãn "${scope}"`;
 
   return (
     <div className="glass rounded-xl p-4">
@@ -490,12 +691,13 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope }: {
       {/* Scope selector + metric toggles */}
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         <Select value={scope || SCOPE_ALL}
-                onValueChange={(v) => onScope(v === SCOPE_ALL ? "" : v as "youtube" | "facebook")}>
+                onValueChange={(v) => onScope(v === SCOPE_ALL ? "" : v)}>
           <SelectTrigger className="mr-1 h-8 w-48 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={SCOPE_ALL}>Tổng — cả hai nền tảng</SelectItem>
             <SelectItem value="youtube">YouTube</SelectItem>
             <SelectItem value="facebook">Facebook</SelectItem>
+            {customTags.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
           </SelectContent>
         </Select>
         {METRIC_ORDER.map((k) => {
@@ -573,7 +775,7 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope }: {
                   ) : (
                     <Line key={k} yAxisId={yAxisIdOf(k)} type="monotone" dataKey={k} name={label(k)}
                           stroke={color(k)} strokeWidth={2}
-                          dot={peakDot(k, color(k))}
+                          dot={dayDot(k, color(k))}
                           activeDot={{ r: 4, strokeWidth: 0, fill: color(k) }} />
                   );
                 })}
@@ -704,6 +906,303 @@ function CountryViewsCard({ data, loading, country }: {
                   </Bar>
                 ))}
               </BarChart>
+            </ResponsiveContainer>
+          )}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// E — Biểu đồ chung (so sánh quốc gia/nền tảng/nhân sự/kênh/nhóm kênh)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Giống hệt tính linh hoạt của "Biểu đồ riêng": mỗi lát cắt so sánh đều xem được ở 3 dạng — Cột/
+// Đường/Tròn — KHÔNG chỉ 1 dạng cố định. Bộ lọc quốc gia/nền tảng/nhân sự/nhóm ở filter bar phía
+// trên áp dụng CHUNG cho cả tab này (đã truyền qua `apiOpts`/`country`): chọn 1 nền tảng cụ thể →
+// mọi so sánh (kể cả so sánh quốc gia) tự thu hẹp về đúng nền tảng đó; chọn 1 quốc gia cụ thể →
+// mọi so sánh tự thu hẹp về đúng quốc gia đó — không cần thao tác gì thêm ở đây.
+
+interface CompareSeries { key: string; name: string; total: number; days?: { date: string; value: number | null }[] }
+
+type CompareKind = "bar" | "line" | "pie";
+
+function ComparisonChart({ title, subtitle, series, loading, emptyText, allowLine = true }: {
+  title: string; subtitle?: string; series: CompareSeries[] | null; loading: boolean;
+  emptyText: string; allowLine?: boolean;
+}) {
+  const c = useThemeColors();
+  const [kind, setKind] = useState<CompareKind>("bar");
+  const [expanded, setExpanded] = useState(false);
+  const sorted = series ? [...series].sort((a, b) => b.total - a.total) : null;
+  const max = sorted?.length ? Math.max(...sorted.map((s) => s.total), 1) : 1;
+
+  // Gộp `days` của mọi series thành 1 mảng row theo ngày — {date, [tên series]: giá trị, ...} —
+  // đúng shape recharts LineChart cần cho nhiều đường trên cùng 1 trục ngày.
+  const dayRows = useMemo(() => {
+    if (!sorted?.some((s) => s.days?.length)) return [];
+    const byDate: Record<string, Record<string, number | string | null>> = {};
+    for (const s of sorted) {
+      for (const d of s.days || []) {
+        byDate[d.date] = byDate[d.date] || { date: d.date };
+        byDate[d.date][s.name] = d.value;
+      }
+    }
+    return Object.values(byDate).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }, [sorted]);
+
+  const pieData = useMemo(() => (sorted || []).map((s) => ({ name: s.name, value: s.total })), [sorted]);
+
+  // Tách phần vẽ chart ra hàm riêng để dùng lại y hệt cho cả bản thu nhỏ trong card LẪN bản phóng
+  // to trong Dialog — chỉ khác chiều cao (`heightCls`), tránh lệch số liệu giữa 2 bản.
+  const renderBody = (heightCls: string) => (
+    <div className={`${heightCls} w-full`}>
+      {loading && !sorted ? (
+        <div className="flex flex-col gap-2">
+          {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-6 rounded" />)}
+        </div>
+      ) : !sorted?.length ? <EmptyNote text={emptyText} />
+        : kind === "pie" ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie data={pieData} dataKey="value" nameKey="name" innerRadius="42%" outerRadius="80%"
+                   paddingAngle={2} label={(e: { name?: string; value?: number }) => `${e.name}: ${fmtNum(e.value ?? 0)}`}>
+                {pieData.map((p, i) => <Cell key={p.name} fill={c.ramp[i % c.ramp.length]} />)}
+              </Pie>
+              <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+        ) : kind === "line" && allowLine ? (
+          !dayRows.length ? <EmptyNote text="Chưa có số liệu theo ngày." /> : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={dayRows}>
+                <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
+                <XAxis dataKey="date" tickFormatter={shortDay} stroke={c.axis} fontSize={11} />
+                <YAxis stroke={c.axis} fontSize={11} tickFormatter={(v) => fmtNum(v)} width={60} />
+                <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
+                <Legend />
+                {sorted.map((s, i) => (
+                  <Line key={s.key} type="monotone" dataKey={s.name} name={s.name}
+                        stroke={c.ramp[i % c.ramp.length]} strokeWidth={2} dot={false} connectNulls={false} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          )
+        ) : (
+          <div className="flex h-full flex-col gap-2 overflow-y-auto pr-1">
+            {sorted.map((s, i) => (
+              <div key={s.key} className="flex items-center gap-2 text-[13px]">
+                <span className="w-28 shrink-0 truncate" title={s.name}>{s.name}</span>
+                <div className="h-4 flex-1 overflow-hidden rounded bg-elev-2">
+                  <div className="h-full rounded" style={{
+                    width: `${Math.max(2, (s.total / max) * 100)}%`,
+                    backgroundColor: `color-mix(in oklch, ${c.ramp[i % c.ramp.length]} 65%, transparent)`,
+                  }} />
+                </div>
+                <span className="min-w-[64px] shrink-0 text-right text-xs tabular-nums">{fmtNum(s.total)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+
+  const kindTabs = (
+    <Tabs value={kind} onValueChange={(v) => setKind(v as CompareKind)}>
+      <TabsList>
+        <TabsTrigger value="bar">Cột</TabsTrigger>
+        {allowLine && <TabsTrigger value="line">Đường</TabsTrigger>}
+        <TabsTrigger value="pie">Tròn</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+
+  return (
+    <div className="glass rounded-xl p-4">
+      <div className="mb-2 flex flex-wrap items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold">{title}</h3>
+          {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {kindTabs}
+          <Button size="icon" variant="outline" className="size-8" onClick={() => setExpanded(true)}
+                  title="Phóng to biểu đồ này">
+            <Maximize2 className="size-4" />
+          </Button>
+        </div>
+      </div>
+      {renderBody("h-[260px]")}
+
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        <DialogContent className="max-w-5xl">
+          <DialogTitle>{title}</DialogTitle>
+          {subtitle && <DialogDescription>{subtitle}</DialogDescription>}
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            {kindTabs}
+          </div>
+          <div className="mt-3">
+            {renderBody("h-[65vh]")}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// Quốc gia — tách riêng khỏi `ComparisonView`, hiển thị TRỰC TIẾP trong tab "Biểu đồ riêng" (yêu
+// cầu người dùng: không còn nằm trong "Biểu đồ chung"). Tự dùng `byCountry` đã tải sẵn cho tab
+// riêng — không gọi thêm API, và tự thu hẹp theo filter country/platform/group đang áp dụng vì
+// `byCountry` đã được tính theo đúng filter đó.
+function CountryComparisonCard({ byCountry }: { byCountry: CountryViewsSeries | null }) {
+  const countryCompare: CompareSeries[] | null = byCountry
+    ? byCountry.countries.map((name) => ({
+        key: name, name, total: byCountry.totals[name] || 0,
+        days: byCountry.days.map((d) => ({
+          date: d.date, value: typeof d[name] === "number" ? (d[name] as number) : null,
+        })),
+      }))
+    : null;
+  return (
+    <ComparisonChart title="So sánh quốc gia"
+      subtitle="Chọn Cột/Đường/Tròn — tự thu hẹp theo nền tảng/nhóm/quốc gia đang lọc ở trên"
+      series={countryCompare} loading={!byCountry} emptyText="Chưa có dữ liệu quốc gia." />
+  );
+}
+
+function ComparisonView({
+  from, to, country, apiOpts, isDashRole, viewerAccounts, groupsList, platformTags,
+  topChannels, reloadKey,
+}: {
+  from: string; to: string; country: string; apiOpts: ScopeOpts;
+  isDashRole: boolean; viewerAccounts: Account[]; groupsList: ViewerGroup[]; platformTags: string[];
+  topChannels: TopChannel[] | null; reloadKey: number;
+}) {
+  const [platformCompare, setPlatformCompare] = useState<CompareSeries[] | null>(null);
+  const [lPlatform, setLPlatform] = useState(true);
+  const [staffCompare, setStaffCompare] = useState<CompareSeries[] | null>(null);
+  const [lStaff, setLStaff] = useState(true);
+  const [groupCompare, setGroupCompare] = useState<CompareSeries[] | null>(null);
+  const [lGroup, setLGroup] = useState(true);
+
+  // Dùng `traffic()` (không phải `summary()`) cho fan-out — trả CẢ tổng (`totals.views`) LẪN chuỗi
+  // theo ngày (`days[].views`) trong 1 lượt gọi, đủ dữ liệu cho cả 3 dạng Cột/Đường/Tròn.
+
+  // So sánh nền tảng — theo nhãn platform_tag đã gắn ở Nhóm kênh (KHÔNG phải phân loại tự động).
+  useEffect(() => {
+    if (!platformTags.length) { setPlatformCompare([]); setLPlatform(false); return; }
+    let cancelled = false;
+    setLPlatform(true);
+    Promise.all(platformTags.map((tag) =>
+      viewerApi.traffic(from, to, country, { ...apiOpts, platform_tag: tag })
+        .then((d) => ({ key: tag, name: tag, total: d.totals?.views || 0,
+                        days: d.days.map((p) => ({ date: p.date, value: p.views })) }))
+        .catch(() => ({ key: tag, name: tag, total: 0, days: [] })),
+    )).then((rows) => { if (!cancelled) setPlatformCompare(rows); })
+      .finally(() => { if (!cancelled) setLPlatform(false); });
+    return () => { cancelled = true; };
+  }, [platformTags, from, to, country, apiOpts, reloadKey]);
+
+  // So sánh nhân sự — chỉ admin/dash_admin, đè `owner_account_id` lên apiOpts hiện tại (giữ nguyên
+  // bộ lọc nhóm/nền tảng/quốc gia nếu có, để so sánh đúng lát cắt đang xem).
+  useEffect(() => {
+    if (!isDashRole) { setStaffCompare(null); setLStaff(false); return; }
+    if (!viewerAccounts.length) { setStaffCompare([]); setLStaff(false); return; }
+    let cancelled = false;
+    setLStaff(true);
+    Promise.all(viewerAccounts.map((acc) =>
+      viewerApi.traffic(from, to, country, { ...apiOpts, owner_account_id: acc.id })
+        .then((d) => ({ key: acc.id, name: acc.username, total: d.totals?.views || 0,
+                        days: d.days.map((p) => ({ date: p.date, value: p.views })) }))
+        .catch(() => ({ key: acc.id, name: acc.username, total: 0, days: [] })),
+    )).then((rows) => { if (!cancelled) setStaffCompare(rows); })
+      .finally(() => { if (!cancelled) setLStaff(false); });
+    return () => { cancelled = true; };
+  }, [isDashRole, viewerAccounts, from, to, country, apiOpts, reloadKey]);
+
+  // So sánh nhóm kênh — đè `group_id` lên apiOpts hiện tại.
+  useEffect(() => {
+    if (!groupsList.length) { setGroupCompare([]); setLGroup(false); return; }
+    let cancelled = false;
+    setLGroup(true);
+    Promise.all(groupsList.map((g) =>
+      viewerApi.traffic(from, to, country, { ...apiOpts, group_id: g.id })
+        .then((d) => ({ key: g.id, name: g.name, total: d.totals?.views || 0,
+                        days: d.days.map((p) => ({ date: p.date, value: p.views })) }))
+        .catch(() => ({ key: g.id, name: g.name, total: 0, days: [] })),
+    )).then((rows) => { if (!cancelled) setGroupCompare(rows); })
+      .finally(() => { if (!cancelled) setLGroup(false); });
+    return () => { cancelled = true; };
+  }, [groupsList, from, to, country, apiOpts, reloadKey]);
+
+  // So sánh kênh — tận dụng `top_channels` đã tải cho tab Riêng. Không có API trả view/kênh/ngày
+  // nên CHỈ hỗ trợ Cột/Tròn (không có "Đường") cho lát cắt này.
+  const channelCompare: CompareSeries[] | null = topChannels
+    ? topChannels.map((ch) => ({ key: ch.id, name: ch.name, total: ch.views }))
+    : null;
+
+  return (
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      <ComparisonChart title="So sánh nền tảng" subtitle="Theo nhãn nền tảng đã gắn ở trang Nhóm kênh"
+        series={platformCompare} loading={lPlatform}
+        emptyText="Chưa gắn nhãn nền tảng nào cho kênh — vào Nhóm kênh để gắn." />
+      {isDashRole && (
+        <ComparisonChart title="So sánh nhân sự" subtitle="Tổng + xu hướng view của từng nhân sự"
+          series={staffCompare} loading={lStaff} emptyText="Chưa có nhân sự (account viewer) nào." />
+      )}
+      <ComparisonChart title="So sánh kênh" subtitle="Cùng danh sách với Top kênh ở tab Biểu đồ riêng"
+        series={channelCompare} loading={!topChannels} emptyText="Chưa có kênh nào có view." allowLine={false} />
+      <ComparisonChart title="So sánh nhóm kênh" subtitle="Tổng + xu hướng view của từng nhóm đã tạo"
+        series={groupCompare} loading={lGroup} emptyText="Chưa tạo nhóm kênh nào." />
+    </div>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// F — Phân bổ nền tảng cho 1 quốc gia (drill-down của "Biểu đồ riêng theo quốc gia")
+// ══════════════════════════════════════════════════════════════════════════════
+
+function PlatformBreakdownCard({ from, to, country, apiOpts, platformTags, reloadKey }: {
+  from: string; to: string; country: string; apiOpts: ScopeOpts; platformTags: string[]; reloadKey: number;
+}) {
+  const c = useThemeColors();
+  const [items, setItems] = useState<{ key: string; name: string; value: number }[] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!platformTags.length) { setItems(null); setLoading(false); return; }
+    let cancelled = false;
+    setLoading(true);
+    Promise.all(platformTags.map((tag) =>
+      viewerApi.summary(from, to, country, { ...apiOpts, platform_tag: tag })
+        .then((d) => ({ key: tag, name: tag, value: d.total_views || 0 }))
+        .catch(() => ({ key: tag, name: tag, value: 0 })),
+    )).then((rows) => { if (!cancelled) setItems(rows.filter((r) => r.value > 0)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [country, platformTags, from, to, apiOpts, reloadKey]);
+
+  if (!platformTags.length) return null;
+
+  return (
+    <div className="glass rounded-xl p-4">
+      <h3 className="font-semibold">Phân bổ nền tảng — {country}</h3>
+      <p className="text-xs text-muted-foreground">Theo nhãn nền tảng đã gắn ở Nhóm kênh cho các kênh thuộc quốc gia này.</p>
+      <div className="h-[220px] w-full">
+        {loading ? <EmptyNote text="Đang tải…" />
+          : !items?.length ? <EmptyNote text="Kênh trong quốc gia này chưa gắn nhãn nền tảng nào." />
+          : (
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={items} dataKey="value" nameKey="name" innerRadius="40%" outerRadius="75%"
+                     paddingAngle={2} label={(e: { name?: string; value?: number }) => `${e.name}: ${fmtNum(e.value ?? 0)}`}>
+                  {items.map((it, i) => <Cell key={it.key} fill={c.ramp[i % c.ramp.length]} />)}
+                </Pie>
+                <Tooltip formatter={tipViews} wrapperStyle={{ zIndex: 200 }} />
+                <Legend />
+              </PieChart>
             </ResponsiveContainer>
           )}
       </div>

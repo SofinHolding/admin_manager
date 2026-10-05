@@ -10,6 +10,8 @@ import ResetPasswordPage from "./routes/ResetPasswordPage";
 import DashboardPage from "./routes/DashboardPage";
 import AdminPage from "./routes/AdminPage";
 import ProfilePage from "./routes/ProfilePage";
+import GroupsPage from "./routes/GroupsPage";
+import ResourcesPage from "./routes/ResourcesPage";
 import CredentialsPage from "./reward/pages/CredentialsPage";
 import JobsPage from "./reward/pages/JobsPage";
 import JobNewPage from "./reward/pages/JobNewPage";
@@ -25,11 +27,13 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route element={<ProtectedRoute />}>
           <Route element={<Layout />}>
-            {/* Dashboard/quản trị — admin & viewer */}
-            <Route element={<RoleGate allow={["admin", "viewer"]} />}>
+            {/* Dashboard/quản trị — admin, dash_admin & viewer */}
+            <Route element={<RoleGate allow={["admin", "dash_admin", "viewer"]} />}>
               <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/groups" element={<GroupsPage />} />
+              <Route path="/resources" element={<ResourcesPage />} />
             </Route>
-            <Route element={<RoleGate allow={["admin"]} />}>
+            <Route element={<RoleGate allow={["admin", "dash_admin"]} />}>
               <Route path="/manage" element={<AdminPage />} />
             </Route>
             <Route path="/profile" element={<ProfilePage />} />
