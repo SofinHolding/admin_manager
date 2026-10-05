@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Cache-Aside: luồng ĐỌC",
+    "output": "cache-aside-read-sequence.html",
+    "viewBox": [
+      1080,
+      600
+    ],
+    "quality_profile": "showcase",
+    "column_fit": "spread"
+  },
+  "participants": [
+    {
+      "id": "client",
+      "type": "frontend",
+      "label": "manager-web",
+      "sublabel": "Dashboard"
+    },
+    {
+      "id": "analytics",
+      "type": "backend",
+      "label": "analytics-service",
+      "sublabel": "Cache-Aside"
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "cache"
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "analytics_db"
+    }
+  ],
+  "segments": [
+    {
+      "from": 146,
+      "to": 282,
+      "label": "READ · HIT"
+    },
+    {
+      "from": 298,
+      "to": 490,
+      "label": "READ · MISS"
+    }
+  ],
+  "messages": [
+    {
+      "from": "client",
+      "to": "analytics",
+      "y": 176,
+      "label": "GET /v1/analytics/summary",
+      "variant": "emphasis"
+    },
+    {
+      "from": "analytics",
+      "to": "redis",
+      "y": 206,
+      "label": "GET key",
+      "variant": "default"
+    },
+    {
+      "from": "redis",
+      "to": "analytics",
+      "y": 236,
+      "label": "HIT → trả Redis",
+      "variant": "return"
+    },
+    {
+      "from": "analytics",
+      "to": "client",
+      "y": 266,
+      "label": "200 (từ cache)",
+      "variant": "return"
+    },
+    {
+      "from": "analytics",
+      "to": "redis",
+      "y": 322,
+      "label": "GET key",
+      "variant": "default"
+    },
+    {
+      "from": "redis",
+      "to": "analytics",
+      "y": 352,
+      "label": "MISS",
+      "variant": "return"
+    },
+    {
+      "from": "analytics",
+      "to": "pg",
+      "y": 382,
+      "label": "SELECT read model",
+      "variant": "emphasis"
+    },
+    {
+      "from": "pg",
+      "to": "analytics",
+      "y": 412,
+      "label": "rows",
+      "variant": "return"
+    },
+    {
+      "from": "analytics",
+      "to": "redis",
+      "y": 442,
+      "label": "SET key + TTL",
+      "variant": "dashed"
+    },
+    {
+      "from": "analytics",
+      "to": "client",
+      "y": 472,
+      "label": "200 (từ PostgreSQL)",
+      "variant": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Khóa cache",
+      "items": [
+        "Gồm scope của người gọi (owner, role), Filter Context và seal phiên bản",
+        "Không để user này đọc nhầm dữ liệu của user khác"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Redis lỗi",
+      "items": [
+        "Nuốt lỗi, rơi về PostgreSQL, trang không chết",
+        "Single-flight: một request nạp lại, các request khác chờ"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Giới hạn",
+      "items": [
+        "Luôn có TTL, kể cả khi mất lệnh xóa",
+        "Redis chỉ là cache, không là nguồn sự thật"
+      ]
+    }
+  ]
+}

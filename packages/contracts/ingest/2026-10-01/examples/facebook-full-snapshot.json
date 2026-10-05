@@ -1,0 +1,90 @@
+{
+  "_comment": "Luồng ví dụ: Tool đẩy snapshot FULL cho nền tảng 'facebook'. Mỗi khóa là tên $defs trong ingest.schema.json.",
+  "SnapshotCreate": {
+    "platform": "facebook",
+    "snapshot_type": "full",
+    "observed_at": "2026-10-05T06:55:00Z",
+    "report_timezone": "Asia/Ho_Chi_Minh",
+    "scope": {
+      "resources": true,
+      "content_window": { "from": "2026-09-05", "to": "2026-10-05" },
+      "events_window": { "from": "2026-09-05", "to": "2026-10-05" }
+    },
+    "expected_counts": { "resources": 2, "content": 2, "events": 2 }
+  },
+  "ResourceBatch": {
+    "items": [
+      {
+        "external_id": "100000000000001",
+        "resource_type": "page",
+        "display_name": "Trang mẫu A",
+        "country": { "code": "BR", "name": "Brazil" },
+        "state": "active",
+        "projects": [
+          { "project_key": "chu_de_1", "enabled": true },
+          { "project_key": "chu_de_2", "enabled": false }
+        ],
+        "observed_at": "2026-10-05T06:55:00Z"
+      },
+      {
+        "external_id": "100000000000002",
+        "resource_type": "page",
+        "display_name": "Trang mẫu B",
+        "country": { "name": "brazil" },
+        "state": "active",
+        "projects": [],
+        "observed_at": "2026-10-05T06:55:00Z"
+      }
+    ]
+  },
+  "ContentBatch": {
+    "items": [
+      {
+        "external_id": "100000000000001_555001",
+        "resource_external_id": "100000000000001",
+        "published_date": "2026-10-04",
+        "metrics": { "views": 120034, "reactions": 830, "comments": 71 },
+        "observed_at": "2026-10-05T06:50:00Z"
+      },
+      {
+        "external_id": "100000000000001_555002",
+        "resource_external_id": "100000000000001",
+        "published_date": "2026-10-05",
+        "metrics": { "views": 0, "reactions": null, "comments": null },
+        "observed_at": "2026-10-05T06:50:00Z"
+      }
+    ]
+  },
+  "EventBatch": {
+    "items": [
+      {
+        "external_id": "evt_0001",
+        "resource_external_id": "100000000000001",
+        "kind": "post_ok",
+        "occurred_date": "2026-10-04",
+        "occurred_at": "2026-10-04T13:20:11Z",
+        "project_key": "chu_de_1"
+      },
+      {
+        "external_id": "evt_0002",
+        "resource_external_id": "100000000000001",
+        "kind": "post_ok",
+        "occurred_date": "2026-10-05",
+        "project_key": "chu_de_1"
+      }
+    ]
+  },
+  "CommitRequest": { "accept_partial": false },
+  "BatchResult": {
+    "received": 2, "created": 2, "updated": 0, "unchanged": 0,
+    "stale_ignored": 0, "rejected": 0, "rejections": []
+  },
+  "CommitResult": {
+    "snapshot_id": "snp_01J9ZZ0000000000000000",
+    "status": "committed",
+    "totals": { "resources": 2, "content": 2, "events": 2 },
+    "removed": { "resources": 0, "content": 0, "events": 0 },
+    "rejected_total": 0,
+    "as_of": "2026-10-05T06:55:00Z"
+  }
+}

@@ -1,0 +1,360 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Manager Platform — Microservices",
+    "output": "manager-platform-architecture.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "manager-web",
+      "sublabel": "SPA · OIDC + PKCE",
+      "pos": [
+        40,
+        148
+      ],
+      "size": [
+        140,
+        56
+      ]
+    },
+    {
+      "id": "tools",
+      "type": "external",
+      "label": "Tool / Fallback Tool",
+      "sublabel": "integration client",
+      "pos": [
+        40,
+        364
+      ],
+      "size": [
+        140,
+        56
+      ]
+    },
+    {
+      "id": "gateway",
+      "type": "cloud",
+      "label": "api-gateway",
+      "sublabel": "route · TLS · rate limit",
+      "pos": [
+        270,
+        256
+      ],
+      "size": [
+        140,
+        56
+      ]
+    },
+    {
+      "id": "identity",
+      "type": "security",
+      "label": "identity-service",
+      "sublabel": "account · role · JWKS",
+      "pos": [
+        640,
+        40
+      ],
+      "size": [
+        150,
+        56
+      ]
+    },
+    {
+      "id": "integration",
+      "type": "backend",
+      "label": "integration-service",
+      "sublabel": "client · resource · snapshot",
+      "pos": [
+        640,
+        148
+      ],
+      "size": [
+        150,
+        56
+      ]
+    },
+    {
+      "id": "feed",
+      "type": "messagebus",
+      "label": "Change Feed",
+      "sublabel": "outbox · cursor",
+      "pos": [
+        640,
+        256
+      ],
+      "size": [
+        150,
+        56
+      ]
+    },
+    {
+      "id": "analytics",
+      "type": "backend",
+      "label": "analytics-service",
+      "sublabel": "read model · dashboard",
+      "pos": [
+        640,
+        364
+      ],
+      "size": [
+        150,
+        56
+      ]
+    },
+    {
+      "id": "reward",
+      "type": "backend",
+      "label": "reward-service",
+      "sublabel": "Discord jobs",
+      "pos": [
+        640,
+        472
+      ],
+      "size": [
+        150,
+        56
+      ]
+    },
+    {
+      "id": "identity_db",
+      "type": "database",
+      "label": "identity_db",
+      "sublabel": "accounts · keys",
+      "pos": [
+        940,
+        40
+      ],
+      "size": [
+        130,
+        56
+      ]
+    },
+    {
+      "id": "integration_db",
+      "type": "database",
+      "label": "integration_db",
+      "sublabel": "snapshots · legacy_ingest",
+      "pos": [
+        940,
+        148
+      ],
+      "size": [
+        130,
+        56
+      ]
+    },
+    {
+      "id": "analytics_db",
+      "type": "database",
+      "label": "analytics_db",
+      "sublabel": "aggregates",
+      "pos": [
+        940,
+        364
+      ],
+      "size": [
+        130,
+        56
+      ]
+    },
+    {
+      "id": "reward_db",
+      "type": "database",
+      "label": "reward_db",
+      "sublabel": "reward_* tables",
+      "pos": [
+        940,
+        472
+      ],
+      "size": [
+        130,
+        56
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "cache · ACL theo service",
+      "pos": [
+        940,
+        256
+      ],
+      "size": [
+        130,
+        56
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Manager Platform (VPS)",
+      "wraps": [
+        "gateway",
+        "identity",
+        "integration",
+        "feed",
+        "analytics",
+        "reward",
+        "identity_db",
+        "integration_db",
+        "analytics_db",
+        "reward_db",
+        "redis"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "web-to-gateway",
+      "from": "web",
+      "to": "gateway",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "tools-to-gateway",
+      "from": "tools",
+      "to": "gateway",
+      "label": "API key",
+      "variant": "security"
+    },
+    {
+      "id": "gateway-to-identity",
+      "from": "gateway",
+      "to": "identity",
+      "label": "/v1/auth",
+      "fromSide": "top",
+      "toSide": "left",
+      "labelAt": [
+        455,
+        224
+      ]
+    },
+    {
+      "id": "gateway-to-integration",
+      "from": "gateway",
+      "to": "integration",
+      "label": "/v1/integrations",
+      "labelAt": [
+        566,
+        166
+      ]
+    },
+    {
+      "id": "gateway-to-analytics",
+      "from": "gateway",
+      "to": "analytics",
+      "label": "/v1/analytics",
+      "labelAt": [
+        566,
+        384
+      ]
+    },
+    {
+      "id": "gateway-to-reward",
+      "from": "gateway",
+      "to": "reward",
+      "label": "/v1/rewards",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "labelAt": [
+        455,
+        328
+      ]
+    },
+    {
+      "id": "identity-to-db",
+      "from": "identity",
+      "to": "identity_db"
+    },
+    {
+      "id": "integration-to-db",
+      "from": "integration",
+      "to": "integration_db"
+    },
+    {
+      "id": "analytics-to-db",
+      "from": "analytics",
+      "to": "analytics_db"
+    },
+    {
+      "id": "reward-to-db",
+      "from": "reward",
+      "to": "reward_db"
+    },
+    {
+      "id": "identity-events",
+      "from": "identity",
+      "to": "integration",
+      "label": "account.* events",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "publish-snapshot",
+      "from": "integration",
+      "to": "feed",
+      "label": "snapshot.committed",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "poll-feed",
+      "from": "analytics",
+      "to": "feed",
+      "label": "pull cursor",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "analytics-cache",
+      "from": "analytics",
+      "to": "redis",
+      "label": "cache-aside",
+      "variant": "dashed"
+    },
+    {
+      "id": "integration-cache",
+      "from": "integration",
+      "to": "redis",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ranh giới",
+      "items": [
+        "Mỗi service: process, DB, migration, health riêng",
+        "Không import code, không đọc DB hay key Redis của nhau"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Xác thực",
+      "items": [
+        "User: OIDC + PKCE, token RS256 verify offline bằng JWKS",
+        "Tool: client_id + API key + scopes (độc lập với Role)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Dữ liệu và cách ly lỗi",
+      "items": [
+        "Analytics kéo Change Feed, đọc qua Redis cache-aside, miss thì analytics_db",
+        "Redis, Analytics hoặc Reward dừng: Auth và ingest vẫn chạy"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Website B: đăng nhập và thu hồi quyền",
+    "output": "rp-login-revocation-sequence.html",
+    "viewBox": [
+      1080,
+      600
+    ],
+    "quality_profile": "showcase",
+    "column_fit": "spread"
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Người dùng",
+      "sublabel": "trình duyệt"
+    },
+    {
+      "id": "siteb",
+      "type": "frontend",
+      "label": "Website B",
+      "sublabel": "Relying Party"
+    },
+    {
+      "id": "identity",
+      "type": "security",
+      "label": "identity-service",
+      "sublabel": "IdP · JWKS"
+    },
+    {
+      "id": "admin",
+      "type": "external",
+      "label": "Admin",
+      "sublabel": "quản trị"
+    },
+    {
+      "id": "manager",
+      "type": "backend",
+      "label": "Manager API",
+      "sublabel": "qua gateway"
+    }
+  ],
+  "segments": [
+    {
+      "from": 146,
+      "to": 282,
+      "label": "Đăng nhập OIDC + PKCE"
+    },
+    {
+      "from": 298,
+      "to": 396,
+      "label": "Sử dụng"
+    },
+    {
+      "from": 412,
+      "to": 510,
+      "label": "Thu hồi quyền"
+    }
+  ],
+  "messages": [
+    {
+      "from": "user",
+      "to": "identity",
+      "y": 176,
+      "label": "đăng nhập / đăng ký (PKCE)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "identity",
+      "to": "siteb",
+      "y": 206,
+      "label": "redirect ?code",
+      "variant": "return"
+    },
+    {
+      "from": "siteb",
+      "to": "identity",
+      "y": 236,
+      "label": "POST /token + PKCE",
+      "variant": "emphasis"
+    },
+    {
+      "from": "identity",
+      "to": "siteb",
+      "y": 266,
+      "label": "access 10p + refresh",
+      "variant": "return"
+    },
+    {
+      "from": "siteb",
+      "to": "manager",
+      "y": 320,
+      "label": "API key + scopes",
+      "variant": "security"
+    },
+    {
+      "from": "siteb",
+      "to": "identity",
+      "y": 350,
+      "label": "introspect (nhạy cảm)",
+      "variant": "security"
+    },
+    {
+      "from": "identity",
+      "to": "siteb",
+      "y": 380,
+      "label": "active: true",
+      "variant": "return"
+    },
+    {
+      "from": "admin",
+      "to": "identity",
+      "y": 434,
+      "label": "khóa tài khoản",
+      "variant": "emphasis"
+    },
+    {
+      "from": "identity",
+      "to": "siteb",
+      "y": 464,
+      "label": "back-channel logout",
+      "variant": "security"
+    },
+    {
+      "from": "siteb",
+      "to": "user",
+      "y": 494,
+      "label": "401, đăng nhập lại",
+      "variant": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Verify offline",
+      "items": [
+        "Chữ ký qua JWKS theo kid, kiểm iss, aud, exp",
+        "Chỉ RS256/EdDSA; từ chối none và HS256"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Thu hồi nhiều lớp",
+      "items": [
+        "Back-channel: vài giây",
+        "Mất back-channel: refresh bị từ chối, token chết sau ≤ 10 phút",
+        "Thao tác nhạy cảm: introspection, fail-closed"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Hai mặt phẳng",
+      "items": [
+        "Người dùng: token OIDC có aud riêng",
+        "Service B: API key + scopes, độc lập với token người dùng"
+      ]
+    }
+  ]
+}

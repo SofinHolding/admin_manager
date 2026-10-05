@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Cache-Aside: luồng GHI và Invalidation",
+    "output": "cache-aside-write-sequence.html",
+    "viewBox": [
+      1080,
+      600
+    ],
+    "quality_profile": "showcase",
+    "column_fit": "spread"
+  },
+  "participants": [
+    {
+      "id": "client",
+      "type": "frontend",
+      "label": "manager-web",
+      "sublabel": "cấu hình"
+    },
+    {
+      "id": "feed",
+      "type": "messagebus",
+      "label": "Change Feed",
+      "sublabel": "event"
+    },
+    {
+      "id": "analytics",
+      "type": "backend",
+      "label": "analytics-service",
+      "sublabel": "Cache-Aside"
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "analytics_db"
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "cache"
+    }
+  ],
+  "segments": [
+    {
+      "from": 146,
+      "to": 312,
+      "label": "CREATE / UPDATE / DELETE"
+    },
+    {
+      "from": 328,
+      "to": 460,
+      "label": "Ghi từ Change Feed"
+    }
+  ],
+  "messages": [
+    {
+      "from": "client",
+      "to": "analytics",
+      "y": 176,
+      "label": "POST / PATCH / DELETE",
+      "variant": "emphasis"
+    },
+    {
+      "from": "analytics",
+      "to": "pg",
+      "y": 206,
+      "label": "ghi (transaction)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "pg",
+      "to": "analytics",
+      "y": 236,
+      "label": "COMMIT OK",
+      "variant": "return"
+    },
+    {
+      "from": "analytics",
+      "to": "redis",
+      "y": 266,
+      "label": "DEL key / bump ver",
+      "variant": "security"
+    },
+    {
+      "from": "analytics",
+      "to": "client",
+      "y": 296,
+      "label": "200",
+      "variant": "return"
+    },
+    {
+      "from": "feed",
+      "to": "analytics",
+      "y": 352,
+      "label": "snapshot.committed",
+      "variant": "dashed"
+    },
+    {
+      "from": "analytics",
+      "to": "pg",
+      "y": 382,
+      "label": "UPSERT read model",
+      "variant": "emphasis"
+    },
+    {
+      "from": "pg",
+      "to": "analytics",
+      "y": 412,
+      "label": "COMMIT OK",
+      "variant": "return"
+    },
+    {
+      "from": "analytics",
+      "to": "redis",
+      "y": 442,
+      "label": "DEL key / bump ver",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Thứ tự bắt buộc",
+      "items": [
+        "PostgreSQL commit xong mới xóa Redis",
+        "Xóa trước khi commit sẽ nạp lại dữ liệu cũ"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Hai kiểu invalidate",
+      "items": [
+        "Khóa đơn lẻ: DEL",
+        "Khóa theo bộ lọc dashboard: tăng seal phiên bản, khóa cũ tự vô hiệu"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Mất lệnh xóa",
+      "items": [
+        "DEL lỗi sau commit: dữ liệu cũ tồn tại tới hết TTL, có retry",
+        "Thao tác nhạy cảm (credential, quyền) dùng TTL ngắn"
+      ]
+    }
+  ]
+}

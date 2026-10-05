@@ -1,0 +1,40 @@
+{
+  "_comment": "Snapshot DELTA cho nền tảng 'youtube': số liệu theo ngày của kênh. Giá trị của một ngày đã gửi có thể được sửa lại về sau (observed_at mới hơn thì thắng).",
+  "SnapshotCreate": {
+    "platform": "youtube",
+    "snapshot_type": "delta",
+    "observed_at": "2026-10-05T07:10:00Z",
+    "report_timezone": "UTC",
+    "expected_counts": { "resources": 1, "metrics": 2 }
+  },
+  "ResourceBatch": {
+    "items": [
+      {
+        "external_id": "UC_demo_channel_1",
+        "resource_type": "channel",
+        "display_name": "Kênh mẫu",
+        "country": { "code": "BR" },
+        "state": "active",
+        "managed": true,
+        "active": true,
+        "observed_at": "2026-10-05T07:10:00Z"
+      }
+    ]
+  },
+  "MetricsBatch": {
+    "items": [
+      {
+        "resource_external_id": "UC_demo_channel_1",
+        "date": "2026-10-04",
+        "metrics": { "views": 5400 },
+        "observed_at": "2026-10-05T07:10:00Z"
+      },
+      {
+        "resource_external_id": "UC_demo_channel_1",
+        "date": "2026-10-05",
+        "metrics": { "views": null },
+        "observed_at": "2026-10-05T07:10:00Z"
+      }
+    ]
+  }
+}
