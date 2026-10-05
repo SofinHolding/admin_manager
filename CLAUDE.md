@@ -13,8 +13,10 @@ Làm việc trên nhánh `refactor/microservices`. Tag `legacy-baseline` = code 
 |---|---|---|
 | 0 | Freeze: tài liệu, baseline, khung service, test kiến trúc | Xong phần repo. **Còn:** nginx thật từ VPS (chỉ đọc) |
 | 1.0 | Gateway pass-through | Chưa, **cần duyệt riêng** |
-| 1.1 | identity-service chassis | Khung xong (health, config, test). Chưa có DB |
-| 1.2 → 1.7 | Identity: auth, cutover single-writer, RS256/JWKS, Reward bỏ `accounts`, OIDC, đăng ký kèm integration | Chưa |
+| 1.1 | identity-service chassis + `identity_db` + migration | **Xong**, kiểm chứng trên Postgres thật |
+| 1.2 | Port auth/accounts/keys + parity legacy + công cụ shadow sync | **Xong ở repo** (138 test service, 7 parity). Chưa chạy trên production |
+| 1.3 | Cutover single-writer | Chưa, **cần duyệt**. Quy trình: `docs/operations/identity-migration-runbook.md` |
+| 1.4 → 1.7 | RS256/JWKS + permission + outbox, Reward bỏ `accounts`, OIDC, đăng ký kèm integration | Chưa |
 | 2 / 3 / 4 / 5 / 6 | Integration / Analytics / Reward dọn / push + DLQ / retire legacy | Chưa |
 
 Legacy còn chạy: `admin-server/`, `reward-service/`, `admin-web/`, `local-ops-hub/`. **Không sửa legacy** trừ lỗi nghiêm
