@@ -12,20 +12,26 @@ Làm việc trên nhánh `refactor/microservices`. Tag `legacy-baseline` = code 
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
 | 0 | Freeze: tài liệu, baseline, khung service, test kiến trúc | Xong phần repo. **Còn:** nginx thật từ VPS (chỉ đọc) |
-| 1.0 | Gateway pass-through | Chưa, **cần duyệt riêng** |
-| 1.1 | identity-service chassis + `identity_db` + migration | **Xong**, kiểm chứng trên Postgres thật |
-| 1.2 | Port auth/accounts/keys + parity legacy + công cụ shadow sync | **Xong ở repo** (138 test service, 7 parity). Chưa chạy trên production |
-| 1.3 | Cutover single-writer | Chưa, **cần duyệt**. Quy trình: `docs/operations/identity-migration-runbook.md` |
-| 1.4 → 1.7 | RS256/JWKS + permission + outbox, Reward bỏ `accounts`, OIDC, đăng ký kèm integration | Chưa |
-| 2 / 3 / 4 / 5 / 6 | Integration / Analytics / Reward dọn / push + DLQ / retire legacy | Chưa |
+| 1.0 | api-gateway (ASGI proxy, edge security) + `nginx.conf` render | **Xong ở repo.** `nginx -t` thật và áp lên VPS: `PENDING_PRODUCTION_APPROVAL` |
+| 1.1–1.2 | identity-service chassis, port auth/accounts/keys, parity legacy | **Xong**, kiểm chứng trên Postgres thật |
+| 1.3 | Cutover single-writer Identity | Chưa, **cần duyệt**. `docs/operations/identity-migration-runbook.md` |
+| 1.4–1.7 | RS256/JWKS, permission, outbox, OIDC/PKCE, đăng ký kèm integration | **Xong ở repo** |
+| 2 | integration-service: clients/credentials/ingest/feed/provisioning/jobs/legacy ACL | **Xong ở repo** (canonicalizer `documents→snapshot` chưa, chờ duyệt) |
+| 3 | analytics-service: read model, consumer feed, FilterContext, cache | **Xong ở repo** |
+| 4 | reward-service tách khỏi bảng `accounts`/JWT secret chung | **Xong ở repo** (`reward-service/` giữ nguyên vị trí) |
+| 5 | Push (Redis Streams) tùy chọn + DLQ vận hành | Chưa (đường mặc định là feed kéo, đã xong) |
+| 6 | Retire legacy, bật lại CI/CD | Chưa, **cần duyệt**. `docs/operations/production-cutover-runbook.md` |
+| 7 | admin-web dùng `/v1/*` qua gateway, FilterContext, OIDC tùy chọn | **Xong ở repo** |
+
+Báo cáo đầy đủ: `docs/operations/implementation-final-report.md`. Quyết định thực thi: `docs/architecture/implementation-decisions.md`.
 
 Legacy còn chạy: `admin-server/`, `reward-service/`, `admin-web/`, `local-ops-hub/`. **Không sửa legacy** trừ lỗi nghiêm
-trọng; tính năng mới làm ở service đích. `reward-service/` được `git mv` sang `services/` ở Phase 1.5.
+trọng; tính năng mới làm ở service đích. `reward-service/` vẫn nằm ngoài `services/` (ADR: không `git mv` cho tới khi người dùng duyệt).
 
 ## 2. Luật không được phá
 
 1. **Không service nào import code của service khác** hay module legacy (`auth`, `db`, `stats_core`, ...). Chỉ được
-   dùng `manager_contracts` và `manager_observability` (package dùng chung, chỉ generic).
+   dùng `manager_contracts`, `manager_observability` và `manager_sdk` (package dùng chung, chỉ generic).
 2. **Không đọc/ghi/JOIN bảng của service khác.** Mỗi service một database và một DB user riêng.
 3. Cần dữ liệu của service khác: gọi API công khai của nó hoặc nhận event. Không có đường tắt.
 4. **Không hardcode tên Tool/project** (ITL, Sible...) ở bất kỳ đâu. Tên Tool chỉ là metadata.
@@ -90,6 +96,7 @@ pip install -r tests/arch/requirements.txt
 python infra/scripts/test_all.py            # tất cả (arch, contract, packages, từng service, integration)
 python infra/scripts/test_all.py --fast     # bỏ test tiến trình thật (~25s)
 python infra/scripts/test_all.py --legacy   # thêm test admin-server cũ
+python infra/scripts/dev_stack.py up        # dựng cả stack bằng tiến trình thật (E2E: tests/e2e dùng DevStack)
 ```
 
 - Hạ tầng dev riêng (Postgres `127.0.0.1:55440`, Redis `127.0.0.1:56390`, tên `mp-dev-*`): xem `infra/docker/README.md`.

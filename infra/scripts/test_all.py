@@ -125,7 +125,8 @@ def run_pytest(label: str, cwd: Path) -> dict:
     counts = {k: int(n) for n, k in re.findall(r"(\d+) (passed|failed|skipped|error|errors)", text)}
     return {"label": label, "code": proc.returncode, "seconds": time.time() - started,
             "passed": counts.get("passed", 0), "failed": counts.get("failed", 0) + counts.get("error", 0)
-            + counts.get("errors", 0), "skipped": counts.get("skipped", 0), "output": text}
+            + counts.get("errors", 0), "skipped": counts.get("skipped", 0), "output": text,
+            "external": re.findall(r"SKIPPED \[\d+\] (.*NOT_RUN_EXTERNAL_DEPENDENCY.*)", text)}
 
 
 def run_cmd(label: str, cmd: list[str], cwd: Path) -> dict:
@@ -193,10 +194,16 @@ def main() -> int:
     for r in results:
         print("{:<24} {:>7} {:>7} {:>7} {:>8.1f}  {}".format(
             r["label"], r["passed"], r["failed"], r["skipped"], r["seconds"], "OK" if r["code"] == 0 else "LỖI"))
+    external = [e for r in results for e in r.get("external", [])]
     total_skip = sum(r["skipped"] for r in results)
     bad = [r["label"] for r in results if r["code"] != 0]
-    if total_skip:
-        print(f"\nCHÚ Ý: {total_skip} test bị SKIP — chưa được kiểm chứng (xem lý do bằng -rs ở từng bộ).")
+    if external:  # phụ thuộc NGOÀI repo (vd. ảnh nginx) cố ý không kéo về: liệt kê rõ là CHƯA KIỂM CHỨNG, không làm đỏ cổng
+        print("\nCHƯA KIỂM CHỨNG (NOT_RUN_EXTERNAL_DEPENDENCY):")
+        for e in external:
+            print("  -", e)
+    unexplained = total_skip - len(external)
+    if unexplained > 0:
+        print(f"\nCHÚ Ý: {unexplained} test bị SKIP không có lý do phụ thuộc ngoài — chưa được kiểm chứng (xem -rs).")
         if not args.fast and not args.only and not args.no_bootstrap:
             bad.append("skipped-tests")  # bản đầy đủ đã dựng hạ tầng: SKIP nghĩa là còn kẽ hở kiểm chứng
     if not results:

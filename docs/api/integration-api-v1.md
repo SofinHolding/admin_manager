@@ -64,17 +64,21 @@ Hành vi bắt buộc (mỗi mục có test):
 
 ## 4. Jobs (Fallback Tool)
 
-`jobs(id, owner_account_id, resource_id, kind, status pending|leased|done|failed, lease_until, attempts, claimed_by_installation, result jsonb, created_at)`.
-`claim` atomic (`FOR UPDATE SKIP LOCKED`), `lease_seconds` ≤ 900; lease hết hạn → tự quay về `pending` (worker/lazy khi claim). Không có
-`jobs:claim:system` ⇒ chỉ claim job của **chính owner**; có ⇒ đa-owner nhưng owner do server gán. `complete` kèm kết quả canonical (đi qua snapshot).
-`fail` tăng `attempts`, quá `max_attempts` → `failed`. Job được tạo khi resource có `execution_mode=fallback_tool` (xem legacy `/v1/ops/*`).
+`jobs(id, owner_account_id, resource_id, kind, status pending|leased|done|failed|dead|cancelled, lease_until, attempts, claimed_by_installation, result jsonb, created_at)`.
+`claim` atomic (`FOR UPDATE SKIP LOCKED`), `lease_seconds` ≤ 900, `limit` ≤ 50; lease hết hạn → tự quay về `pending` (worker bảo trì + lazy khi claim), hết lượt → `dead`;
+người giữ lease cũ gặp `409 JOB_LEASE_EXPIRED`. Capability hiệu lực = giao của khai báo lúc claim và lúc handshake của chính installation. Không có
+`jobs:claim:system` ⇒ chỉ claim job của **chính owner**; có ⇒ đa-owner nhưng owner do server gán. Job của owner khác hiện ra như `404 JOB_NOT_FOUND`.
+`fail` với `retryable=true` còn lượt → `pending` sau backoff mũ; hết lượt (`max_attempts`) → `dead`; `retryable=false` → `failed`. `complete`/`fail` lặp lại trả `replayed=true` (idempotent).
+`heartbeat` gia hạn lease. User tạo job: `POST /v1/integrations/jobs` (resource phải `execution_mode=fallback_tool`, có `dedupe_key`, hạn mức job chờ mỗi owner; body chứa `owner*` ⇒ 422).
 
 ## 5. Tương thích legacy (Phase 2b)
 
-`/v1/resources/*` và `/v1/ops/*` giữ **nguyên đường dẫn, body, thông điệp** như `admin-server` (`docs/api/legacy/admin-server.openapi.json`),
-phục vụ `admin-web` và `local-ops-hub` hiện tại; `/v1/viewer/links*` (pairing legacy, deprecated). Legacy ACL: schema `legacy_ingest`
-(`documents`, `user_meta`, `account_links`, `link_codes`) + worker **canonicalizer** (documents → snapshot committed hệ thống) theo
-`ingest-data-contract-v1.md` §7; DB role riêng `legacy_ingest_writer` chỉ ghi được `legacy_ingest.documents`.
+`/v1/resources/*`, `/v1/ops/*`, `/v1/viewer/links*` (26 operation) giữ **nguyên đường dẫn, query, body, status và lỗi `{detail}`** như `admin-server`
+(`docs/api/legacy/admin-server.openapi.json`), phục vụ `admin-web` và `local-ops-hub` hiện tại. Đây là lớp chống ăn mòn (`legacy_acl`): mọi ghi
+đi qua cùng `ingest.merge` vào kho canonical (một đường ghi, cùng `revision`, cùng event `resource.changed`), nên Analytics thấy dữ liệu nhập tay y như dữ liệu Tool đẩy lên.
+Schema `legacy_ingest` nằm TRONG `integration_db` và dùng chính user `integration_svc` (KHÔNG có DB role `legacy_ingest_writer` ở giai đoạn này).
+Xác thực bằng JWT user RS256; body có `owner*` ⇒ 422 (legacy lặng lẽ bỏ qua — khác biệt có chủ đích). Legacy chỉ thấy/sửa resource có `origin <> 'tool'`.
+Chưa làm (cần hạ tầng/sync server, chờ duyệt): canonicalizer `documents → snapshot` (ingest-data-contract §7).
 
 ## 6. Endpoint nội bộ (service key, không qua gateway)
 
