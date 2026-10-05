@@ -44,6 +44,23 @@ class Settings:
     smtp_user: str = ""
     smtp_pass: str = ""
     smtp_from: str = ""
+    # ── OIDC (Phase 1.6) ──
+    sso_ttl_s: int = 8 * 3600           # tuổi thọ cookie/phiên SSO của trang đăng nhập hosted
+    auth_code_ttl_s: int = 60           # authorization code: RFC 6749 khuyến nghị rất ngắn
+    web_redirect_uris: tuple = ("http://127.0.0.1:5174/admin/callback",)  # client first-party manager-web
+    web_post_logout_uris: tuple = ()
+    backchannel_enabled: bool = True
+    backchannel_interval_s: float = 2.0
+    backchannel_timeout_s: float = 5.0
+    backchannel_max_attempts: int = 6
+    backchannel_backoff_base_s: float = 5.0
+    backchannel_backoff_cap_s: float = 900.0
+    backchannel_allow_private: bool = False   # cho phép RP trong dải mạng nội bộ (RFC1918); mặc định chặn
+    # ── Consumer feed Integration (Phase 1.7) ──
+    feed_poll_interval_s: float = 3.0
+    feed_max_attempts: int = 5
+    feed_backoff_base_s: float = 1.0
+    feed_backoff_cap_s: float = 60.0
 
     @property
     def smtp_configured(self) -> bool:
@@ -63,6 +80,32 @@ def _int(env: Mapping[str, str], name: str, default: int, lo: int, hi: int) -> i
     if not lo <= value <= hi:
         raise ConfigError(f"IDENTITY_{name} phải trong khoảng {lo}..{hi}")
     return value
+
+
+def _bool(env: Mapping[str, str], name: str, default: bool) -> bool:
+    raw = _env(env, name, "true" if default else "false").lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    raise ConfigError(f"IDENTITY_{name} phải là true/false")
+
+
+def _float(env: Mapping[str, str], name: str, default: float, lo: float, hi: float) -> float:
+    try:
+        value = float(_env(env, name, str(default)))
+    except ValueError as exc:
+        raise ConfigError(f"IDENTITY_{name} phải là số") from exc
+    if not lo <= value <= hi:
+        raise ConfigError(f"IDENTITY_{name} phải trong khoảng {lo}..{hi}")
+    return value
+
+
+def _csv(env: Mapping[str, str], name: str, default: tuple) -> tuple:
+    raw = _env(env, name)
+    if not raw:
+        return default
+    return tuple(x.strip() for x in raw.split(",") if x.strip())
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -116,6 +159,21 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         smtp_host=_env(env, "SMTP_HOST"), smtp_port=_int(env, "SMTP_PORT", 587, 1, 65535),
         smtp_user=_env(env, "SMTP_USER"), smtp_pass=_env(env, "SMTP_PASS"),
         smtp_from=_env(env, "SMTP_FROM") or _env(env, "SMTP_USER"),
+        sso_ttl_s=_int(env, "SSO_TTL_S", 8 * 3600, 300, 30 * 86400),
+        auth_code_ttl_s=_int(env, "AUTH_CODE_TTL_S", 60, 10, 600),
+        web_redirect_uris=_csv(env, "WEB_REDIRECT_URIS", ("http://127.0.0.1:5174/admin/callback",)),
+        web_post_logout_uris=_csv(env, "WEB_POST_LOGOUT_URIS", ()),
+        backchannel_enabled=_bool(env, "BACKCHANNEL_ENABLED", True),
+        backchannel_interval_s=_float(env, "BACKCHANNEL_INTERVAL_S", 2.0, 0.05, 300),
+        backchannel_timeout_s=_float(env, "BACKCHANNEL_TIMEOUT_S", 5.0, 0.2, 30),
+        backchannel_max_attempts=_int(env, "BACKCHANNEL_MAX_ATTEMPTS", 6, 1, 20),
+        backchannel_backoff_base_s=_float(env, "BACKCHANNEL_BACKOFF_BASE_S", 5.0, 0.0, 3600),
+        backchannel_backoff_cap_s=_float(env, "BACKCHANNEL_BACKOFF_CAP_S", 900.0, 0.0, 86400),
+        backchannel_allow_private=_bool(env, "BACKCHANNEL_ALLOW_PRIVATE", False),
+        feed_poll_interval_s=_float(env, "FEED_POLL_INTERVAL_S", 3.0, 0.05, 300),
+        feed_max_attempts=_int(env, "FEED_MAX_ATTEMPTS", 5, 1, 20),
+        feed_backoff_base_s=_float(env, "FEED_BACKOFF_BASE_S", 1.0, 0.0, 600),
+        feed_backoff_cap_s=_float(env, "FEED_BACKOFF_CAP_S", 60.0, 0.0, 3600),
     )
 
 
@@ -134,6 +192,10 @@ def require_serving_config(settings: Settings) -> None:
             Fernet(settings.key_encryption_key.encode())
         except Exception as exc:  # noqa: BLE001
             raise ConfigError("IDENTITY_KEY_ENCRYPTION_KEY không phải khoá Fernet hợp lệ") from exc
+    if settings.integration_feed_url and not settings.integration_feed_url.startswith(("http://", "https://")):
+        raise ConfigError("IDENTITY_INTEGRATION_FEED_URL phải là http(s)://")
+    if settings.integration_feed_url and settings.env == "production" and             not settings.integration_feed_url.startswith("https://"):
+        raise ConfigError("IDENTITY_INTEGRATION_FEED_URL phải là https:// ở production")
     if settings.jwt_compat_secret and settings.env == "production" and settings.jwt_compat_secret.startswith("dev-"):
         raise ConfigError("IDENTITY_JWT_COMPAT_SECRET kiểu dev không được dùng ở production")
     if settings.env == "production" and not settings.issuer.startswith("https://"):

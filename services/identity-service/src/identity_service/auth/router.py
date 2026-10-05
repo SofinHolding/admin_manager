@@ -38,8 +38,9 @@ async def check_email(body: CheckEmailBody, request: Request) -> dict:
 async def register(body: RegisterBody, request: Request) -> dict:
     c = get_container(request)
     c.limiter.check(client_ip(request), "register", 3, 3600)
+    integration = body.integration.model_dump() if body.integration and body.integration.create else None
     return await c.auth.register(key=body.key, username=body.username, password=body.password,
-                                 email=body.email)
+                                 email=body.email, integration=integration)
 
 
 @router.get("/verify-email", summary="Xác thực email (click link từ email)")

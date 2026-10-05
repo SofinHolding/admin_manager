@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 
 import asyncpg
 
-from identity_service.accounts import repository as accounts
+from identity_service.accounts import integration_repository as integration_repo, repository as accounts
 from identity_service.audit import repository as audit
 from identity_service.auth import refresh_repository as refresh_tokens, session_repository as sessions
 from identity_service.config import Settings
@@ -33,7 +33,7 @@ from identity_service.outbox import events
 from identity_service.permissions import repository as perms_repo
 from identity_service.permissions.service import effective_permissions
 from identity_service.tokens.service import TokenService
-from identity_service.registration_keys import repository as keys
+from identity_service.registration_keys import policy as key_policy, repository as keys
 from identity_service.security import (hash_password, hash_token, iso, new_numeric_code, new_token,
                                        utcnow, verify_password)
 
@@ -114,7 +114,8 @@ class AuthService:
 
     # ── đăng ký ─────────────────────────────────────────────────────────────────
 
-    async def register(self, *, key: str, username: str, password: str, email: str) -> dict:
+    async def register(self, *, key: str, username: str, password: str, email: str,
+                       integration: dict | None = None) -> dict:
         key, username, email = key.strip(), username.strip(), email.strip()
         now = self.now()
         pw_hash = await asyncio.to_thread(hash_password, password)
@@ -127,6 +128,13 @@ class AuthService:
                 raise DomainError(400, "Mã mời không hợp lệ hoặc đã hết lượt")
             if key_row["expires_at"] is not None and key_row["expires_at"] <= now:
                 raise DomainError(400, "Mã mời đã hết hạn")
+            # Kiểm chính sách integration ĐỒNG BỘ, CỤC BỘ, TRƯỚC khi tiêu hao key/tạo account: sai thì không để lại gì.
+            plan = (key_policy.plan_registration(keys.parse_policy(key_row.get("integration_policy")), integration)
+                    if integration else None)
+            apps = list(key_row.get("allowed_apps") or [])
+            for app in apps:
+                if not await perms_repo.get(conn, f"{app}:access"):
+                    raise DomainError(400, "Mã mời tham chiếu ứng dụng không còn tồn tại")
             if await accounts.username_exists(conn, username):
                 raise DomainError(409, "Tên đăng nhập đã được sử dụng")
             if await accounts.email_exists(conn, email):
@@ -146,11 +154,21 @@ class AuthService:
             await audit.record(conn, account_id=account["id"], event_type="register", now=now,
                                target_type="account", target_id=account["id"],
                                payload={"role": account["role"]})
-            await events.registered(conn, account)
+            if plan:
+                await integration_repo.create(conn, account_id=account["id"], now=now, **plan)
+            await events.registered(conn, account, provisioning=plan)
+            for app in apps:  # SSO (D11): key phát cho app nào chỉ cấp `<app>:access` của app đó
+                if await perms_repo.grant(conn, account["id"], f"{app}:access", "registration"):
+                    await events.permission_changed(conn, account["id"], f"{app}:access", True)
 
         await self._safe_send(self.mailer.send_verify, account["email"], verify_token, account["username"])
-        return {"ok": True, "email": account["email"],
-                "message": "Đã gửi email xác thực. Kiểm tra hộp thư để kích hoạt tài khoản."}
+        result = {"ok": True, "email": account["email"],
+                  "message": "Đã gửi email xác thực. Kiểm tra hộp thư để kích hoạt tài khoản."}
+        if plan:  # CHỈ khi client yêu cầu; không yêu cầu => phản hồi y hệt legacy
+            result["integration"] = {"client_id": plan["client_id"], "tool_name": plan["tool_name"],
+                                     "client_kind": plan["client_kind"],
+                                     "credential_status": "pending_email_verification", "provisioning": "pending"}
+        return result
 
     # ── xác thực email ──────────────────────────────────────────────────────────
 
@@ -182,8 +200,9 @@ class AuthService:
 
     # ── đăng nhập / refresh / đăng xuất ────────────────────────────────────────
 
-    async def login(self, *, username: str, password: str, client_type_header: str) -> dict:
-        client_type = _FALLBACK_TOOL if client_type_header == _FALLBACK_TOOL else "web"
+    async def authenticate(self, username: str, password: str) -> dict:
+        """Xác minh username+password và trạng thái tài khoản; trả account hoặc ném DomainError. Dùng chung bởi
+        `/v1/auth/login` và trang đăng nhập hosted của OIDC (cùng bcrypt, cùng chống dò username qua thời gian)."""
         async with self.db.connection() as conn:
             account = await accounts.get_by_username(conn, username.strip())
         # Luôn băm một lần (dùng hash giả khi không có account) để thời gian phản hồi không lộ username.
@@ -198,6 +217,11 @@ class AuthService:
                                    "Kiểm tra hộp thư hoặc yêu cầu gửi lại email xác thực.")
         if account["status"] == "suspended":
             raise DomainError(403, "Tài khoản đã bị khoá. Liên hệ quản trị viên.")
+        return account
+
+    async def login(self, *, username: str, password: str, client_type_header: str) -> dict:
+        client_type = _FALLBACK_TOOL if client_type_header == _FALLBACK_TOOL else "web"
+        account = await self.authenticate(username, password)
         if client_type == _FALLBACK_TOOL and account["role"] not in _FALLBACK_ROLES:
             raise DomainError(403, "Tool B chỉ cho phép tài khoản admin hoặc dash_admin đăng nhập")
 

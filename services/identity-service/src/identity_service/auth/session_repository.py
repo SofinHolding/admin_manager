@@ -25,3 +25,9 @@ async def revoke_all(conn: asyncpg.Connection, account_id: str, now: datetime) -
     tag = await conn.execute("UPDATE sessions SET revoked_at = $2 WHERE account_id = $1 AND revoked_at IS NULL",
                              account_id, now)
     return int(tag.rsplit(" ", 1)[-1])
+
+
+async def revoke_if_active(conn: asyncpg.Connection, sid: str, now: datetime) -> bool:
+    """Thu hồi phiên; True nếu phiên TỒN TẠI và vừa chuyển từ sống sang bị thu hồi (để phát event đúng một lần)."""
+    return bool(await conn.fetchval(
+        "UPDATE sessions SET revoked_at = $2 WHERE sid = $1 AND revoked_at IS NULL RETURNING 1", sid, now))

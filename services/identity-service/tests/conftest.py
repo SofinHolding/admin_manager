@@ -24,7 +24,8 @@ from identity_service.config import Settings
 from identity_service.db import Database
 
 PG_REASON = devenv.SKIP_REASON
-_TABLES = ("outbox, auth_audit, account_permissions, sessions, refresh_tokens, accounts, invite_keys")
+_TABLES = ("outbox, auth_audit, account_permissions, sessions, refresh_tokens, accounts, invite_keys, "
+           "oidc_clients, oidc_cursor, feed_cursor, processed_events, dead_letters")
 
 
 def _dsn() -> str | None:
@@ -137,6 +138,14 @@ async def db(migrated):
     await database.open()
     async with database.connection() as conn:
         await conn.execute(f"TRUNCATE {_TABLES} RESTART IDENTITY CASCADE")
+        # Catalog permission không bị TRUNCATE (là dữ liệu seed của migration 0002): đưa về đúng trạng thái seed
+        # để test nào thêm/xoá permission không làm nhiễm test khác.
+        await conn.execute("DELETE FROM permissions WHERE name NOT IN ('reward:access', 'reward:admin')")
+        await conn.execute(
+            "INSERT INTO permissions (name, description, owner_service, admin_only) VALUES "
+            "('reward:access', 'Dùng module Reward (tạo/chạy job phân phối điểm)', 'reward-service', false), "
+            "('reward:admin', 'Quản trị module Reward (xem mọi job/tài khoản)', 'reward-service', true) "
+            "ON CONFLICT (name) DO UPDATE SET admin_only = EXCLUDED.admin_only")
     yield database
     await database.close()
 

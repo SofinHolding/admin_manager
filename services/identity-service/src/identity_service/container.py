@@ -9,6 +9,10 @@ from identity_service.auth.ratelimit import RateLimiter
 from identity_service.auth.service import AuthService
 from identity_service.config import Settings
 from identity_service.db import Database
+from identity_service.oidc.backchannel import BackchannelWorker
+from identity_service.oidc.clients import ClientService
+from identity_service.oidc.service import OidcService
+from identity_service.feed_consumer.consumer import IntegrationFeedConsumer
 from identity_service.permissions.service import PermissionService
 from identity_service.registration_keys.service import RegistrationKeyService
 from identity_service.tokens.keys import KeyStore
@@ -26,3 +30,7 @@ class Container:
     tokens: TokenService
     keystore: KeyStore | None
     limiter: RateLimiter
+    oidc: OidcService
+    oidc_clients: ClientService
+    backchannel: BackchannelWorker
+    feed_consumer: IntegrationFeedConsumer
