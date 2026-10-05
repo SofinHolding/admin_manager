@@ -1,9 +1,8 @@
 """Test chassis của api-gateway: health, request-id, envelope lỗi."""
 
-from fastapi.testclient import TestClient
-
 from api_gateway import SERVICE_NAME
 from api_gateway.app import create_app
+from fastapi.testclient import TestClient
 
 
 def _client() -> TestClient:

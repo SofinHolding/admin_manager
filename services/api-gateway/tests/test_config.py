@@ -1,7 +1,6 @@
 """Test cấu hình của api-gateway: mặc định hợp lệ và fail-fast khi sai."""
 
 import pytest
-
 from api_gateway.config import ConfigError, load_settings
 
 

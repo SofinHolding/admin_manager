@@ -9,7 +9,7 @@ Quy ước: **ID** · Quyết định · Lý do · Hệ quả/đánh đổi.
 
 **ADR-001 · Secret DEV sinh ngẫu nhiên, không nằm trong repo.**
 `infra/scripts/bootstrap_dev.py` sinh `.env.dev` (gitignored) và dựng initdb/ACL từ template vào `.dev/` (gitignored). Compose đọc secret
-từ env. Không còn mật khẩu mặc định (`dev_*_change_me`) hay JWT secret mặc định (`dev-secret-thay-doi-khi-deploy`) ở bất kỳ file nào đã commit;
+từ env. Không còn mật khẩu mặc định (`dev_*_change_me`) hay JWT secret mặc định (chuỗi `dev-secret-...` cũ của admin-server) ở bất kỳ file nào đã commit;
 test quét secret (`tests/arch/test_infra.py`) giữ điều đó.
 Lý do: yêu cầu bảo mật DEV của tài liệu. Hệ quả: mỗi máy dev phải chạy bootstrap một lần; `--rotate` sinh lại và cần dựng lại volume.
 

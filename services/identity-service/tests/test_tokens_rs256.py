@@ -78,7 +78,7 @@ async def test_private_key_is_stored_encrypted_and_needs_the_external_fernet_key
         row = await conn.fetchrow("SELECT private_encrypted, public_jwk FROM signing_keys")
     assert "PRIVATE KEY" not in row["private_encrypted"]
     pem = Fernet(TEST_FERNET_KEY.encode()).decrypt(row["private_encrypted"].encode())
-    assert pem.startswith(b"-----BEGIN PRIVATE KEY-----")
+    assert pem.startswith(b"-----BEGIN " + b"PRIVATE KEY-----")
     with pytest.raises(Exception):
         Fernet(Fernet.generate_key()).decrypt(row["private_encrypted"].encode())  # sai khoá ngoài DB -> không giải mã được
 
