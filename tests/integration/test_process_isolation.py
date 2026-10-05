@@ -41,9 +41,17 @@ DEAD_DSN = "postgresql://identity_svc:x@127.0.0.1:1/identity_db"  # cổng 1: kh
 
 
 def identity_dsn(alive: bool) -> str:
+    return service_dsn("identity", alive)
+
+
+def service_dsn(name: str, alive: bool = True) -> str:
     if alive and PG_HOST:
-        return devenv.pg_dsn("identity")
-    return DEAD_DSN
+        return devenv.pg_dsn(name)
+    return f"postgresql://{name}_svc:x@127.0.0.1:1/{name}_db"  # cổng 1: không ai nghe
+
+
+JWKS_URL = "http://127.0.0.1:9/.well-known/jwks.json"  # Identity KHÔNG chạy: verify phải không phụ thuộc lúc khởi động
+SDK_SRC = str(ROOT / "packages" / "sdk-python")
 
 
 class Proc:
@@ -60,10 +68,14 @@ class Proc:
         if self.key == "identity":  # cấu hình bắt buộc của identity-service (thiếu thì nó từ chối khởi động)
             extra = {"IDENTITY_DATABASE_URL": identity_dsn(self.db_alive), "IDENTITY_ENV": "test",
                      "IDENTITY_KEY_ENCRYPTION_KEY": FERNET}
+        else:  # integration/analytics cũng fail-fast khi thiếu cấu hình
+            up = self.key.upper()
+            extra = {f"{up}_DATABASE_URL": service_dsn(self.key, self.db_alive), f"{up}_ENV": "test",
+                     f"{up}_ISSUER": "http://127.0.0.1:9", f"{up}_IDENTITY_JWKS_URL": JWKS_URL}
         env = {**os.environ, **extra, "PYTHONIOENCODING": "utf-8",
                "PYTHONPATH": os.pathsep.join([str(path / "src"),
                                               str(ROOT / "packages" / "observability" / "src"),
-                                              str(ROOT / "packages" / "contracts" / "python")])}
+                                              str(ROOT / "packages" / "contracts" / "python"), SDK_SRC])}
         self.popen = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", f"{self.package}.main:app", "--host", "127.0.0.1",
              "--port", str(self.port), "--log-level", "warning"],
@@ -105,15 +117,31 @@ class Proc:
 
     @property
     def expected_ready(self) -> int:
-        """identity cần DB thật đã migrate; không có Postgres thì 'chưa sẵn sàng' (503) là đúng, không phải lỗi."""
-        if self.key == "identity" and not (PG_HOST and self.db_alive):
+        """Service có DB riêng cần DB thật đã migrate; không có Postgres thì 'chưa sẵn sàng' (503) là đúng, không phải lỗi."""
+        if not (PG_HOST and self.db_alive):
             return 503
         return 200
+
+
+def _migrate(key: str) -> None:
+    dir_, package = SERVICES[key]
+    path = ROOT / "services" / dir_
+    up = key.upper()
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", f"{up}_DATABASE_URL": service_dsn(key), f"{up}_ENV": "test",
+           f"{up}_ISSUER": "http://127.0.0.1:9", f"{up}_IDENTITY_JWKS_URL": JWKS_URL, "IDENTITY_KEY_ENCRYPTION_KEY": FERNET,
+           "PYTHONPATH": os.pathsep.join([str(path / "src"), str(ROOT / "packages" / "observability" / "src"),
+                                          str(ROOT / "packages" / "contracts" / "python"), SDK_SRC])}
+    r = subprocess.run([sys.executable, "-m", f"{package}.migrate"], cwd=path, env=env, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=60)
+    assert r.returncode == 0, f"migrate {key} lỗi: {r.stderr[-400:]}"
 
 
 @pytest.fixture(scope="module")
 def fleet():
     procs = {k: Proc(k) for k in SERVICES}
+    if PG_HOST:  # migration là job riêng của từng service (không chạy trong lúc khởi động)
+        for k in SERVICES:
+            _migrate(k)
     try:
         for p in procs.values():
             p.start()
