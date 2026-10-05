@@ -1,33 +1,65 @@
-"""Test chassis của identity-service: health, request-id, envelope lỗi."""
+"""Chassis của identity-service. Không cần DB: DB được trỏ vào cổng chết để kiểm tra khả năng chịu lỗi."""
 
-from fastapi.testclient import TestClient
+import httpx
+import pytest
 
 from identity_service import SERVICE_NAME
 from identity_service.app import create_app
+from identity_service.config import ConfigError, Settings
+from identity_service.db import Database
 
 
-def _client() -> TestClient:
-    return TestClient(create_app(), raise_server_exceptions=False)
+def _settings(**kw) -> Settings:
+    base = dict(port=8430, log_level="INFO", database_url="postgresql://identity_svc:x@127.0.0.1:1/identity_db",
+                env="test", jwt_compat_secret="test-secret-at-least-16-chars")
+    base.update(kw)
+    return Settings(**base)
 
 
-def test_live_and_ready():
-    c = _client()
-    assert c.get("/health/live").json() == {"status": "live", "service": SERVICE_NAME}
-    assert c.get("/health/ready").status_code == 200
+def _client(app=None):
+    app = app or create_app(_settings(), database=Database(_settings().database_url))
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
 
-def test_version_reports_contract_version():
-    body = _client().get("/health/version").json()
-    assert body["service"] == SERVICE_NAME and body["contract_version"] == "2026-10-01"
+async def test_live_ok_even_when_database_is_down():
+    async with _client() as c:
+        r = await c.get("/health/live")
+    assert r.status_code == 200 and r.json() == {"status": "live", "service": SERVICE_NAME}
 
 
-def test_unknown_route_uses_stable_error_envelope():
-    r = _client().get("/v1/khong-ton-tai")
-    body = r.json()
-    assert r.status_code == 404 and body["ok"] is False and body["error"]["code"] == "NOT_FOUND"
-    assert body["meta"]["request_id"] == r.headers["X-Request-Id"]
+async def test_ready_is_503_not_crash_when_database_is_down():
+    async with _client() as c:
+        r = await c.get("/health/ready")
+    assert r.status_code == 503 and r.json()["checks"] == {"database": False}
 
 
-def test_openapi_is_served():
-    spec = _client().get("/openapi.json").json()
-    assert spec["info"]["title"] == SERVICE_NAME
+async def test_api_returns_503_not_500_when_database_is_down():
+    """DB chết: người dùng thấy 503 'tạm thời không khả dụng', tiến trình không crash."""
+    async with _client() as c:
+        r = await c.post("/v1/auth/check-username", json={"username": "abc"})
+        again = await c.get("/health/live")
+    assert r.status_code == 503 and r.json() == {"detail": "Dịch vụ tạm thời không khả dụng"}
+    assert again.status_code == 200
+
+
+async def test_version_and_openapi():
+    async with _client() as c:
+        assert (await c.get("/health/version")).json()["service"] == SERVICE_NAME
+        spec = (await c.get("/openapi.json")).json()
+    paths = set(spec["paths"])
+    assert {"/v1/auth/login", "/v1/auth/register", "/v1/admin/keys", "/v1/admin/users"} <= paths
+
+
+async def test_unknown_route_has_legacy_shape():
+    async with _client() as c:
+        r = await c.get("/v1/khong-ton-tai")
+    assert r.status_code == 404 and r.json() == {"detail": "Not Found"}
+
+
+def test_serving_config_is_required_to_start():
+    with pytest.raises(ConfigError, match="IDENTITY_DATABASE_URL"):
+        create_app(_settings(database_url=""))
+    with pytest.raises(ConfigError, match="IDENTITY_JWT_COMPAT_SECRET"):
+        create_app(_settings(jwt_compat_secret=""))
+    with pytest.raises(ConfigError, match="dev"):
+        create_app(_settings(env="production", jwt_compat_secret="dev-secret-thay-doi-khi-deploy"))
