@@ -14,6 +14,8 @@ from integration_service.config import Settings
 from integration_service.credentials.service import CredentialService
 from integration_service.db import Database
 from integration_service.installations.service import InstallationService
+from integration_service.jobs.service import JobService
+from integration_service.legacy_acl.service import LegacyService
 from integration_service.machine_runner import MachineRunner
 from integration_service.projects.service import ProjectService
 from integration_service.ratelimit import FixedWindowLimiter
@@ -36,5 +38,7 @@ class Container:
     resources: ResourceService
     snapshots: SnapshotService
     runner: MachineRunner
+    jobs: JobService
+    legacy: LegacyService
     rate_limiter: FixedWindowLimiter
     fail_limiter: FixedWindowLimiter

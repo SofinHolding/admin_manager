@@ -112,7 +112,10 @@ async def _ensure_projects(conn: asyncpg.Connection, owner: str, client_id: str,
 
 
 async def merge_resources(conn: asyncpg.Connection, *, owner: str, client_id: str, platform: str,
-                          items: list[Staged], snapshot_id: str | None, now: datetime) -> MergeStats:
+                          items: list[Staged], snapshot_id: str | None, now: datetime, origin: str | None = None,
+                          execution_mode: str | None = None) -> MergeStats:
+    """`origin`/`execution_mode` (tuỳ chọn) đặt cột tương ứng — dùng bởi Legacy ACL cho resource nhập từ web; Tool không
+    truyền (None => giữ giá trị mặc định/hiện có)."""
     stats = MergeStats()
     keys = [(s.payload["resource_type"], s.payload["external_id"]) for s in items]
     existing = await fetch_resources(conn, owner, platform, keys)
@@ -146,17 +149,18 @@ async def merge_resources(conn: asyncpg.Connection, *, owner: str, client_id: st
             rid = new_id("res")
             await conn.execute(
                 "INSERT INTO resources (id, owner_account_id, client_id, platform, resource_type, external_id, state, "
-                "observed_at, data, removed, revision, last_snapshot_id, created_at, updated_at) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false,$10,$11,$12,$12)", rid, owner, client_id, platform,
-                s.payload["resource_type"], s.payload["external_id"], data["state"], s.observed_at, data, rev,
-                snapshot_id, now)
+                "observed_at, data, removed, revision, last_snapshot_id, created_at, updated_at, origin, execution_mode) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false,$10,$11,$12,$12,COALESCE($13,'tool'),COALESCE($14,'primary_tool'))",
+                rid, owner, client_id, platform, s.payload["resource_type"], s.payload["external_id"], data["state"],
+                s.observed_at, data, rev, snapshot_id, now, origin, execution_mode)
             stats.created += 1
         else:
             rid = row["id"]  # type: ignore[index]
             await conn.execute(
                 "UPDATE resources SET client_id = $2, state = $3, observed_at = $4, data = $5, removed = false, "
-                "revision = $6, last_snapshot_id = COALESCE($7, last_snapshot_id), updated_at = $8 WHERE id = $1",
-                rid, client_id, data["state"], s.observed_at, data, rev, snapshot_id, now)
+                "revision = $6, last_snapshot_id = COALESCE($7, last_snapshot_id), updated_at = $8, "
+                "origin = COALESCE($9, origin), execution_mode = COALESCE($10, execution_mode) WHERE id = $1",
+                rid, client_id, data["state"], s.observed_at, data, rev, snapshot_id, now, origin, execution_mode)
             stats.updated += 1
         stats.present_ids.append(rid)
         stats.changed.append((rid, verdict))
@@ -168,6 +172,22 @@ async def merge_resources(conn: asyncpg.Connection, *, owner: str, client_id: st
                 rid, project_ids.get(ref["project_key"]) or await _project_id(conn, owner, ref["project_key"]),
                 ref["enabled"], rev)
     return stats
+
+
+async def remove_resource(conn: asyncpg.Connection, resource_id: str, now: datetime) -> bool:
+    """Gỡ resource khỏi kho canonical (đánh `removed`, giữ lịch sử) — cùng cơ chế revision + `resource.changed` như
+    admin bật/tắt. False nếu không có hoặc đã gỡ."""
+    await outbox.acquire_order_lock(conn)
+    row = await conn.fetchrow("SELECT * FROM resources WHERE id = $1 FOR UPDATE", resource_id)
+    if row is None or row["removed"]:
+        return False
+    (rev,) = await outbox.next_revisions(conn, 1)
+    await conn.execute("UPDATE resources SET removed = true, revision = $2, updated_at = $3 WHERE id = $1",
+                       resource_id, rev, now)
+    await events.resource_changed(conn, resource_id=resource_id, owner_account_id=row["owner_account_id"],
+                                  platform=row["platform"], external_id=row["external_id"], state=row["state"],
+                                  revision=rev)
+    return True
 
 
 async def _project_id(conn: asyncpg.Connection, owner: str, key: str) -> str:

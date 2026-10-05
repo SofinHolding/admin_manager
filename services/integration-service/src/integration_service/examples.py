@@ -60,3 +60,19 @@ AUDIT = {"entries": [{"id": 101, "at": _T, "action": "snapshot.commit", "result"
                       "status_code": None}], "next_before_id": 101}
 REGISTRY_ENTRY = {"key": "threads", "display_name": "Threads", "enabled": True, "description": None}
 RESOURCE_STATE = {"resource_id": "res_0123456789abcdef0123456789abcdef", "state": "disabled", "revision": 57}
+
+_JOB = "job_0123456789abcdef0123456789abcdef"
+_RES = "res_0123456789abcdef0123456789abcdef"
+JOB = {"job_id": _JOB, "owner_account_id": _ACC, "resource_id": _RES, "platform": "facebook", "kind": "resource.sync",
+       "status": "pending", "priority": 0, "attempts": 0, "max_attempts": 3, "payload": {"mode": "refresh"},
+       "required_capability": "", "run_after": _T, "lease_until": None, "claimed_by_client": None, "result": None,
+       "last_error_code": None, "last_error_message": None, "created_at": _T, "updated_at": _T, "completed_at": None,
+       "created": True}
+JOB_CLAIM = {"jobs": [{"job_id": _JOB, "owner_account_id": _ACC, "kind": "resource.sync", "platform": "facebook",
+                       "payload": {"mode": "refresh"}, "attempt": 1, "max_attempts": 3, "lease_until": "2026-10-05T10:05:00Z",
+                       "lease_token": "0123456789abcdef0123456789abcdef",
+                       "resource": {"resource_id": _RES, "platform": "facebook", "resource_type": "page",
+                                    "external_id": "123456789", "display_name": "Example Page", "username": "example",
+                                    "url": None}}], "server_time": _T}
+JOB_TRANSITION = {"job_id": _JOB, "status": "done", "attempts": 1, "max_attempts": 3, "run_after": None,
+                  "lease_until": None, "completed_at": _T, "replayed": False}

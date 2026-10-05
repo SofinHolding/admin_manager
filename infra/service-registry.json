@@ -121,7 +121,9 @@
       "responsibility": "Cổng duy nhất cho Tool/hệ thống ngoài: client, credential, resource, snapshot, ingest, job, audit.",
       "public_prefixes": [
         "/v1/integrations",
-        "/v1/resources"
+        "/v1/resources",
+        "/v1/ops",
+        "/v1/viewer/links"
       ],
       "owned_tables": [
         "integration_clients",
@@ -148,7 +150,13 @@
         "documents",
         "user_meta",
         "account_links",
-        "link_codes"
+        "link_codes",
+        "platform_policies",
+        "resource_sources",
+        "resource_assignments",
+        "operation_batches",
+        "operation_items",
+        "operation_audit_log"
       ],
       "emits": [
         "snapshot.committed",
@@ -206,7 +214,7 @@
         },
         "legacy_acl": {
           "phase": "2.4",
-          "responsibility": "Anti-Corruption Layer: dịch documents cũ sang canonical, pairing tương thích"
+          "responsibility": "Anti-Corruption Layer: phục vụ API legacy (/v1/resources, /v1/ops, /v1/viewer/links) bằng thao tác canonical; schema legacy_ingest (Source, policy, Run Queue, pairing)"
         },
         "jobs": {
           "phase": "2.5",

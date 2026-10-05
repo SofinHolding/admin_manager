@@ -45,7 +45,12 @@ def test_frozen_openapi_has_every_endpoint_required_by_the_integration_api(spec)
                 ("post", "/v1/integrations/snapshots/{snapshot_id}/metrics"),
                 ("post", "/v1/integrations/snapshots/{snapshot_id}/commit"),
                 ("get", "/v1/integrations/snapshots/{snapshot_id}"), ("get", "/v1/integrations/audit"),
-                ("put", "/v1/integrations/admin/platforms/{key}"), ("put", "/v1/integrations/admin/metrics/{key}")}
+                ("put", "/v1/integrations/admin/platforms/{key}"), ("put", "/v1/integrations/admin/metrics/{key}"),
+                # Phase 2b: jobs (Fallback Tool + user-plane)
+                ("post", "/v1/integrations/jobs/claim"), ("post", "/v1/integrations/jobs/{job_id}/complete"),
+                ("post", "/v1/integrations/jobs/{job_id}/fail"), ("post", "/v1/integrations/jobs/{job_id}/heartbeat"),
+                ("post", "/v1/integrations/jobs"), ("get", "/v1/integrations/jobs"),
+                ("get", "/v1/integrations/jobs/{job_id}"), ("post", "/v1/integrations/jobs/{job_id}/cancel")}
     have = {(m, p) for p, ops in spec["paths"].items() for m in ops}
     assert required <= have, sorted(required - have)
 
@@ -87,3 +92,13 @@ def test_every_error_response_uses_the_stable_error_envelope(spec):
     err = spec["components"]["schemas"]["ErrorEnvelope"]
     assert set(err["required"]) >= {"error", "meta"} and err["properties"]["ok"]["default"] is False
     assert "SNAPSHOT_INCOMPLETE" in spec["info"]["x-error-codes"]
+
+
+def test_job_bodies_forbid_owner_fields_and_lease_is_capped(spec):
+    """Job do SERVER gán owner (chủ resource); lease ≤ 900s theo hợp đồng integration-api-v1.md §4."""
+    schemas = spec["components"]["schemas"]
+    for name in ("JobCreate", "JobClaimRequest", "JobCompleteRequest", "JobFailRequest", "JobHeartbeatRequest"):
+        assert schemas[name]["additionalProperties"] is False, name
+        assert not [p for p in schemas[name]["properties"] if p.startswith("owner")], name
+    assert schemas["JobClaimRequest"]["properties"]["lease_seconds"]["maximum"] == 900
+    assert schemas["JobHeartbeatRequest"]["properties"]["lease_seconds"]["maximum"] == 900

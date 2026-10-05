@@ -37,6 +37,13 @@ from integration_service.http_utils import BodyLimitMiddleware, EnvelopeResponse
 from integration_service.ingest import schemas
 from integration_service.installations.router import router as installations_router
 from integration_service.installations.service import HandshakeRequest, InstallationService
+from integration_service.jobs import schemas as job_schemas
+from integration_service.jobs.router import machine_router as jobs_machine_router
+from integration_service.jobs.router import user_router as jobs_user_router
+from integration_service.jobs.service import JobService
+from integration_service.legacy_acl import errors as legacy_errors
+from integration_service.legacy_acl.router import build_routers as build_legacy_routers
+from integration_service.legacy_acl.service import LegacyService
 from integration_service.machine_runner import MachineRunner
 from integration_service.platforms.router import router as platforms_router
 from integration_service.projects.router import router as projects_router
@@ -58,7 +65,8 @@ FAILED_AUTH_PER_MIN = 30   # số lần xác thực API key SAI tối đa mỗi 
 
 _DOC_MODELS = [schemas.ResourceBatch, schemas.ResourceUpsertBatch, schemas.ContentBatch, schemas.MetricsBatch,
                schemas.EventBatch, schemas.CommitRequest, schemas.SnapshotCreate, HandshakeRequest, ProjectUpsert,
-               CredentialCreate, RotateRequest, ClientPatch]
+               CredentialCreate, RotateRequest, ClientPatch, job_schemas.JobCreate, job_schemas.JobClaimRequest,
+               job_schemas.JobCompleteRequest, job_schemas.JobFailRequest, job_schemas.JobHeartbeatRequest]
 
 DESCRIPTION = (
     "Cổng duy nhất cho Tool/hệ thống ngoài. Ba mặt phẳng xác thực độc lập: **user** (access token RS256 do Identity ký), "
@@ -116,6 +124,9 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
     rate_limiter = FixedWindowLimiter(settings.rate_limit_per_min, clock=rate_clock)
     fail_limiter = FixedWindowLimiter(FAILED_AUTH_PER_MIN, clock=rate_clock)
     audit = AuditService(db, now)
+    jobs = JobService(db, settings, now)
+    redeem_limiter = FixedWindowLimiter(settings.legacy_redeem_per_window, clock=rate_clock,
+                                        window=float(settings.legacy_redeem_window_s))
     clients = ClientService(db, settings, now)
     app.state.container = Container(
         settings=settings, db=db, now=now, verifier=verifier, service_auth=ServiceKeyAuth(dict(settings.feed_keys)),
@@ -123,6 +134,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
         credentials=CredentialService(db, settings, now, clients, rate_limiter, fail_limiter),
         installations=InstallationService(now), projects=ProjectService(db, now), resources=ResourceService(db, now),
         snapshots=SnapshotService(db, settings, now), runner=MachineRunner(db, now, audit),
+        jobs=jobs, legacy=LegacyService(db, settings, now, jobs, redeem_limiter),
         rate_limiter=rate_limiter, fail_limiter=fail_limiter)
 
     # Consumer provisioning: thiếu URL/khoá => tắt (service vẫn chạy bình thường).
@@ -142,6 +154,8 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
 
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError) -> JSONResponse:
+        if legacy_errors.is_legacy_path(request.url.path):   # route legacy giữ lỗi kiểu `{detail: [...]}`
+            return legacy_errors.validation_response(exc)
         # Chỉ vị trí + loại lỗi, KHÔNG phản chiếu giá trị đầu vào. Mặt phẳng máy dùng mã RECORD_VALIDATION_FAILED.
         machine_plane = getattr(request.state, "plane", "user") == "machine"
         fields = [{"loc": [str(p) for p in e.get("loc", ())], "type": e.get("type", "")} for e in exc.errors()[:20]]
@@ -155,8 +169,10 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
         return EnvelopeResponse(status_code=422, content=error_envelope(
             code.value, message, request_id=current_request_id(), details={"fields": fields}))
 
-    async def _db_down(_: Request, exc: Exception) -> JSONResponse:
+    async def _db_down(request: Request, exc: Exception) -> JSONResponse:
         logger.warning("Database không khả dụng: %s", type(exc).__name__)
+        if legacy_errors.is_legacy_path(request.url.path):
+            return JSONResponse(status_code=503, content={"detail": "Dịch vụ tạm thời không khả dụng"})
         return EnvelopeResponse(status_code=503, content=error_envelope(
             ErrorCode.UNAVAILABLE.value, "Dịch vụ tạm thời không khả dụng", request_id=current_request_id()))
 
@@ -164,15 +180,21 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
         app.add_exception_handler(error_type, _db_down)
 
     @app.exception_handler(asyncpg.DataError)
-    async def _bad_data(_: Request, exc: Exception) -> JSONResponse:
+    async def _bad_data(request: Request, exc: Exception) -> JSONResponse:
         # Đầu vào mà Postgres không chấp nhận (vd ký tự NUL): lỗi của người gọi, không phải lỗi máy chủ.
         logger.info("Dữ liệu không hợp lệ: %s", type(exc).__name__)
+        if legacy_errors.is_legacy_path(request.url.path):
+            return JSONResponse(status_code=422, content={"detail": "Dữ liệu không hợp lệ"})
         return EnvelopeResponse(status_code=422, content=error_envelope(
             ErrorCode.RECORD_VALIDATION_FAILED.value, "Dữ liệu không hợp lệ", request_id=current_request_id()))
 
     for router in (clients_router, credentials_router, installations_router, projects_router, resources_router,
-                   snapshots_router, platforms_router, audit_router, resources_admin_router):
+                   snapshots_router, platforms_router, audit_router, resources_admin_router, jobs_machine_router,
+                   jobs_user_router):
         app.include_router(router)
+    legacy_errors.install(app)
+    for legacy_router in build_legacy_routers(include_in_schema=False):   # ACL: hợp đồng = OpenAPI legacy đóng băng
+        app.include_router(legacy_router)
     app.include_router(build_feed_router(app.state.container.service_auth))
     install_openapi_models(app, _DOC_MODELS)
     return app

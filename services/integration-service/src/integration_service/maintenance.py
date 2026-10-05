@@ -14,9 +14,10 @@ logger = logging.getLogger("integration.maintenance")
 
 async def run_once(c: Container) -> dict:
     swept = await c.snapshots.sweep()
+    jobs = await c.jobs.sweep()
     async with c.db.connection() as conn:
         purged = await idempotency.purge_before(conn, c.now() - timedelta(seconds=c.settings.idempotency_ttl_s))
-    return {**swept, "idempotency_purged": purged}
+    return {**swept, "jobs": jobs, "idempotency_purged": purged}
 
 
 async def loop(c: Container) -> None:

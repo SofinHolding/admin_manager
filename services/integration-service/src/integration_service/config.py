@@ -46,6 +46,16 @@ class Settings:
     provisioning_poll_s: float = 5.0
     provisioning_max_attempts: int = 5
     provisioning_batch: int = 100
+    # Jobs (Fallback Tool): lease có hạn, retry có giới hạn -> dead.
+    job_lease_default_s: int = 300
+    job_lease_max_s: int = 900               # trần của hợp đồng (integration-api-v1.md §4)
+    job_max_attempts: int = 3
+    job_backoff_base_s: int = 30
+    job_backoff_max_s: int = 900
+    job_max_pending_per_owner: int = 1000
+    job_result_max_bytes: int = 64 * 1024
+    legacy_redeem_per_window: int = 10       # pairing legacy: số lần đổi mã tối đa mỗi IP mỗi cửa sổ
+    legacy_redeem_window_s: int = 300
 
     @property
     def provisioning_enabled(self) -> bool:
@@ -128,6 +138,15 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         provisioning_poll_s=_float(env, "PROVISIONING_POLL_S", 5.0, 0.0, 3600.0),
         provisioning_max_attempts=_int(env, "PROVISIONING_MAX_ATTEMPTS", 5, 1, 100),
         provisioning_batch=_int(env, "PROVISIONING_BATCH", 100, 1, 500),
+        job_lease_default_s=_int(env, "JOB_LEASE_DEFAULT_S", 300, 1, 900),
+        job_lease_max_s=_int(env, "JOB_LEASE_MAX_S", 900, 1, 900),
+        job_max_attempts=_int(env, "JOB_MAX_ATTEMPTS", 3, 1, 20),
+        job_backoff_base_s=_int(env, "JOB_BACKOFF_BASE_S", 30, 0, 3600),
+        job_backoff_max_s=_int(env, "JOB_BACKOFF_MAX_S", 900, 0, 86400),
+        job_max_pending_per_owner=_int(env, "JOB_MAX_PENDING_PER_OWNER", 1000, 1, 1_000_000),
+        job_result_max_bytes=_int(env, "JOB_RESULT_MAX_BYTES", 64 * 1024, 1024, 1024 * 1024),
+        legacy_redeem_per_window=_int(env, "LEGACY_REDEEM_PER_WINDOW", 10, 1, 10_000),
+        legacy_redeem_window_s=_int(env, "LEGACY_REDEEM_WINDOW_S", 300, 1, 86400),
     )
 
 

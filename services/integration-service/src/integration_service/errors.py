@@ -25,6 +25,8 @@ class Extra(str, Enum):
     SNAPSHOT_COMMIT_IN_PROGRESS = "SNAPSHOT_COMMIT_IN_PROGRESS"  # 409 đang commit
     IDEMPOTENCY_IN_PROGRESS = "IDEMPOTENCY_IN_PROGRESS"      # 409 yêu cầu trùng khoá đang xử lý
     UNSUPPORTED_ENCODING = "UNSUPPORTED_ENCODING"            # 415
+    JOB_INVALID_STATE = "JOB_INVALID_STATE"                  # 409 chuyển trạng thái job không hợp lệ (vd complete job đã failed)
+    JOB_NOT_ELIGIBLE = "JOB_NOT_ELIGIBLE"                    # 409 resource không ở execution_mode=fallback_tool / đã gỡ / bị tắt
 
 
 Code = ErrorCode | Extra

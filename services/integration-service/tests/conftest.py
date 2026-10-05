@@ -37,7 +37,10 @@ AUDIENCE = "manager-api"
 JWKS_URL = f"{ISSUER}/.well-known/jwks.json"
 _TABLES = ("integration_clients, projects, resources, resource_project_bindings, content_items, daily_metrics, "
            "activity_events, snapshots, snapshot_items, idempotency_keys, audit_log, account_projection, outbox, "
-           "feed_cursor, processed_events, dead_letters")
+           "feed_cursor, processed_events, dead_letters, jobs, legacy_ingest.operation_audit_log, "
+           "legacy_ingest.operation_items, legacy_ingest.operation_batches, legacy_ingest.resource_assignments, "
+           "legacy_ingest.resource_sources, legacy_ingest.account_links, legacy_ingest.link_codes")
+LEGACY_POLICIES = (("facebook", True, True), ("tiktok", True, True), ("youtube", True, True), ("instagram", True, False))
 SEED_PLATFORMS = ("facebook", "youtube", "tiktok", "instagram")
 SEED_METRICS = ("views", "reactions", "comments", "likes", "shares", "followers", "interactions", "videos_posted")
 FEED_KEY_ANALYTICS = secrets.token_urlsafe(32)   # ngẫu nhiên mỗi lần chạy
@@ -140,6 +143,7 @@ def migrated() -> None:
             rows = await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
             for r in rows:
                 await conn.execute(f'DROP TABLE IF EXISTS "{r["tablename"]}" CASCADE')
+            await conn.execute("DROP SCHEMA IF EXISTS legacy_ingest CASCADE")
             await conn.execute("DROP SEQUENCE IF EXISTS canonical_revision_seq")
             await conn.close()
             await migrate.run(dsn)
@@ -159,6 +163,10 @@ async def db(migrated):
         await conn.execute("DELETE FROM metric_registry WHERE key <> ALL($1::text[])", list(SEED_METRICS))
         await conn.execute("UPDATE platform_registry SET enabled = true")
         await conn.execute("UPDATE metric_registry SET enabled = true")
+        await conn.execute("DELETE FROM legacy_ingest.platform_policies")
+        await conn.executemany(
+            "INSERT INTO legacy_ingest.platform_policies (platform, web_entry_enabled, fallback_enabled) VALUES ($1,$2,$3)",
+            LEGACY_POLICIES)
     yield database
     await database.close()
 

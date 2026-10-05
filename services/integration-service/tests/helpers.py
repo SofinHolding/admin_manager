@@ -71,3 +71,40 @@ async def canonical(env, kind: str, *, after: int = 0, limit: int = 1000, key: s
                            headers={"X-Service-Key": key or FEED_KEY_ANALYTICS})
     assert r.status_code == 200, r.text
     return r.json()
+
+
+# ── Jobs / Fallback Tool ────────────────────────────────────────────────────────────
+
+async def handshake(tool: Tool, *, caps=("jobs.pull",), platforms=("facebook",), device: str | None = None) -> str:
+    """Handshake và trả installation_id."""
+    import uuid
+    r = await tool.post("/v1/integrations/handshake", {
+        "installation": {"device_id": device or "dev-" + uuid.uuid4().hex[:8], "hostname": "PC", "os": "windows",
+                         "app_version": "1.0"}, "platforms": list(platforms), "capabilities": list(caps)})
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["installation_id"]
+
+
+async def fallback_resource(env, owner_tool_or_sub, ext: str = "fb1", *, platform: str = "facebook",
+                            mode: str = "fallback_tool", state: str = "active") -> str:
+    """Tạo resource canonical (qua đường batch của Tool) rồi đặt execution_mode (cột do admin/ACL điều khiển)."""
+    tool = owner_tool_or_sub
+    r = await tool.post("/v1/integrations/resources/batch", {"items": [
+        {"platform": platform, "resource_type": "page", "external_id": ext, "observed_at": ts(0)}]})
+    assert r.status_code == 200, r.text
+    rid = r.json()["data"]["items"][0]["resource_id"]
+    await env.rows("UPDATE resources SET execution_mode = $2, state = $3 WHERE id = $1 RETURNING id", rid, mode, state)
+    return rid
+
+
+async def create_job(env, user: dict, resource_id: str, expect: int = 201, **body) -> dict:
+    r = await env.http.post("/v1/integrations/jobs", headers=user["headers"], json={"resource_id": resource_id, **body})
+    assert r.status_code == expect, r.text
+    return r.json()["data"] if expect < 300 else r.json()
+
+
+async def claim(tool: Tool, installation_id: str, *, expect: int = 200, **body):
+    payload = {"installation_id": installation_id, "platforms": ["facebook"], "capabilities": ["jobs.pull"], **body}
+    r = await tool.post("/v1/integrations/jobs/claim", payload)
+    assert r.status_code == expect, r.text
+    return r.json()["data"]["jobs"] if expect == 200 else r.json()

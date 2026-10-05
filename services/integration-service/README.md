@@ -7,7 +7,7 @@ Cổng duy nhất cho Tool/hệ thống ngoài: client, credential, resource, sn
 | Cổng | 8431 |
 | Database (riêng) | `integration_db` (user `integration_svc`) |
 | Package | `integration_service` |
-| Trạng thái | Phase 2 phần lõi **đã hiện thực** (xem bảng module). `jobs`, `legacy_acl` (Phase 2b) còn `planned` |
+| Trạng thái | Phase 2 lõi + **Phase 2b** (`jobs`, `legacy_acl`) đã hiện thực (xem bảng module) |
 | Hợp đồng | `docs/api/integration-api-v1.md`, `docs/api/ingest-data-contract-v1.md`, `docs/api/internal-feed-contract-v1.md`, `docs/api/service-auth-contract-v1.md` |
 | OpenAPI đóng băng | `docs/api/openapi/integration-service.v1.json` (test so khớp với `/openapi.json`) |
 
@@ -27,8 +27,8 @@ Cổng duy nhất cho Tool/hệ thống ngoài: client, credential, resource, sn
 | `feed` | 2.3 | active | outbox + change feed (pull) + canonical export |
 | `provisioning` | 2.6 | active | consumer feed Identity: tạo client từ `account.registered`, vòng đời theo account |
 | `audit` | 2.2 | active | audit client/installation/request |
-| `legacy_acl` | 2.4 | planned | (Phase 2b) |
-| `jobs` | 2.5 | planned | (Phase 2b) |
+| `legacy_acl` | 2.4 | active | ACL: phục vụ API legacy `/v1/resources`, `/v1/ops`, `/v1/viewer/links` bằng thao tác canonical; schema `legacy_ingest` |
+| `jobs` | 2.5 | active | hàng đợi job cho Fallback Tool: claim atomic, lease, retry → dead, user-plane tạo/huỷ |
 
 ## Ba mặt phẳng xác thực (độc lập)
 
@@ -53,6 +53,34 @@ Token user không dùng được ở endpoint máy và ngược lại; service k
 - **Rate limit** trong bộ nhớ theo `client_id` (mặc định 600/phút) và theo IP cho lần xác thực sai (30/phút). Mỗi worker có bộ đếm riêng.
 - **Body**: ≤ 2 MiB (kể cả sau giải nén gzip) => `413 PAYLOAD_TOO_LARGE`; ≤ 500 bản ghi/batch => `413 BATCH_TOO_LARGE`.
 
+## Jobs (Fallback Tool)
+
+| Endpoint | Mặt phẳng / quyền | Ghi chú |
+|---|---|---|
+| `POST /v1/integrations/jobs` | USER (chủ resource; admin/dash_admin: mọi resource) | resource phải `execution_mode=fallback_tool`; owner = chủ resource (body không nhận `owner_*`); `dedupe_key` chống tạo trùng |
+| `GET /v1/integrations/jobs`, `GET /{id}`, `POST /{id}/cancel` | USER | user thường chỉ thấy/huỷ job của mình |
+| `POST /v1/integrations/jobs/claim` | MÁY `jobs:claim` | body `installation_id, platforms, capabilities, limit≤50, lease_seconds≤900` → `{jobs:[...], server_time}` |
+| `POST /{id}/heartbeat` | MÁY `jobs:claim` | gia hạn lease của chính mình |
+| `POST /{id}/complete`, `POST /{id}/fail` | MÁY `jobs:complete` | `Idempotency-Key`; complete/fail lặp lại trả `replayed=true` |
+
+- **Claim atomic**: một câu `WITH picked AS (… FOR UPDATE SKIP LOCKED) UPDATE …` — hai worker không bao giờ nhận cùng job và không chặn nhau; có test tranh chấp và test "bỏ qua dòng đang bị khoá".
+- **Ownership**: không có `jobs:claim:system` ⇒ chỉ job của CHÍNH owner (suy từ credential). Có scope hệ thống (admin cấp cho `fallback_tool`) ⇒ đa-owner nhưng owner của job vẫn do server gán. Job của owner khác với client = `404 JOB_NOT_FOUND`.
+- **Lease**: hết hạn mà chưa complete/fail ⇒ về `pending` (lazy mỗi lần claim + worker nền), hết lượt thử ⇒ `dead`. Lượt thử tính lúc claim. Người giữ lease cũ bị chặn bằng `lease_token` (tuỳ chọn trong body complete/fail/heartbeat) và `claimed_by_client` ⇒ `409 JOB_LEASE_EXPIRED`.
+- **Fail**: `retryable` còn lượt ⇒ `pending` sau backoff mũ (`JOB_BACKOFF_BASE_S`·2^(n-1), trần `JOB_BACKOFF_MAX_S`); hết lượt ⇒ `dead`; `retryable=false` ⇒ `failed`. Job ở trạng thái cuối ⇒ `409 JOB_INVALID_STATE`.
+- Trạng thái: `pending | leased | done | failed | dead | cancelled` (`dead` = hết lượt thử; hợp đồng gốc ghi "failed" cho cả hai — xem ghi chú ở báo cáo Phase 2b).
+- Chưa phát event `job.completed/job.failed` (hợp đồng feed `internal-feed-contract-v1.md` không định nghĩa); trạng thái job đọc qua API.
+
+## Legacy ACL (`legacy_acl`)
+
+Phục vụ NGUYÊN hợp đồng của admin-server (`docs/api/legacy/admin-server.openapi.json`: 26 operation — 9 `/v1/resources`, 13 `/v1/ops`, 4 `/v1/viewer/links`) theo `infra/gateway/route-map.json`. Không nằm trong OpenAPI công khai của service (hợp đồng = bản legacy đóng băng); lỗi dạng `{"detail": ...}`.
+
+- **Một đường ghi**: resource nhập từ web đi qua `ingest.merge.merge_resources` / `remove_resource` (cùng khoá thứ tự commit, `revision`, `resource.changed`) ⇒ Analytics thấy y như dữ liệu từ Tool. Trường riêng của legacy (`input_ref`, `mapping_status`, `verification_status`, `resource_type` thô) nằm ở `data.extensions.legacy`; cột `origin='web_manual'`, `client_id='legacy_web'`, `execution_mode` (`fallback_local`↔`fallback_tool`).
+- **Schema `legacy_ingest`** (cùng user `integration_svc`, không role mới): `platform_policies`, `resource_sources`, `resource_assignments`, `operation_batches`, `operation_items`, `operation_audit_log`, `account_links`, `link_codes`.
+- **Run Queue ↔ jobs**: item thêm khi `adapter_status=ready` tạo job canonical; trạng thái/attempts/lỗi của item suy từ job (`queued/running/success/failed/cancelled`). Chưa có adapter ⇒ `blocked_no_adapter`, không tạo job.
+- **Xác thực**: JWT USER RS256 (Identity) với thông điệp lỗi của legacy (`Thiếu token`, `Token hết hạn`…); API key máy không dùng được. Body có khoá `owner*` ⇒ 422 (legacy lặng lẽ bỏ qua); owner luôn là `sub`.
+- **Không ghi đè Tool**: legacy chỉ thấy/sửa resource `origin <> 'tool'`; nhập tay trùng khoá với resource của Tool ⇒ `409` (import: `skipped: managed_by_tool`).
+- **Khác legacy có chủ đích**: canonical là danh tính duy nhất (nhập lại cùng `input_ref`/`resource_type` ⇒ trả resource cũ, import báo `already_exists`); `resource_type` đổi qua PATCH chỉ đổi thuộc tính hiển thị (khoá canonical giữ nguyên); 422 không có `input`/`ctx`; `redeem` không kiểm `tool_user_id` có trong `documents` (bảng này không thuộc integration_db).
+
 ## Chạy
 
 ```bash
@@ -70,6 +98,8 @@ Biến môi trường: xem `.env.example`. Thiếu `INTEGRATION_DATABASE_URL`, `
 - Rate limit không chia sẻ giữa nhiều worker/instance.
 - Staging giữ toàn bộ payload của snapshot trong Postgres cho tới khi commit/abandon (đã giới hạn 2 MiB × 500 bản ghi mỗi request, 50 snapshot `building` mỗi client).
 - Checksum `summary` tính bằng SQL trên toàn bảng (đủ cho quy mô v1; cần cache/materialize khi bảng rất lớn).
-- `jobs`, `legacy_acl` và các endpoint legacy `/v1/resources/*`, `/v1/ops/*`, `/v1/viewer/links*` thuộc Phase 2b.
+- Canonicalizer `documents → snapshot` (hợp đồng ingest §7) và DB role `legacy_ingest_writer` chưa làm: cần thay đổi hạ tầng/sync server, chờ duyệt (xem báo cáo Phase 2b).
+- Worker nền trả job hết lease chạy chung vòng bảo trì (`INTEGRATION_MAINTENANCE_INTERVAL_S`, mặc định 60s); giữa hai lượt, lease hết hạn được trả lazy ở lần claim kế tiếp.
+- Pairing `redeem` dùng rate limit trong bộ nhớ theo IP (như legacy), không chia sẻ giữa worker.
 
 Quy tắc ràng buộc: xem `CLAUDE.md` ở thư mục gốc. Không import service khác, không đụng DB của service khác.
