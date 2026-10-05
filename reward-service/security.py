@@ -1,30 +1,40 @@
-"""Verify JWT phát hành bởi `admin_manager` (auth.py) — TỰ GIẢI MÃ CỤC BỘ, KHÔNG gọi :8421.
+"""Xác thực + phân quyền cho reward-service (Phase 4: hết JWT secret chung).
 
-`JWT_SECRET`, thuật toán `HS256` và payload `{sub, username, role, exp, iat}` phải khớp CHÍNH XÁC với
-`admin_manager/admin-server/auth.py:_create_access_token` — không có `aud`/`iss`, nên KHÔNG được truyền
-`audience=`/`issuer=`/`options={"require": [...]}` vào `jwt.decode`.
+Access token là RS256 do Identity ký. Reward verify OFFLINE bằng `manager_sdk.TokenVerifier` (JWKS cache trong bộ
+nhớ, kiểm `iss`/`aud`/`exp`/`nbf`) — Identity chết thì token còn hạn vẫn được phục vụ bằng khoá đã cache.
 
-Hai tầng phân quyền (xem plan A.3.3):
-    T1 — token: chữ ký + `exp` + `role` trong payload (rẻ, không chạm DB).
-    T2 — DB: `SELECT role, status FROM accounts WHERE id = $sub` — bắt buộc cho mọi endpoint GHI,
-         vì JWT sống 15 phút nhưng role/status có thể đã đổi trong lúc đó.
+Phân quyền thực thi CỤC BỘ từ claim `perms` (không gọi Identity trên đường request):
+    route người dùng  → `reward:access`  (role `admin` được coi là có mọi quyền, xem Principal.has_perm)
+    route quản trị    → `reward:admin`   (role `admin` hoặc permission `reward:admin`)
+Sau đó đối chiếu denylist CỤC BỘ (`account_denylist`, nuôi bởi feed Identity) để chặn NGAY tài khoản vừa bị thu quyền /
+khoá / xoá / thu hồi phiên mà access token (≈15 phút) chưa hết hạn.
+
+Lỗi giữ kiểu legacy `{"detail": ...}` để frontend cũ không đổi.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-import jwt
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Request, status
 
-from settings import RewardSettings
+import sdk_path  # noqa: F401  — trước khi import manager_sdk
+from manager_sdk import AuthError, Principal, TokenVerifier
 from store.pool import Pool
+from store.repositories import projection as proj
 
 logger = logging.getLogger("reward.security")
 
-# Thứ bậc quyền để so sánh "role trong DB có còn đủ với role token đã claim hay không" (T2).
-_TIER = {"viewer": 0, "discord": 1, "admin": 2}
+REWARD_ACCESS = "reward:access"
+REWARD_ADMIN = "reward:admin"
+
+_DENIAL_RESPONSE = {
+    "suspended": (status.HTTP_403_FORBIDDEN, "Tài khoản không hoạt động"),
+    "deleted": (status.HTTP_403_FORBIDDEN, "Tài khoản không hoạt động"),
+    "permission_revoked": (status.HTTP_403_FORBIDDEN, "Tài khoản chưa được cấp quyền reward"),
+    proj.SESSION_REASON: (status.HTTP_401_UNAUTHORIZED, "Phiên đã bị thu hồi"),
+}
 
 
 @dataclass(frozen=True)
@@ -32,16 +42,10 @@ class AuthContext:
     account_id: str
     username: str
     token_role: str
-
-
-def decode_access_token(token: str, jwt_secret: str) -> dict:
-    """Giải JWT bằng `JWT_SECRET` dùng chung với admin_manager. Ném 401 nếu hỏng hoặc hết hạn."""
-    try:
-        return jwt.decode(token, jwt_secret, algorithms=["HS256"])
-    except jwt.ExpiredSignatureError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token hết hạn") from exc
-    except jwt.InvalidTokenError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token không hợp lệ") from exc
+    perms: frozenset[str] = field(default_factory=frozenset)
+    sid: str = ""
+    iat: int = 0
+    is_reward_admin: bool = False
 
 
 def extract_token(authorization: str) -> str:
@@ -62,60 +66,59 @@ def try_extract_token(authorization: str) -> str | None:
     return token.strip()
 
 
+def _context(principal: Principal) -> AuthContext:
+    return AuthContext(
+        account_id=principal.sub, username=principal.username, token_role=principal.role,
+        perms=principal.perms, sid=principal.sid, iat=int(principal.claims.get("iat", 0) or 0),
+        is_reward_admin=principal.has_perm(REWARD_ADMIN))
+
+
 class Security:
-    """Đóng gói `JWT_SECRET` + pool DB để cung cấp các FastAPI dependency phân quyền."""
+    """Đóng gói `TokenVerifier` + pool (denylist cục bộ) để cung cấp các FastAPI dependency phân quyền."""
 
-    def __init__(self, settings: RewardSettings, pool: Pool) -> None:
-        self._jwt_secret = settings.jwt_secret
+    def __init__(self, pool: Pool, verifier: TokenVerifier) -> None:
         self._pool = pool
+        self.verifier = verifier
 
-    def decode_access_token(self, token: str) -> dict:
-        return decode_access_token(token, self._jwt_secret)
+    async def verify_token(self, token: str) -> Principal:
+        try:
+            return await self.verifier.verify(token)
+        except AuthError as exc:
+            raise HTTPException(exc.status_code, exc.message) from None
 
-    def _context_from_authorization(self, authorization: str) -> AuthContext:
-        token = extract_token(authorization)
-        payload = self.decode_access_token(token)
-        sub = payload.get("sub")
-        role = payload.get("role")
-        if not sub or not role:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token không hợp lệ")
-        return AuthContext(account_id=str(sub), username=str(payload.get("username", "")), token_role=str(role))
+    async def _authenticate(self, request: Request, authorization: str) -> tuple[Principal, AuthContext]:
+        """Verify chữ ký/claim + denylist cục bộ. Kết quả cache trên `request.state` (một request chạy nhiều dependency)."""
+        cached = getattr(request.state, "reward_auth", None)
+        if cached is not None and cached[0] == authorization:
+            return cached[1], cached[2]
+        principal = await self.verify_token(extract_token(authorization))
+        ctx = _context(principal)
+        async with self._pool.acquire() as conn:
+            reason = await proj.is_denied(conn, account_id=ctx.account_id, sid=ctx.sid, iat=ctx.iat)
+        if reason:
+            code, message = _DENIAL_RESPONSE.get(reason, (status.HTTP_403_FORBIDDEN, "Tài khoản không hoạt động"))
+            raise HTTPException(code, message)
+        request.state.reward_auth = (authorization, principal, ctx)
+        return principal, ctx
 
-    # ── T1 — chỉ kiểm chữ ký + role trong token ─────────────────────────────────
+    # ── Dependency ──────────────────────────────────────────────────────────────
 
-    async def require_reward_user(self, authorization: str = Header("")) -> AuthContext:
-        """Role trong token phải thuộc `{discord, admin}` — viewer bị 403 ngay ở tầng token."""
-        ctx = self._context_from_authorization(authorization)
-        if ctx.token_role not in ("discord", "admin"):
+    async def require_reward_user(self, request: Request, authorization: str = Header("")) -> AuthContext:
+        """Cần `reward:access` (hoặc role admin) và không bị denylist."""
+        principal, ctx = await self._authenticate(request, authorization)
+        if not principal.has_perm(REWARD_ACCESS):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Tài khoản chưa được cấp quyền reward")
         return ctx
 
-    async def require_discord(self, authorization: str = Header("")) -> AuthContext:
-        """Chỉ role token đúng `discord` mới qua (không tự động cho `admin` — dùng cho thao tác cá nhân)."""
-        ctx = self._context_from_authorization(authorization)
-        if ctx.token_role != "discord":
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Chỉ tài khoản discord mới được phép")
-        return ctx
-
-    async def require_admin_role(self, authorization: str = Header("")) -> AuthContext:
-        """Chỉ role token đúng `admin` mới qua — dùng cho `/v1/reward/admin/*`."""
-        ctx = self._context_from_authorization(authorization)
-        if ctx.token_role != "admin":
+    async def require_admin_role(self, request: Request, authorization: str = Header("")) -> AuthContext:
+        """Cần `reward:admin` (hoặc role admin) và không bị denylist — dùng cho `/v1/reward/admin/*`."""
+        principal, ctx = await self._authenticate(request, authorization)
+        if not principal.has_perm(REWARD_ADMIN):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Chỉ quản trị viên mới được phép")
         return ctx
 
-    # ── T2 — đối chiếu DB: status active + role hiện tại còn đủ quyền ───────────
-
-    async def require_active_account(self, authorization: str = Header("")) -> AuthContext:
-        """`SELECT role, status FROM accounts WHERE id = $1` — bắt buộc trước mọi endpoint GHI.
-
-        `status != 'active'` ⇒ 403. Role trong DB đã bị hạ xuống thấp hơn role token đã claim ⇒ 403
-        (chặn trường hợp admin bị thu quyền giữa lúc access token 15 phút vẫn còn hạn)."""
-        ctx = self._context_from_authorization(authorization)
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT role, status FROM accounts WHERE id = $1", ctx.account_id)
-        if row is None or row["status"] != "active":
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Tài khoản không hoạt động")
-        if _TIER.get(row["role"], 0) < _TIER.get(ctx.token_role, 0):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Tài khoản không còn đủ quyền")
-        return AuthContext(account_id=ctx.account_id, username=ctx.username, token_role=row["role"])
+    async def require_active_account(self, request: Request, authorization: str = Header("")) -> AuthContext:
+        """Token hợp lệ + tài khoản KHÔNG nằm trong denylist (bị khoá/xoá/thu quyền/thu hồi phiên) — bắt buộc trước
+        mọi endpoint GHI. Không kiểm permission (đi kèm `require_reward_user`/`require_admin_role`)."""
+        _principal, ctx = await self._authenticate(request, authorization)
+        return ctx

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Preflight kiểm tra cấu hình reward-service TRƯỚC khi start (gọi trong CI/CD deploy).
 
-Kiểm 4 bất biến sống-còn để service dùng chung hạ tầng admin_manager mà không hỏng:
+Phase 4: Reward chạy trên DB RIÊNG và xác thực bằng JWKS của Identity — không còn secret JWT dùng chung. Kiểm:
 
-  1. JWT_SECRET của reward-service PHẢI trùng khít admin_manager — nếu lệch, token admin cấp sẽ
-     bị reward từ chối (hoặc ngược lại). So bằng SHA-256, KHÔNG BAO GIỜ in secret ra log.
-  2. REWARD_TOKEN_KEY là Fernet key hợp lệ (44 ký tự base64) — nếu sai, mọi credential Discord
-     đã mã hoá sẽ không giải được.
-  3. DATABASE_URL kết nối được và bảng `accounts` của admin_manager tồn tại (đúng DB dùng chung).
-  4. reward-service KHÔNG vô tình trỏ vào DB rỗng/khác — kiểm luôn migrate reward_* đã sẵn sàng.
+  1. REWARD_TOKEN_KEY là Fernet key hợp lệ (mất/sai key = mất toàn bộ token Discord đã mã hoá).
+  2. REWARD_DATABASE_URL kết nối được, trỏ vào DB RIÊNG của Reward: KHÔNG có bảng `accounts` của Identity
+     (nếu có nghĩa là đang trỏ nhầm DB dùng chung) và migration reward_* chạy được.
+  3. Cấu hình Identity đủ (REWARD_IDENTITY_URL, REWARD_ISSUER/REWARD_AUDIENCE) và JWKS lấy được (chỉ CẢNH BÁO nếu
+     Identity chưa sống — Reward vẫn khởi động được, token verify được sau khi JWKS có).
+  4. Cảnh báo nếu còn biến cũ (JWT_SECRET, ADMIN_API_BASE, DATABASE_URL) trong môi trường — chúng bị BỎ QUA.
+  5. Cảnh báo nếu thiếu REWARD_IDENTITY_FEED_KEY (consumer feed tắt ⇒ thu quyền không có hiệu lực ngay).
 
 Exit code != 0 → CI dừng deploy, KHÔNG restart pm2. Không có secret nào lọt ra stdout/stderr.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 import sys
 from pathlib import Path
@@ -33,41 +33,8 @@ def _ok(msg: str) -> None:
     print(f"[check-env] OK: {msg}")
 
 
-def _parse_env_file(path: Path) -> dict[str, str]:
-    """Đọc file .env dạng KEY=VALUE (bỏ comment/dòng trống). Không xử lý quote phức tạp."""
-    out: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        out[key.strip()] = value.strip().strip('"').strip("'")
-    return out
-
-
-def _sha(secret: str) -> str:
-    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
-
-
-def check_jwt_secret_matches_admin() -> None:
-    reward_secret = os.environ.get("JWT_SECRET", "").strip()
-    if not reward_secret:
-        _fail("JWT_SECRET của reward-service chưa được set trong môi trường.")
-    if reward_secret in ("dev-secret-thay-doi-khi-deploy", "REPLACE_WITH_RANDOM_HEX_64"):
-        _fail("JWT_SECRET vẫn là giá trị placeholder/dev — phải copy đúng secret production của admin_manager.")
-
-    admin_env_path = Path(os.environ.get("ADMIN_ENV_PATH", "/srv/admin/.env"))
-    if not admin_env_path.is_file():
-        _fail(f"Không tìm thấy .env của admin_manager tại {admin_env_path} (đặt ADMIN_ENV_PATH nếu khác).")
-
-    admin_env = _parse_env_file(admin_env_path)
-    admin_secret = admin_env.get("JWT_SECRET", "").strip()
-    if not admin_secret:
-        _fail(f"{admin_env_path} không chứa JWT_SECRET.")
-
-    if _sha(reward_secret) != _sha(admin_secret):
-        _fail("JWT_SECRET của reward-service KHÁC admin_manager — token sẽ không xác thực chéo được.")
-    _ok("JWT_SECRET trùng khít admin_manager (so bằng SHA-256).")
+def _warn(msg: str) -> None:
+    print(f"[check-env] WARN: {msg}")
 
 
 def check_fernet_key() -> None:
@@ -88,30 +55,66 @@ def check_database() -> None:
 
     import asyncpg
 
-    dsn = os.environ.get("DATABASE_URL", "").strip()
+    dsn = os.environ.get("REWARD_DATABASE_URL", "").strip()
     if not dsn:
-        _fail("DATABASE_URL chưa set.")
+        _fail("REWARD_DATABASE_URL chưa set (DB riêng của Reward; không dùng DATABASE_URL cũ).")
 
     async def _probe() -> None:
         try:
-            conn = await asyncpg.connect(dsn)
+            conn = await asyncpg.connect(dsn, timeout=10)
         except Exception as exc:  # noqa: BLE001
-            _fail(f"Không kết nối được DATABASE_URL: {type(exc).__name__}")
+            _fail(f"Không kết nối được REWARD_DATABASE_URL: {type(exc).__name__}")
         try:
-            has_accounts = await conn.fetchval("SELECT to_regclass('public.accounts') IS NOT NULL")
-            if not has_accounts:
-                _fail("DB kết nối được nhưng KHÔNG có bảng `accounts` — sai DB (phải là DB dùng chung với admin_manager).")
-            _ok("Kết nối DB thành công và bảng `accounts` của admin_manager tồn tại.")
+            identity_tables = await conn.fetch(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema='public' "
+                "AND table_name = ANY($1::text[])", ["accounts", "invite_keys", "refresh_tokens"])
+            if identity_tables:
+                _fail("DB có bảng của Identity (accounts/invite_keys/refresh_tokens) — đang trỏ NHẦM DB dùng chung; "
+                      "Reward phải chạy trên DB riêng (reward_db).")
+            _ok("Kết nối DB riêng thành công; không có bảng Identity.")
         finally:
             await conn.close()
 
     asyncio.run(_probe())
 
 
+def check_identity() -> None:
+    import httpx
+
+    from settings import RewardConfigError, load_settings
+
+    try:
+        settings = load_settings()
+    except RewardConfigError as exc:
+        _fail(str(exc))
+    _ok(f"Cấu hình hợp lệ (issuer={settings.issuer}, audience={settings.audience}).")
+    try:
+        resp = httpx.get(settings.identity_jwks_url, timeout=5.0)
+        resp.raise_for_status()
+        kids = [k.get("kid") for k in resp.json().get("keys", [])]
+        if not kids:
+            _warn("JWKS của Identity rỗng — token chưa verify được.")
+        else:
+            _ok(f"Lấy được JWKS của Identity ({len(kids)} khoá).")
+    except Exception as exc:  # noqa: BLE001 — Identity chưa sống không được chặn deploy Reward
+        _warn(f"Chưa lấy được JWKS ({type(exc).__name__}); Reward vẫn khởi động, verify được khi Identity sống.")
+    if not settings.feed_enabled:
+        _warn("Thiếu REWARD_IDENTITY_FEED_KEY — consumer feed TẮT: thu quyền/khoá chỉ có hiệu lực khi token hết hạn.")
+    else:
+        _ok("Consumer feed Identity được cấu hình.")
+
+
+def check_legacy_env() -> None:
+    for name in ("JWT_SECRET", "ADMIN_API_BASE", "DATABASE_URL"):
+        if os.environ.get(name, "").strip():
+            _warn(f"Biến cũ {name} còn trong môi trường — Reward KHÔNG đọc nó nữa, hãy gỡ khỏi .env.")
+
+
 def main() -> None:
-    check_jwt_secret_matches_admin()
     check_fernet_key()
     check_database()
+    check_identity()
+    check_legacy_env()
     print("[check-env] Tất cả kiểm tra PASS — an toàn để migrate + start service.")
 
 

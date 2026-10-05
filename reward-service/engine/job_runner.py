@@ -40,6 +40,7 @@ from store.repositories import events as events_repo
 from store.repositories import items as items_repo
 from store.repositories import jobs as jobs_repo
 from store.repositories import lock as lock_repo
+from store.repositories import projection as projection_repo
 from store.repositories import tokens as tokens_repo
 
 logger = logging.getLogger("reward.engine.job_runner")
@@ -112,14 +113,13 @@ class JobRunner:
             pass
 
     async def _check_role_and_credential(self) -> str | None:
-        """C.5 quy tắc chéo #2: kiểm T2 (role/status) + `credentials.status='valid'` ở mỗi vòng lặp.
+        """C.5 quy tắc chéo #2: kiểm denylist CỤC BỘ (thu quyền/khoá/xoá — nuôi bởi feed Identity) +
+        `credentials.status='valid'` ở mỗi vòng lặp. Lưới an toàn song song với `WorkerManager.pause_account_jobs`.
 
         Trả `None` nếu còn hợp lệ, ngược lại mã lý do `auto_pause` (`ROLE_REVOKED` /
         `CREDENTIAL_INVALID`)."""
         async with self._pool.acquire() as conn:
-            account = await conn.fetchrow(
-                "SELECT role, status FROM accounts WHERE id=$1", self._config.account_id)
-            if account is None or account["status"] != "active" or account["role"] not in ("discord", "admin"):
+            if await projection_repo.blanket_denial(conn, self._config.account_id):
                 return "ROLE_REVOKED"
             cred = await conn.fetchrow(
                 "SELECT status FROM reward_discord_credentials WHERE account_id=$1", self._config.account_id)

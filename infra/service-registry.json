@@ -47,7 +47,15 @@
         "outbox",
         "sessions",
         "integration_provisioning",
-        "feed_cursor"
+        "feed_cursor",
+        "processed_events",
+        "dead_letters",
+        "oidc_auth_codes",
+        "oidc_refresh_tokens",
+        "sso_sessions",
+        "oidc_session_clients",
+        "oidc_backchannel_deliveries",
+        "oidc_cursor"
       ],
       "emits": [
         "account.registered",
@@ -134,6 +142,9 @@
         "audit_log",
         "account_projection",
         "outbox",
+        "feed_cursor",
+        "processed_events",
+        "dead_letters",
         "documents",
         "user_meta",
         "account_links",
@@ -143,7 +154,8 @@
         "snapshot.committed",
         "resource.changed",
         "integration.client.provisioned",
-        "integration.client.provision_failed"
+        "integration.client.provision_failed",
+        "credential.revoked"
       ],
       "consumes": [
         "account.registered",
@@ -232,13 +244,19 @@
         "country_canonicals",
         "feed_cursor",
         "processed_events",
+        "dead_letters",
+        "sync_state",
+        "read_projects",
         "account_projection"
       ],
       "emits": [],
       "consumes": [
         "snapshot.committed",
         "resource.changed",
+        "account.registered",
         "account.status_changed",
+        "account.role_changed",
+        "account.profile_updated",
         "account.deleted"
       ],
       "modules": {
@@ -295,7 +313,7 @@
       "package": "reward_service",
       "port": 8422,
       "database": "reward_db",
-      "responsibility": "Phân phối điểm thưởng qua Discord. Giữ nguyên tại chỗ; git mv sang services/ ở Phase 1.5.",
+      "responsibility": "Phân phối điểm thưởng qua Discord. Giữ nguyên tại chỗ; git mv sang services/ ở Phase 1.5. Phase 4: DB riêng reward_db, verify RS256/JWKS offline, quyền do Identity quản lý.",
       "public_prefixes": [
         "/v1/rewards",
         "/v1/reward"
@@ -303,13 +321,20 @@
       "owned_tables": [
         "reward_*",
         "account_denylist",
-        "account_projection"
+        "account_projection",
+        "feed_cursor",
+        "processed_events",
+        "dead_letters"
       ],
       "emits": [],
       "consumes": [
+        "account.registered",
+        "account.role_changed",
+        "account.profile_updated",
         "account.permission_changed",
         "account.status_changed",
-        "account.deleted"
+        "account.deleted",
+        "session.revoked"
       ],
       "modules": {
         "api": {
@@ -327,6 +352,10 @@
         "discord": {
           "phase": "existing",
           "responsibility": "gateway, http, slash commands"
+        },
+        "identity_link": {
+          "phase": "4",
+          "responsibility": "client API công khai Identity (proxy auth, grant/revoke permission, danh sách user) với timeout/backoff; consumer feed Identity dựng account_projection/account_denylist và tạm dừng job khi thu quyền"
         },
         "store": {
           "phase": "existing",

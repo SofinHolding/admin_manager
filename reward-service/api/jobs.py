@@ -41,6 +41,7 @@ from store.repositories import events as events_repo
 from store.repositories import items as items_repo
 from store.repositories import jobs as jobs_repo
 from store.repositories import lock as lock_repo
+from store.repositories import projection as projection_repo
 
 logger = logging.getLogger("reward.jobs")
 
@@ -137,7 +138,7 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
 
     async def _owned_job(conn, job_id: int, ctx: AuthContext) -> dict[str, Any]:
         job = await jobs_repo.get_job(conn, job_id)
-        if job is None or (ctx.token_role != "admin" and job["account_id"] != ctx.account_id):
+        if job is None or (not ctx.is_reward_admin and job["account_id"] != ctx.account_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Không tìm thấy job")
         return job
 
@@ -147,6 +148,9 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
     async def create_job(body: JobCreateBody, ctx: AuthContext = Active, _r: AuthContext = Reward) -> dict:
         async with pool.acquire() as conn:
             cred = await credentials_repo.get_by_account(conn, ctx.account_id)
+            # Nuôi read model cục bộ từ token đã verify (hiển thị tên chủ job); KHÔNG đụng status/reward_access.
+            await projection_repo.upsert_projection(
+                conn, account_id=ctx.account_id, username=ctx.username or None, role=ctx.token_role or None)
 
         ov = body.overrides or OverridesBody()
         guild_id = ov.guild_id or (cred["guild_id"] if cred else None)
@@ -188,7 +192,7 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
         status_: str | None = Query(None, alias="status"), limit: int = 50, offset: int = 0,
         account_id: str | None = None, ctx: AuthContext = Reward,
     ) -> dict:
-        owner = account_id if ctx.token_role == "admin" else ctx.account_id
+        owner = account_id if ctx.is_reward_admin else ctx.account_id
         async with pool.acquire() as conn:
             rows, total = await jobs_repo.list_jobs(
                 conn, account_id=owner, status=status_, limit=min(max(limit, 1), 200), offset=max(offset, 0))

@@ -1,7 +1,7 @@
 """Chạy migration SQL trong `store/migrations/` — mỗi file một transaction, idempotent.
 
-Ghi version đã áp vào `reward_schema_migrations`. Toàn bộ DDL trong các file migration là
-`CREATE ... IF NOT EXISTS` — không một câu `ALTER`/`DROP` nào chạm bảng của admin_manager.
+Ghi version đã áp vào `reward_schema_migrations`. Toàn bộ DDL trong các file migration chỉ chạm bảng do Reward sở hữu
+(`CREATE ... IF NOT EXISTS`, `ALTER ... ADD COLUMN IF NOT EXISTS` trên bảng reward_*).
 """
 
 from __future__ import annotations

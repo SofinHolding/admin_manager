@@ -19,6 +19,11 @@ fi
 
 PORT="${REWARD_PORT:-8422}"
 
+# Phase 4: không còn JWT_SECRET dùng chung. Kiểm cấu hình bắt buộc sớm (fail-fast) trước khi bật uvicorn.
+: "${REWARD_DATABASE_URL:?Thiếu REWARD_DATABASE_URL (DB riêng reward_db)}"
+: "${REWARD_IDENTITY_URL:?Thiếu REWARD_IDENTITY_URL (API công khai của Identity)}"
+: "${REWARD_TOKEN_KEY:?Thiếu REWARD_TOKEN_KEY (Fernet, mã hoá token Discord)}"
+
 exec .venv/bin/python -m uvicorn main:app \
   --host 127.0.0.1 \
   --port "${PORT}" \

@@ -2,12 +2,16 @@
 
 Mọi lỗi cấu hình (thiếu biến bắt buộc, định dạng sai) ném `RewardConfigError` — KHÔNG BAO GIỜ gọi
 `sys.exit()` trong module này (chỉ entry point `main.py` mới được phép dừng tiến trình).
+
+Xác thực (Phase 4): KHÔNG còn JWT secret dùng chung. Access token RS256 do Identity ký, Reward verify OFFLINE
+bằng JWKS (`REWARD_IDENTITY_JWKS_URL`), kiểm `iss`/`aud` theo `REWARD_ISSUER`/`REWARD_AUDIENCE`.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet
 
@@ -18,9 +22,7 @@ class RewardConfigError(Exception):
 
 @dataclass(frozen=True)
 class RewardSettings:
-    jwt_secret: str
     database_url: str
-    admin_api_base: str
     reward_token_key: str
     reward_port: int
     cors_origins: list[str]
@@ -33,12 +35,40 @@ class RewardSettings:
     reconcile_grace_s: float
     discord_api_base: str
     discord_gateway_url: str
+    # ── Identity (xác thực + quyền) ──
+    identity_url: str
+    identity_jwks_url: str
+    issuer: str
+    audience: str
+    identity_timeout_s: float
+    identity_retries: int
+    identity_backoff_base_s: float
+    # ── Feed consumer (tuỳ chọn: thiếu key ⇒ tắt, service vẫn chạy) ──
+    identity_feed_url: str
+    identity_feed_key: str
+    feed_poll_interval_s: float
+    feed_batch_size: int
+    feed_event_max_attempts: int
+    feed_event_backoff_base_s: float
+
+    @property
+    def feed_enabled(self) -> bool:
+        return bool(self.identity_feed_url and self.identity_feed_key)
 
 
-def _require(name: str) -> str:
-    value = os.environ.get(name, "").strip()
+def _first(*names: str) -> str:
+    """Giá trị của biến đầu tiên có set — dùng để vẫn đọc tên biến cũ (tương thích) sau tên mới."""
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _require(*names: str) -> str:
+    value = _first(*names)
     if not value:
-        raise RewardConfigError(f"Thiếu biến môi trường bắt buộc: {name}")
+        raise RewardConfigError(f"Thiếu biến môi trường bắt buộc: {names[0]}")
     return value
 
 
@@ -48,18 +78,36 @@ def _parse_bool(raw: str, default: bool) -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "off")
 
 
+def _http_url(name: str, value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise RewardConfigError(f"{name} phải là URL http(s) hợp lệ")
+    return value.rstrip("/")
+
+
 def load_settings() -> RewardSettings:
     """Nạp + validate toàn bộ cấu hình. Ném `RewardConfigError` nếu thiếu/sai — không thoát tiến trình."""
-    jwt_secret = _require("JWT_SECRET")
-    database_url = _require("DATABASE_URL")
-    admin_api_base = _require("ADMIN_API_BASE").rstrip("/")
+    # Biến cũ (secret JWT chung, địa chỉ admin_manager, DSN dùng chung) KHÔNG còn được đọc (CLAUDE.md luật 2 và 8).
+    # KHÔNG fallback sang `DATABASE_URL` cũ: biến đó từng trỏ vào DB dùng chung `ufsync` — đọc nó sẽ âm thầm duy trì coupling.
+    database_url = _require("REWARD_DATABASE_URL")
     reward_token_key = _require("REWARD_TOKEN_KEY")
 
-    # Phase 1 chỉ validate ĐỊNH DẠNG Fernet (chưa dùng để mã hoá token Discord — đó là Phase 3).
     try:
         Fernet(reward_token_key.encode("utf-8"))
     except Exception as exc:  # noqa: BLE001 — mọi lỗi định dạng Fernet đều là lỗi cấu hình
         raise RewardConfigError(f"REWARD_TOKEN_KEY không đúng định dạng Fernet: {exc}") from exc
+
+    identity_url = _http_url("REWARD_IDENTITY_URL", _require("REWARD_IDENTITY_URL"))
+    identity_jwks_url = _http_url(
+        "REWARD_IDENTITY_JWKS_URL",
+        _first("REWARD_IDENTITY_JWKS_URL") or f"{identity_url}/.well-known/jwks.json")
+    issuer = _first("REWARD_ISSUER") or identity_url
+    audience = _first("REWARD_AUDIENCE") or "manager-api"
+
+    feed_key = _first("REWARD_IDENTITY_FEED_KEY")
+    feed_url = _first("REWARD_IDENTITY_FEED_URL") or (identity_url if feed_key else "")
+    if feed_url:
+        feed_url = _http_url("REWARD_IDENTITY_FEED_URL", feed_url)
 
     port_raw = os.environ.get("REWARD_PORT", "8422").strip()
     try:
@@ -104,9 +152,7 @@ def load_settings() -> RewardSettings:
         "REWARD_GATEWAY_URL", "wss://gateway.discord.gg/?v=9&encoding=json")
 
     return RewardSettings(
-        jwt_secret=jwt_secret,
         database_url=database_url,
-        admin_api_base=admin_api_base,
         reward_token_key=reward_token_key,
         reward_port=reward_port,
         cors_origins=cors_origins,
@@ -119,4 +165,17 @@ def load_settings() -> RewardSettings:
         reconcile_grace_s=reconcile_grace_s,
         discord_api_base=discord_api_base,
         discord_gateway_url=discord_gateway_url,
+        identity_url=identity_url,
+        identity_jwks_url=identity_jwks_url,
+        issuer=issuer,
+        audience=audience,
+        identity_timeout_s=_float("REWARD_IDENTITY_TIMEOUT_S", 5.0),
+        identity_retries=_int("REWARD_IDENTITY_RETRIES", 2),
+        identity_backoff_base_s=_float("REWARD_IDENTITY_BACKOFF_S", 0.3),
+        identity_feed_url=feed_url,
+        identity_feed_key=feed_key,
+        feed_poll_interval_s=_float("REWARD_FEED_POLL_INTERVAL_S", 2.0),
+        feed_batch_size=_int("REWARD_FEED_BATCH_SIZE", 100),
+        feed_event_max_attempts=_int("REWARD_FEED_EVENT_MAX_ATTEMPTS", 4),
+        feed_event_backoff_base_s=_float("REWARD_FEED_EVENT_BACKOFF_S", 0.2),
     )

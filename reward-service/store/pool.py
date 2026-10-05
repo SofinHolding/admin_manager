@@ -1,8 +1,7 @@
-"""Quản lý `asyncpg` connection pool dùng chung Postgres `ufsync` với admin_manager.
+"""Quản lý `asyncpg` connection pool tới DB RIÊNG `reward_db` (user `reward_svc`).
 
-reward-service KHÔNG BAO GIỜ INSERT/DELETE/ALTER bảng của admin_manager (`accounts`, `invite_keys`,
-`refresh_tokens`, `documents`, `user_meta`) — chỉ `SELECT accounts` + `UPDATE accounts.role`
-(xem `store/repositories/accounts.py`). Mọi bảng khác thuộc namespace `reward_*` do service này sở hữu.
+reward-service chỉ chạm các bảng do chính nó sở hữu (`reward_*` và sổ sách consumer feed). Dữ liệu tài khoản của
+Identity KHÔNG nằm ở đây: lấy qua API công khai / event feed (xem `identity_link/`).
 """
 
 from __future__ import annotations

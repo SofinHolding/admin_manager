@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import httpx
 import pytest
 
-from tests.conftest import insert_account, sign_token
+from tests.conftest import app_client, insert_account, sign_token
 from tests.harness.fake_discord import start_fake
 
 GUILD = "111111111111111111"
@@ -28,17 +26,10 @@ async def fake():
 
 
 @pytest.fixture
-async def client(db_conn, fake):
-    os.environ["REWARD_API_BASE"] = fake.api_base
-    os.environ["REWARD_GATEWAY_URL"] = fake.gateway_url
-    import importlib
-    import main as main_module
-    importlib.reload(main_module)
-    app = main_module.app
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        async with app.router.lifespan_context(app):
-            yield ac
+async def client(db_conn, identity, fake):
+    env = {"REWARD_API_BASE": fake.api_base, "REWARD_GATEWAY_URL": fake.gateway_url}
+    async with app_client(identity, **env) as ac:
+        yield ac
 
 
 async def _account(db_conn):

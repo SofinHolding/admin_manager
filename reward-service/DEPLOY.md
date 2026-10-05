@@ -1,61 +1,73 @@
 # Triển khai reward-service
 
-Module backend nằm **chung repo `admin_manager`** (thư mục `reward-service/`) nhưng chạy tiến trình
-RIÊNG (pm2 `ufreward`, cổng `8422`), **dùng chung** Postgres `ufsync` + `JWT_SECRET` với admin-server
-và **KHÔNG sửa một dòng nào của `admin-server/`** (backend admin). Giao diện discord đã được gộp vào
-`admin-web` (phục vụ tại `/admin/`, hiển thị theo vai trò), nên KHÔNG còn site tĩnh `/reward/` riêng —
-chỉ cần proxy API `/v1/reward/`. Deploy backend tự động qua `.github/workflows/deploy-reward.yml`
-khi push `main` đụng `reward-service/**`; phần frontend do `deploy.yml` (paths `admin-web/**`) lo.
+> **Phase 4 (tài liệu — chưa triển khai gì):** Reward KHÔNG còn dùng chung Postgres `ufsync` và `JWT_SECRET` với
+> admin-server. Nó chạy trên **DB riêng `reward_db`** (user `reward_svc`), verify access token **RS256 của Identity
+> bằng JWKS (offline)**, enforce quyền cục bộ từ claim `perms`, và nhận thay đổi quyền/phiên qua **feed nội bộ** của
+> Identity. Phần dưới đã cập nhật; mọi bước dưới đây chỉ thực hiện khi có lệnh triển khai riêng.
 
-Topology trên VPS (cùng máy với admin_manager):
+Module backend nằm **chung repo** (thư mục `reward-service/`) nhưng chạy tiến trình RIÊNG (pm2 `ufreward`, cổng
+`8422`). Giao diện discord nằm trong `admin-web` (phục vụ tại `/admin/`); chỉ cần proxy API `/v1/reward/`.
+
+Topology:
 
 ```
-                          ┌────────────────────────────────────────┐
-   nginx (443) ───/admin/─┼─▶ tĩnh admin-web dist (UI dùng chung,   │
-                          │      hiển thị dashboard HOẶC UI discord  │
-                          │      tuỳ role) + pm2 ufadmin :8421       │
-              /v1/ ───────┼─▶ pm2 ufadmin  :8421   (admin-server)    │
-          /v1/reward/ ────┼─▶ pm2 ufreward :8422   (reward-service)  │
-                          └───────────────┬────────────────────────┘
-                                          ▼
-                              Postgres  ufsync  (dùng chung)
-                    accounts (đọc + UPDATE role)  |  reward_* (sở hữu riêng)
+   nginx (443) ── /v1/reward/ ──▶ pm2 ufreward :8422 (reward-service)
+                                        │  verify JWKS (cache, offline)      ┌────────────────────────────┐
+                                        ├───────── HTTP công khai ──────────▶│ identity-service :8430      │
+                                        │  /v1/auth/*, /v1/admin/users,      │  /.well-known/jwks.json     │
+                                        │  PUT|DELETE …/permissions/…        │  /internal/v1/feed (pull)   │
+                                        └───────── kéo feed (X-Service-Key) ─┘
+                                        ▼
+                              Postgres  reward_db  (RIÊNG; user reward_svc)
 ```
+
+Reward không đọc/ghi bảng của Identity. Identity chết: token còn hạn vẫn được phục vụ (JWKS đã cache), job đang chạy
+không bị ảnh hưởng; chỉ grant/revoke và proxy đăng nhập trả `503 UNAVAILABLE`.
 
 ## 1. Chuẩn bị lần đầu trên VPS (làm TAY, 1 lần)
 
 ```bash
-sudo mkdir -p /srv/reward
-sudo chown "$USER" /srv/reward
-cd /srv/reward
-
-# .env — CHMOD 600, KHÔNG commit. Copy JWT_SECRET NGUYÊN VĂN từ /srv/admin/.env.
-cp <repo>/reward-service/.env.example .env
-chmod 600 .env
-# Sửa .env:
-#   JWT_SECRET      = <giống hệt /srv/admin/.env — bắt buộc, check-env.py sẽ chặn nếu lệch>
-#   DATABASE_URL    = postgres://<user>:<pass>@127.0.0.1:5432/ufsync   (đúng DB admin đang dùng)
-#   REWARD_TOKEN_KEY= <python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())">
-#                     ↑ SINH 1 LẦN, LƯU KỸ. Mất key = mất toàn bộ token Discord đã mã hoá.
-#   REWARD_CORS_ORIGINS = https://<domain>    (origin thật của UI, không để localhost)
+sudo mkdir -p /srv/reward && sudo chown "$USER" /srv/reward && cd /srv/reward
+cp <repo>/reward-service/.env.example .env && chmod 600 .env   # KHÔNG commit .env thật
 ```
 
-`REWARD_TOKEN_KEY` là bí mật RIÊNG của reward-service (admin_manager không biết) — dùng Fernet mã hoá
-token Discord từng user trong `reward_user_credentials`. Sinh mới mỗi môi trường, không tái dùng.
+Biến môi trường (xem `.env.example`; **không có secret mặc định**, thiếu biến bắt buộc ⇒ service không khởi động):
 
-## 2. Cấp role `discord` cho user (thao tác DỮ LIỆU, không sửa code admin)
+| Biến | Bắt buộc | Ý nghĩa |
+|---|---|---|
+| `REWARD_DATABASE_URL` | có | DSN DB **riêng** `reward_db` (user `reward_svc`). **Không** fallback `DATABASE_URL` cũ |
+| `REWARD_TOKEN_KEY` | có | Fernet mã hoá token Discord. Sinh 1 lần, lưu kỹ — mất key = mất token Discord đã mã hoá |
+| `REWARD_IDENTITY_URL` | có | URL API công khai Identity (vd `http://127.0.0.1:8430`) |
+| `REWARD_IDENTITY_JWKS_URL` | không | mặc định `${REWARD_IDENTITY_URL}/.well-known/jwks.json` |
+| `REWARD_ISSUER` | nên đặt | phải khớp CHÍNH XÁC claim `iss` (mặc định = `REWARD_IDENTITY_URL`) |
+| `REWARD_AUDIENCE` | không | mặc định `manager-api` |
+| `REWARD_IDENTITY_FEED_URL` / `REWARD_IDENTITY_FEED_KEY` | nên có | nguồn + khoá feed. **Thiếu key ⇒ consumer tắt** (thu quyền/khoá chỉ có hiệu lực khi token hết hạn) |
+| `REWARD_IDENTITY_TIMEOUT_S` / `_RETRIES` / `_BACKOFF_S` | không | outbound tới Identity: 5s / 2 lần / 0.3s |
+| `REWARD_FEED_POLL_INTERVAL_S` / `_BATCH_SIZE` / `_EVENT_MAX_ATTEMPTS` | không | 2s / 100 / 4 |
+| `REWARD_SDK_PATH` | không | thư mục chứa `manager_sdk` nếu không có `../packages/sdk-python` hoặc `./vendor` |
 
-`accounts.role` là cột `text` tự do (admin_manager chỉ ràng buộc regex `^(viewer|admin)$` ở tầng
-pydantic khi *ghi qua API của nó* — không có CHECK ở DB). reward-service cấp quyền bằng UPDATE trực
-tiếp, hoàn toàn hợp lệ:
+**Đã BỎ:** `JWT_SECRET`, `ADMIN_API_BASE`, `DATABASE_URL` (nếu còn trong `.env` sẽ bị bỏ qua; `scripts/check-env.py` cảnh báo).
+Khoá feed do `infra/scripts/bootstrap_dev.py` sinh ở DEV (`IDENTITY_FEED_KEY_REWARD`); production dùng khoá riêng cho Reward.
 
-```sql
-UPDATE accounts SET role = 'discord' WHERE username = '<user>';
-```
+`manager_sdk` (`packages/sdk-python`) không phải gói PyPI: bản deploy phải mang theo thư mục này (đặt cạnh
+`reward-service/` theo cấu trúc monorepo, hoặc sao chép vào `reward-service/vendor/manager_sdk`, hoặc đặt `REWARD_SDK_PATH`).
 
-Hoặc trên `admin-web` (đăng nhập role `admin`): nút **Cấp/Thu hồi quyền Discord** ở trang
-`/admin/manage` (tab *Tài khoản*), hoặc trang `/admin/reward/admin` — cả hai gọi
-`POST /v1/reward/admin/accounts/{id}/grant-discord` của reward-service.
+## 2. Quyền reward do Identity quản lý (không còn UPDATE bảng accounts)
+
+- Truy cập: permission **`reward:access`**; quản trị: **`reward:admin`** (hoặc `role=admin`). Tài khoản `role=discord` cũ được
+  Identity ngầm cấp `reward:access` (shim, bỏ ở Phase 6).
+- Cấp/thu: trên `admin-web` (nút Cấp/Thu hồi quyền Discord) hoặc gọi `POST /v1/reward/admin/accounts/{id}/grant-discord|revoke-discord`
+  — Reward chuyển thành `PUT|DELETE /v1/admin/accounts/{id}/permissions/reward:access` của Identity bằng chính token người gọi.
+  Thu quyền tài khoản role=discord (chỉ có quyền ngầm) trả `409` cho tới khi Identity chuyển nó sang permission tường minh.
+- Thu quyền/khoá/xoá/thu hồi phiên: Identity phát event → Reward ghi `account_denylist`, **tạm dừng ngay** job đang chạy của
+  tài khoản đó và từ chối job mới (không đợi token hết hạn).
+- Dead-letter feed: `python -m identity_link.consumer replay` (chạy trong thư mục `reward-service`, cần env như service).
+
+## 2b. Di chuyển dữ liệu từ `ufsync` sang `reward_db` (kế hoạch, làm TAY khi được duyệt)
+
+Các bảng `reward_*` hiện nằm trong `ufsync`. Cutover: dừng `ufreward` → `pg_dump --data-only -t 'reward_*'` từ `ufsync` →
+restore vào `reward_db` (đã `python -m store.migrate`) → đặt `.env` mới → start. Không cần dữ liệu `accounts`: `account_id` trong
+`reward_*` là id tài khoản của Identity (giữ nguyên giá trị). `account_projection` tự dựng lại khi consumer replay feed từ 0.
 
 ## 3. nginx — thêm 1 location vào server block đang phục vụ admin_manager
 
@@ -88,10 +100,10 @@ location /v1/reward/ {
 
 Push `main` đụng `reward-service/**` → workflow chạy:
 
-1. **test**: dựng Postgres 16 service, `pytest tests/ -q` — fail thì DỪNG, không deploy.
+1. **test**: cần Postgres có DB `reward_db` + user `reward_svc` (qua `REWARD_TEST_DATABASE_URL`), `pytest tests/ -q` — fail thì DỪNG. (Workflow CI hiện còn theo mô hình cũ — cần cập nhật riêng.)
 2. **deploy**: rsync `reward-service/` (trừ `.env`, `tests/`, `.venv`) lên `/srv/reward/`, rồi trên VPS:
-   - `scripts/check-env.py` — preflight: JWT_SECRET khớp `/srv/admin/.env`, Fernet hợp lệ, DB có
-     bảng `accounts`. **Fail → không restart** (tránh chạy service cấu hình sai).
+   - `scripts/check-env.py` — preflight: Fernet hợp lệ, `REWARD_DATABASE_URL` kết nối được và **không** có bảng của
+     Identity (tránh trỏ nhầm DB dùng chung), cấu hình Identity hợp lệ, JWKS lấy được (chỉ cảnh báo). **Fail → không restart**.
    - `python -m store.migrate` — áp `reward_*` migration (idempotent, chỉ `CREATE IF NOT EXISTS`).
    - `pm2 restart ufreward` (lần đầu: `pm2 start run.sh --name ufreward --interpreter bash`).
    - `curl /v1/reward/health` — smoke, fail → deploy coi như hỏng.
@@ -104,7 +116,7 @@ sửa reward **không** trigger deploy admin và ngược lại.
 ```bash
 pm2 logs ufreward            # log runtime
 pm2 restart ufreward         # restart tay
-curl -s http://127.0.0.1:8422/v1/reward/health | jq   # db_ok / migration_version / admin_api_ok
+curl -s http://127.0.0.1:8422/v1/reward/health | jq   # ok / migration_version / feed{enabled,cursor,last_error}
 ```
 
 `run.sh` cố định `--workers 1`: WorkerManager giữ trạng thái job + khoá `reward_job_lock` theo tiến

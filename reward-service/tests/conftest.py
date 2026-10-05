@@ -1,11 +1,12 @@
-"""Fixture pytest cho reward-service — chạy trên Postgres THẬT (container test).
+"""Fixture pytest cho reward-service — Postgres THẬT (`reward_db`, user `reward_svc`) + FAKE IDENTITY.
 
-Copy nguyên văn DDL `accounts`/`invite_keys`/`refresh_tokens` từ `admin_manager/admin-server/db.py`
-(`_PG_DDL`) để dựng fixture cho TEST — KHÔNG import code admin_manager, KHÔNG sửa admin_manager.
-Mỗi phiên test: áp DDL admin_manager (nếu chưa có) → chạy `store.migrate.run()` → chèn account mẫu
-(1 admin + 2 viewer) → ký JWT test bằng `pyjwt` với `JWT_SECRET` giống hệt env. Sau mỗi test: dọn sạch
-dữ liệu account/reward_role_audit đã chèn (không DROP bảng, không đụng dữ liệu khác nếu DB được tái sử
-dụng).
+Phase 4 (gỡ coupling):
+  * DB test = DB RIÊNG `reward_db` lấy qua `infra/scripts/devenv.py` (secret DEV sinh ngẫu nhiên, không có trong repo).
+    Thiếu hạ tầng DEV ⇒ test cần DB SKIP có lý do (SKIP KHÔNG phải PASS). `REWARD_TEST_DATABASE_URL` đè được.
+  * Không còn DDL `accounts`/`invite_keys`/`refresh_tokens` và không còn JWT secret: access token là RS256 THẬT do
+    `FakeIdentity` ký, Reward verify bằng JWKS của nó. Fake Identity cũng phục vụ API grant/revoke/users + feed.
+  * `insert_account` / `sign_token` giữ tên cũ để test cũ đọc như trước, nhưng tạo người dùng TRÊN fake Identity
+    (không có bảng accounts nào).
 """
 
 from __future__ import annotations
@@ -13,159 +14,109 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT.parent / "infra" / "scripts"))
 
+import importlib
 import os
-import time
+import secrets
 import uuid
+from contextlib import asynccontextmanager
 
 import asyncpg
-import jwt
+import httpx
 import pytest
 import pytest_asyncio
 from cryptography.fernet import Fernet
 
-from store import migrate as store_migrate
-from store.pool import Pool
+import sdk_path  # noqa: E402,F401
+import devenv  # noqa: E402  (đọc secret DEV từ .env.dev)
+from store import migrate as store_migrate  # noqa: E402
+from store.pool import Pool  # noqa: E402
+from tests.harness.fake_identity import AUDIENCE, ISSUER, FakeIdentity, start_fake_identity  # noqa: E402
 
-# Ưu tiên: REWARD_TEST_* (đè riêng cho test) → biến chuẩn (CI set DATABASE_URL/JWT_SECRET/
-# ADMIN_API_BASE trực tiếp, xem .github/workflows/deploy-reward.yml) → fallback Postgres dev cục bộ.
-# BUG đã vá: trước đây conftest chỉ nhìn REWARD_TEST_DATABASE_URL, bỏ qua DATABASE_URL CI đặt sẵn
-# (cổng 5432 trong service Postgres của Actions) → luôn rơi về fallback cổng 5544 (Docker dev máy
-# tác giả) → CI báo ConnectionRefusedError vì cổng 5544 không tồn tại trên runner GitHub.
-TEST_DATABASE_URL = (os.environ.get("REWARD_TEST_DATABASE_URL") or os.environ.get("DATABASE_URL") or "")
-TEST_JWT_SECRET = (os.environ.get("REWARD_TEST_JWT_SECRET") or os.environ.get("JWT_SECRET")
-                    or __import__("secrets").token_urlsafe(32))  # ngẫu nhiên mỗi lần chạy, không viết cứng
-TEST_ADMIN_API_BASE = (os.environ.get("REWARD_TEST_ADMIN_API_BASE") or os.environ.get("ADMIN_API_BASE")
-                        or "http://127.0.0.1:8421")
+PG_REASON = devenv.SKIP_REASON
+TEST_DATABASE_URL = os.environ.get("REWARD_TEST_DATABASE_URL") or (
+    devenv.pg_dsn("reward") if devenv.pg_ready() else "")
+HAVE_DB = bool(TEST_DATABASE_URL)
 
-# Nguyên văn `admin_manager/admin-server/db.py::_PG_DDL` — fixture DÀNH RIÊNG CHO TEST, không phải sửa
-# admin_manager. Nếu DDL thật đổi mà quên đồng bộ ở đây, test migrate/idempotent vẫn tự phát hiện lệch
-# qua bước so sánh `information_schema` trước/sau.
-ADMIN_PG_DDL = """
-CREATE TABLE IF NOT EXISTS invite_keys (
-    key         text PRIMARY KEY,
-    role        text NOT NULL DEFAULT 'viewer',
-    label       text NOT NULL DEFAULT '',
-    max_uses    integer NOT NULL DEFAULT 1,
-    used_count  integer NOT NULL DEFAULT 0,
-    created_at  text NOT NULL,
-    expires_at  text NOT NULL DEFAULT '',
-    status      text NOT NULL DEFAULT 'active'
-);
-
-CREATE TABLE IF NOT EXISTS accounts (
-    id              text PRIMARY KEY,
-    username        text NOT NULL UNIQUE,
-    email           text NOT NULL UNIQUE,
-    password_hash   text NOT NULL,
-    role            text NOT NULL DEFAULT 'viewer',
-    invite_key      text NOT NULL,
-    email_verified  boolean NOT NULL DEFAULT false,
-    verify_token    text NOT NULL DEFAULT '',
-    verify_token_at text NOT NULL DEFAULT '',
-    reset_token     text NOT NULL DEFAULT '',
-    reset_token_at  text NOT NULL DEFAULT '',
-    created_at      text NOT NULL,
-    last_login      text NOT NULL DEFAULT '',
-    status          text NOT NULL DEFAULT 'pending'
-);
-
-CREATE TABLE IF NOT EXISTS refresh_tokens (
-    token       text PRIMARY KEY,
-    account_id  text NOT NULL,
-    created_at  text NOT NULL,
-    expires_at  text NOT NULL,
-    revoked     boolean NOT NULL DEFAULT false
-);
-"""
+REWARD_TABLES = (
+    "reward_distributions", "reward_job_events", "reward_runner_lock", "reward_user_map", "reward_role_audit",
+    "reward_jobs", "reward_discord_credentials", "reward_discord_tokens",
+    "account_denylist", "account_projection", "processed_events", "dead_letters", "feed_cursor",
+)
 
 
 def _set_test_env() -> None:
-    os.environ["JWT_SECRET"] = TEST_JWT_SECRET
-    os.environ["DATABASE_URL"] = TEST_DATABASE_URL
-    os.environ["ADMIN_API_BASE"] = TEST_ADMIN_API_BASE
+    # Biến cũ KHÔNG còn ý nghĩa — gỡ để chắc chắn không có đường nào còn đọc chúng.
+    os.environ.pop("JWT_SECRET", None)
+    os.environ.pop("ADMIN_API_BASE", None)
+    os.environ.pop("DATABASE_URL", None)
+    os.environ["REWARD_DATABASE_URL"] = TEST_DATABASE_URL or "postgresql://reward_svc@127.0.0.1:1/reward_db"
     os.environ.setdefault("REWARD_TOKEN_KEY", Fernet.generate_key().decode())
     os.environ["REWARD_PORT"] = "8422"
     os.environ["REWARD_DB_MIGRATE_ON_BOOT"] = "1"
     os.environ["REWARD_CORS_ORIGINS"] = "http://localhost:5175"
+    # Giá trị tạm để `import main` (tạo `app` cấp module) không lỗi; fixture `app_client` đặt lại theo fake Identity.
+    os.environ["REWARD_IDENTITY_URL"] = "http://127.0.0.1:9"
+    os.environ["REWARD_ISSUER"] = ISSUER
+    os.environ["REWARD_AUDIENCE"] = AUDIENCE
+    os.environ.pop("REWARD_IDENTITY_FEED_KEY", None)
+    os.environ.pop("REWARD_IDENTITY_FEED_URL", None)
+    os.environ.pop("REWARD_IDENTITY_JWKS_URL", None)
 
 
 _set_test_env()
 
 
+def pytest_collection_modifyitems(config, items):
+    if HAVE_DB:
+        return
+    skip = pytest.mark.skip(reason=PG_REASON)
+    for item in items:
+        fixtures = set(getattr(item, "fixturenames", ()))
+        if fixtures & {"db_conn", "pool", "client"}:
+            item.add_marker(skip)
+
+
+# ── Fake Identity ────────────────────────────────────────────────────────────────
+
+_CURRENT: dict[str, FakeIdentity] = {}
+
+
 @pytest_asyncio.fixture
-async def db_conn():
-    conn = await asyncpg.connect(TEST_DATABASE_URL)
-    await conn.execute(ADMIN_PG_DDL)
+async def identity():
+    fake = await start_fake_identity()
+    _CURRENT["identity"] = fake
     try:
-        yield conn
+        yield fake
     finally:
-        # Dọn dữ liệu reward_* + account/audit test tạo ra — KHÔNG DROP bảng (bảng thuộc "hạ tầng"
-        # fixture dùng chung). Thứ tự: distributions trước items (RESTRICT), rồi jobs (CASCADE
-        # items/attempts), rồi phần còn lại.
-        await conn.execute("DELETE FROM reward_distributions")
-        await conn.execute("DELETE FROM reward_job_events")
-        await conn.execute("DELETE FROM reward_runner_lock")
-        await conn.execute("DELETE FROM reward_user_map")
-        await conn.execute("DELETE FROM reward_role_audit")
-        await conn.execute("DELETE FROM reward_jobs")
-        await conn.execute("DELETE FROM reward_discord_credentials")
-        await conn.execute("DELETE FROM reward_discord_tokens")
-        await conn.execute("DELETE FROM accounts")
-        await conn.close()
+        _CURRENT.pop("identity", None)
+        await fake.stop()
 
 
-def make_account_row(*, role: str, status: str = "active", username: str | None = None) -> dict:
-    account_id = uuid.uuid4().hex
-    username = username or f"user_{account_id[:8]}"
-    return {
-        "id": account_id,
-        "username": username,
-        "email": f"{username}@example.test",
-        "password_hash": "x",
-        "role": role,
-        "invite_key": "TEST-0000",
-        "created_at": "2026-01-01T00:00:00+00:00",
-        "status": status,
-    }
+def _identity() -> FakeIdentity:
+    try:
+        return _CURRENT["identity"]
+    except KeyError:
+        raise RuntimeError("Test cần fixture `identity` (fake Identity) trước khi tạo tài khoản") from None
 
 
-async def insert_account(conn: asyncpg.Connection, **kwargs) -> dict:
-    row = make_account_row(**kwargs)
-    await conn.execute(
-        "INSERT INTO accounts (id, username, email, password_hash, role, invite_key, created_at, status) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-        row["id"], row["username"], row["email"], row["password_hash"], row["role"],
-        row["invite_key"], row["created_at"], row["status"])
-    return row
+async def insert_account(_conn=None, *, role: str, status: str = "active", username: str | None = None,
+                         perms: tuple[str, ...] = ()) -> dict:
+    """Tạo tài khoản TRÊN FAKE IDENTITY (không có bảng accounts). Tham số đầu giữ cho tương thích chữ ký cũ."""
+    user = _identity().add_user(role=role, status=status, username=username, perms=perms)
+    return {"id": user["id"], "username": user["username"], "role": role, "status": status}
 
 
-
-async def seed_active_account_with_credential(
-    conn: asyncpg.Connection, *, role: str = "discord", credential_status: str = "valid",
-) -> str:
-    """Chèn 1 account active + 1 `reward_discord_credentials` `status='valid'` — dùng cho test gọi
-    `JobRunner.run()` trực tiếp (bắt buộc từ khi thêm kiểm T2 mỗi vòng lặp, C.5 #2). Token do test tự
-    dựng (`TokenPool`). Trả `account_id`."""
-    row = await insert_account(conn, role=role, status="active")
-    await conn.execute(
-        "INSERT INTO reward_discord_credentials (account_id, status) VALUES ($1, $2)",
-        row["id"], credential_status,
-    )
-    return row["id"]
-
-def sign_token(account: dict, *, secret: str = TEST_JWT_SECRET, ttl_s: int = 900, role: str | None = None) -> str:
-    """Ký JWT y hệt payload `admin_manager/admin-server/auth.py:_create_access_token`."""
-    now = int(time.time())
-    payload = {
-        "sub": account["id"],
-        "username": account["username"],
-        "role": role if role is not None else account["role"],
-        "exp": now + ttl_s,
-        "iat": now,
-    }
-    return jwt.encode(payload, secret, algorithm="HS256")
+def sign_token(account: dict, *, ttl_s: int = 900, role: str | None = None, **over) -> str:
+    """Access token RS256 THẬT do fake Identity ký (đủ claim như Identity: iss/aud/sub/role/perms/sid/jti/iat/nbf/exp)."""
+    ident = _identity()
+    user = ident.users[account["id"]]
+    if role is not None:
+        over["role"] = role
+    return ident.token(user, ttl=ttl_s, **over)
 
 
 @pytest.fixture
@@ -175,13 +126,29 @@ def bearer():
     return _bearer
 
 
+# ── Database ─────────────────────────────────────────────────────────────────────
+
+@pytest_asyncio.fixture
+async def db_conn():
+    boot = Pool(TEST_DATABASE_URL)
+    await boot.open()
+    try:
+        await store_migrate.run(boot)
+    finally:
+        await boot.close()
+    conn = await asyncpg.connect(TEST_DATABASE_URL)
+    try:
+        yield conn
+    finally:
+        # Dọn dữ liệu test tạo ra — KHÔNG DROP bảng. distributions trước items (RESTRICT), jobs CASCADE items/attempts.
+        for table in REWARD_TABLES:
+            await conn.execute(f"DELETE FROM {table}")
+        await conn.close()
+
+
 @pytest_asyncio.fixture
 async def pool(db_conn):
-    """`Pool` đã mở + migrate — dùng cho test engine (`job_runner`, `recovery`, repositories).
-
-    Phụ thuộc `db_conn` để đảm bảo DDL admin_manager tồn tại VÀ để tái sử dụng logic dọn dẹp chung
-    (fixture `db_conn` dọn `reward_*`/`accounts` sau khi `pool` đã đóng, vì Python teardown chạy theo
-    thứ tự ngược của yêu cầu fixture)."""
+    """`Pool` đã mở + migrate — dùng cho test engine (`job_runner`, `recovery`, repositories)."""
     p = Pool(TEST_DATABASE_URL)
     await p.open()
     await store_migrate.run(p)
@@ -189,6 +156,69 @@ async def pool(db_conn):
         yield p
     finally:
         await p.close()
+
+
+# ── App ──────────────────────────────────────────────────────────────────────────
+
+def configure_identity_env(ident: FakeIdentity, *, feed: str = "off", poll_interval: str = "0.1", **env: str) -> None:
+    os.environ["REWARD_IDENTITY_URL"] = ident.base_url
+    os.environ["REWARD_ISSUER"] = ISSUER
+    os.environ["REWARD_AUDIENCE"] = AUDIENCE
+    os.environ["REWARD_IDENTITY_TIMEOUT_S"] = "2"
+    os.environ["REWARD_IDENTITY_RETRIES"] = "1"
+    os.environ["REWARD_IDENTITY_BACKOFF_S"] = "0.01"
+    if feed == "auto":  # consumer chạy nền thật
+        os.environ["REWARD_IDENTITY_FEED_KEY"] = ident.feed_key
+        os.environ["REWARD_FEED_POLL_INTERVAL_S"] = poll_interval
+        os.environ["REWARD_FEED_EVENT_BACKOFF_S"] = "0.01"
+    else:  # test tự điều khiển consumer bằng `make_consumer`
+        os.environ.pop("REWARD_IDENTITY_FEED_KEY", None)
+    for key, value in env.items():
+        os.environ[key] = value
+
+
+@asynccontextmanager
+async def app_client(ident: FakeIdentity, *, feed: str = "off", poll_interval: str = "0.1", **env: str):
+    """ASGI client tới app reward (đã reload với env mới) + lifespan thật. Trả `(client)`; app ở `client.app_`."""
+    configure_identity_env(ident, feed=feed, poll_interval=poll_interval, **env)
+    import main as main_module
+    importlib.reload(main_module)
+    app = main_module.app
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        async with app.router.lifespan_context(app):
+            ac.app_ = app  # type: ignore[attr-defined]
+            yield ac
+
+
+def make_consumer(client, ident: FakeIdentity, *, max_attempts: int = 3, **kw):
+    """Consumer điều khiển tay (poll_once) dùng chung pool + WorkerManager của app đang chạy."""
+    from manager_sdk import FeedClient
+    from identity_link.consumer import FeedConsumer
+    app = client.app_
+    feed = FeedClient(ident.base_url, ident.feed_key, timeout=2, retries=kw.pop("retries", 0), backoff_base=0.01)
+    on_pause = kw.pop("on_pause", app.state.worker_manager.pause_account_jobs)
+    return FeedConsumer(pool=app.state.pool, feed=feed, on_pause=on_pause, max_attempts=max_attempts,
+                        backoff_base=0.01, **kw)
+
+
+@pytest_asyncio.fixture
+async def client(db_conn, identity):
+    """Client mặc định (không consumer nền). Test cần Discord giả/biến khác tự định nghĩa lại `client` bằng `app_client`."""
+    async with app_client(identity) as ac:
+        yield ac
+
+
+async def seed_active_account_with_credential(
+    conn: asyncpg.Connection, *, role: str = "discord", credential_status: str = "valid",
+) -> str:
+    """Chèn 1 `reward_discord_credentials` `status='valid'` cho một account_id mới — dùng cho test gọi
+    `JobRunner.run()` trực tiếp. Không còn bảng accounts: quyền chạy do denylist cục bộ quyết định (mặc định không
+    bị chặn). `role` giữ cho tương thích chữ ký cũ. Trả `account_id`."""
+    account_id = uuid.uuid4().hex
+    await conn.execute(
+        "INSERT INTO reward_discord_credentials (account_id, status) VALUES ($1, $2)", account_id, credential_status)
+    return account_id
 
 
 async def seed_job(
@@ -230,3 +260,7 @@ async def seed_job(
             job_id, i, r["raw_username"], normalized, r["point"], r.get("status", "pending"), key,
         )
     return job_id
+
+
+def random_secret() -> str:
+    return secrets.token_urlsafe(24)

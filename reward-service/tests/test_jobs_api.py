@@ -6,16 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import httpx
 import pytest
 
-from tests.conftest import insert_account, sign_token
+from tests.conftest import app_client, insert_account, sign_token
 from tests.harness.fake_discord import start_fake
 
 RECIPIENT = "685096940144295977"
@@ -33,26 +31,20 @@ async def fake():
 
 
 @pytest.fixture
-async def client(db_conn, fake):
-    os.environ["REWARD_API_BASE"] = fake.api_base
-    os.environ["REWARD_GATEWAY_URL"] = fake.gateway_url
-    os.environ["REWARD_HTTP_TIMEOUT_S"] = "2"
-    os.environ["REWARD_CONFIRM_TIMEOUT_S"] = "1"
-    os.environ["REWARD_CONFIRM_POLL_INTERVAL_S"] = "0.05"
-    os.environ["REWARD_MAX_CONCURRENT_JOBS"] = "3"
-    os.environ["REWARD_RECONCILE_GRACE_S"] = "0"
-    import importlib
-    import main as main_module
-    importlib.reload(main_module)
-    app = main_module.app
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        async with app.router.lifespan_context(app):
-            yield ac
+async def client(db_conn, identity, fake):
+    env = {
+        "REWARD_API_BASE": fake.api_base, "REWARD_GATEWAY_URL": fake.gateway_url, "REWARD_HTTP_TIMEOUT_S": "2",
+        "REWARD_CONFIRM_TIMEOUT_S": "1", "REWARD_CONFIRM_POLL_INTERVAL_S": "0.05",
+        "REWARD_MAX_CONCURRENT_JOBS": "3", "REWARD_RECONCILE_GRACE_S": "0",
+    }
+    async with app_client(identity, **env) as ac:
+        yield ac
 
 
-async def _setup_credential(client, db_conn, fake, *, channel: str, role: str = "discord") -> tuple[dict, str, dict]:
-    account = await insert_account(db_conn, role=role)
+async def _setup_credential(
+    client, db_conn, fake, *, channel: str, role: str = "discord", perms: tuple[str, ...] = (),
+) -> tuple[dict, str, dict]:
+    account = await insert_account(db_conn, role=role, perms=perms)
     token = sign_token(account)
     headers = {"Authorization": f"Bearer {token}"}
     resp = await client.put(
@@ -232,7 +224,10 @@ async def test_two_accounts_use_their_own_token(client, db_conn, fake):
 
 async def test_revoke_discord_while_running_pauses_job(client, db_conn, fake):
     fake.interaction_plan = None
-    account, _, headers = await _setup_credential(client, db_conn, fake, channel="888888888888888881")
+    # Hợp đồng đổi (Phase 4): quyền reward là permission `reward:access` do Identity cấp riêng; thu quyền = DELETE
+    # permission đó (tài khoản role=discord legacy được Identity ngầm cho quyền nên không thu bằng cách này).
+    account, _, headers = await _setup_credential(
+        client, db_conn, fake, channel="888888888888888881", role="viewer", perms=("reward:access",))
     admin = await insert_account(db_conn, role="admin")
     admin_token = sign_token(admin)
 
@@ -253,10 +248,14 @@ async def test_revoke_discord_while_running_pauses_job(client, db_conn, fake):
         headers={"Authorization": f"Bearer {admin_token}"}, json={})
     assert revoke_resp.status_code == 200, revoke_resp.text
 
-    final = await _poll_job(client, headers, job_id, statuses=("paused",), timeout_s=10.0)
+    # Hợp đồng đổi (Phase 4): tài khoản vừa bị thu quyền bị denylist chặn NGAY cả khi token còn hạn (kể cả đọc) →
+    # theo dõi job bằng token admin (admin thấy mọi job) thay vì token của chính người bị thu quyền.
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    assert (await client.get(f"/v1/reward/jobs/{job_id}", headers=headers)).status_code == 403
+    final = await _poll_job(client, admin_headers, job_id, statuses=("paused",), timeout_s=10.0)
     assert final["status"] == "paused"
 
-    items = (await client.get(f"/v1/reward/jobs/{job_id}/items", headers=headers)).json()["items"]
+    items = (await client.get(f"/v1/reward/jobs/{job_id}/items", headers=admin_headers)).json()["items"]
     statuses = [i["status"] for i in items]
     assert "pending" in statuses  # item còn lại KHÔNG bị xử lý tiếp sau khi role bị thu
 

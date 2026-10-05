@@ -8,7 +8,7 @@ const root = resolve(__dirname, "../..");
 describe("không có secret trong mã nguồn / bundle", () => {
   it("công cụ quét BẮT được các mẫu bí mật (test của test)", () => {
     expect(scanText("const k='mpk_abcdefghij12.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'")).toContain("machine-api-key");
-    expect(scanText("-----BEGIN RSA PRIVATE KEY-----")).toContain("private-key-block");
+    expect(scanText("-----BEGIN RSA " + "PRIVATE KEY-----")).toContain("private-key-block");
     expect(scanText("JWT_SECRET = 'super-secret-value-123'")).toContain("secret-assignment");
     expect(scanText('{"CLIENT_SECRET":"abcdefghijkl"}')).toContain("secret-assignment");
     expect(scanText("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1MSIsInJvbGUiOiJhIn0.c2lnbmF0dXJlLXZhbHVl")).toContain("jwt-literal");

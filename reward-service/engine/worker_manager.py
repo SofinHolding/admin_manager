@@ -36,6 +36,7 @@ from store.repositories import credentials as credentials_repo
 from store.repositories import events as events_repo
 from store.repositories import jobs as jobs_repo
 from store.repositories import lock as lock_repo
+from store.repositories import projection as projection_repo
 from store.repositories import tokens as tokens_repo
 
 logger = logging.getLogger("reward.engine.worker_manager")
@@ -59,10 +60,11 @@ class CommandNotFoundError(Exception):
 
 
 class _RunningJob:
-    __slots__ = ("task", "runner", "http_client", "tokens", "started_at")
+    __slots__ = ("task", "runner", "http_client", "tokens", "started_at", "account_id")
 
     def __init__(self, *, task: asyncio.Task, runner: JobRunner,
-                 http_client: DiscordHttpClient, tokens: TokenPool, started_at: float) -> None:
+                 http_client: DiscordHttpClient, tokens: TokenPool, started_at: float, account_id: str = "") -> None:
+        self.account_id = account_id
         self.task = task
         self.runner = runner
         self.http_client = http_client
@@ -140,11 +142,9 @@ class WorkerManager:
                 job = await jobs_repo.get_job(conn, job_id)
                 if job is None:
                     raise CredentialInvalidError("Không tìm thấy job")
-                account = await conn.fetchrow(
-                    "SELECT role, status FROM accounts WHERE id=$1", job["account_id"])
-                if (account is None or account["status"] != "active"
-                        or account["role"] not in ("discord", "admin")):
-                    raise CredentialInvalidError("Tài khoản không còn đủ quyền chạy job (role/status)")
+                # Quyền do Identity quản lý; ở đây chỉ đối chiếu denylist CỤC BỘ (thu quyền/khoá/xoá) — không gọi Identity.
+                if await projection_repo.blanket_denial(conn, job["account_id"]):
+                    raise CredentialInvalidError("Tài khoản không còn đủ quyền chạy job (bị thu quyền/khoá)")
                 cred = await credentials_repo.get_by_account(conn, job["account_id"])
                 if cred is None or cred["status"] != "valid":
                     raise CredentialInvalidError("Cấu hình Discord chưa xác thực (status != 'valid')")
@@ -209,7 +209,7 @@ class WorkerManager:
 
             running = _RunningJob(
                 task=None, runner=runner, http_client=http_client, tokens=tokens,  # type: ignore[arg-type]
-                started_at=time.monotonic())
+                started_at=time.monotonic(), account_id=job["account_id"])
 
             async def _run() -> None:
                 try:
@@ -272,6 +272,37 @@ class WorkerManager:
             return False
         running.runner.request_pause()
         return True
+
+    async def pause_account_jobs(self, account_id: str, reason: str) -> list[int]:
+        """Tạm dừng NGAY mọi job `running` của một tài khoản (khi Identity thu quyền/khoá/xoá/thu hồi phiên).
+
+        Job chạy trong tiến trình này: `request_pause` — runner dừng trước khi claim item kế tiếp, không gửi thêm
+        item nào, job → `paused` (item còn lại giữ pending). Job `running` trong DB nhưng không có task ở tiến trình
+        này (mồ côi) được đặt `paused` và nhả lock. Idempotent. Trả danh sách job_id bị tạm dừng."""
+        paused: list[int] = []
+        for job_id, running in list(self._running.items()):
+            if running.account_id == account_id:
+                running.runner.request_pause()
+                paused.append(job_id)
+        async with self._pool.acquire() as conn:
+            for job_id in paused:
+                await events_repo.add_event(
+                    conn, job_id=job_id, type="auto_pause", actor="system",
+                    payload={"reason": reason, "source": "identity"})
+            rows = await conn.fetch(
+                "SELECT id FROM reward_jobs WHERE account_id = $1 AND status IN ('running', 'stopping')", account_id)
+            for row in rows:
+                if row["id"] in self._running:
+                    continue
+                await jobs_repo.set_status(conn, row["id"], "paused")
+                await lock_repo.release(conn, job_id=row["id"])
+                await events_repo.add_event(
+                    conn, job_id=row["id"], type="auto_pause", actor="system",
+                    payload={"reason": reason, "source": "identity"})
+                paused.append(row["id"])
+        if paused:
+            logger.warning("[Reward] Tạm dừng %s job của tài khoản %s (%s)", len(paused), account_id, reason)
+        return paused
 
     async def wait_stopped(self, job_id: int, timeout_s: float = 30.0) -> None:
         running = self._running.get(job_id)

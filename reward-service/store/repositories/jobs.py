@@ -85,7 +85,7 @@ async def list_jobs(
         SELECT j.id, j.name, j.status, j.total_items, j.account_id, j.created_at, j.started_at,
                j.finished_at, a.username AS owner_username
         FROM reward_jobs j
-        LEFT JOIN accounts a ON a.id = j.account_id
+        LEFT JOIN account_projection a ON a.account_id = j.account_id
         {where}
         ORDER BY j.created_at DESC
         LIMIT ${len(params_page) - 1} OFFSET ${len(params_page)}
