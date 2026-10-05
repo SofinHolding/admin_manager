@@ -4,12 +4,14 @@ name: Deploy Reward Service lên VPS
 # UI discord đã gộp vào admin-web → phần frontend do deploy.yml (paths admin-web/**) lo;
 # workflow này CHỈ deploy backend reward-service. Paths filter reward-service/** đảm bảo
 # sửa backend reward KHÔNG restart admin-server và ngược lại.
+# TẠM TẮT trigger tự động trong giai đoạn tái cấu trúc microservices (nhánh refactor/microservices).
+# Bật lại khi hoàn thiện (Phase 6): khôi phục khối `push` bên dưới.
+#   push:
+#     branches: [main]
+#     paths:
+#       - "reward-service/**"
+#       - ".github/workflows/deploy-reward.yml"
 on:
-  push:
-    branches: [main]
-    paths:
-      - "reward-service/**"
-      - ".github/workflows/deploy-reward.yml"
   workflow_dispatch:
 
 env:

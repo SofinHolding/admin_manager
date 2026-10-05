@@ -2,13 +2,15 @@ name: Deploy Admin lên VPS
 
 # Trigger khi push lên main — dù thay đổi ở server, web hay cả hai.
 # Không trigger khi chỉ sửa docs/README để tránh deploy thừa.
+# TẠM TẮT trigger tự động trong giai đoạn tái cấu trúc microservices (nhánh refactor/microservices).
+# Bật lại khi hoàn thiện (Phase 6): khôi phục khối `push` bên dưới.
+#   push:
+#     branches: [main]
+#     paths:
+#       - "admin-server/**"
+#       - "admin-web/**"
 on:
-  push:
-    branches: [main]
-    paths:
-      - "admin-server/**"
-      - "admin-web/**"
-  workflow_dispatch:   # Cho phép chạy tay từ tab Actions trên GitHub
+  workflow_dispatch:   # Chỉ chạy tay từ tab Actions trên GitHub
 
 env:
   DEPLOY_DIR: /srv/admin   # Thư mục deploy trên VPS (Contabo 169.58.232.253)
