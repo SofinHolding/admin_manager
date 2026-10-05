@@ -1,0 +1,23 @@
+{
+  "_comment": "Ánh xạ route LEGACY → service đích (Strangler). Khớp theo tiền tố, quy tắc cụ thể hơn đứng trước. Test tests/arch/test_route_map.py bảo đảm MỌI route legacy (docs/api/legacy/*.openapi.json) đều có đúng một đích. Chưa phải cấu hình nginx; việc dựng gateway là Phase 1.0 và cần duyệt riêng.",
+  "contract_negotiation": {
+    "header": "X-Contract-Version",
+    "default_when_absent": "legacy",
+    "new_contract": "2026-10-01"
+  },
+  "rules": [
+    {"legacy_prefix": "/v1/admin/keys", "target": "identity-service", "note": "invite key"},
+    {"legacy_prefix": "/v1/admin/users", "target": "identity-service", "note": "quản trị user"},
+    {"legacy_prefix": "/v1/admin/cache", "target": "analytics-service", "note": "flush cache dashboard"},
+    {"legacy_prefix": "/v1/admin/country-canonicals", "target": "analytics-service"},
+    {"legacy_prefix": "/v1/admin/country-aliases", "target": "analytics-service"},
+    {"legacy_prefix": "/v1/auth", "target": "identity-service"},
+    {"legacy_prefix": "/v1/viewer/links", "target": "integration-service", "note": "pairing legacy, deprecated"},
+    {"legacy_prefix": "/v1/viewer/groups", "target": "analytics-service", "note": "nhóm kênh = cấu hình dashboard"},
+    {"legacy_prefix": "/v1/viewer", "target": "analytics-service"},
+    {"legacy_prefix": "/v1/resources", "target": "integration-service"},
+    {"legacy_prefix": "/v1/ops", "target": "integration-service"},
+    {"legacy_prefix": "/v1/reward", "target": "reward-service"},
+    {"legacy_prefix": "/v1/health", "target": "gateway"}
+  ]
+}

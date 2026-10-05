@@ -1,0 +1,547 @@
+{
+  "info": {
+    "title": "Legacy admin-server (baseline)",
+    "source": "git tag legacy-baseline",
+    "note": "Xuất tự động từ FastAPI; dùng làm mốc characterization, không phải contract đích"
+  },
+  "paths": {
+    "/v1/admin/cache/flush": {
+      "post": {
+        "summary": "Xoá cache Redis — ép tổng hợp lại từ PostgreSQL",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/country-aliases": {
+      "get": {
+        "summary": "Danh sách chuẩn hoá quốc gia (alias → tên chuẩn)",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "summary": "Thêm/sửa 1 dòng chuẩn hoá quốc gia",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/country-aliases/{alias}": {
+      "delete": {
+        "summary": "Xoá 1 dòng chuẩn hoá quốc gia",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/country-canonicals": {
+      "get": {
+        "summary": "Danh sách tên quốc gia chuẩn",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "summary": "Tạo tên quốc gia chuẩn mới",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/country-canonicals/{name}": {
+      "patch": {
+        "summary": "Đổi tên 1 tên quốc gia chuẩn",
+        "tags": [
+          "admin"
+        ]
+      },
+      "delete": {
+        "summary": "Xoá 1 tên quốc gia chuẩn",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/keys": {
+      "post": {
+        "summary": "Tạo invite key mới",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "summary": "Danh sách invite keys",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/keys/{key}": {
+      "delete": {
+        "summary": "Thu hồi invite key",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/users": {
+      "get": {
+        "summary": "Danh sách tài khoản",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/users/{user_id}": {
+      "patch": {
+        "summary": "Admin chỉnh sửa thông tin user",
+        "tags": [
+          "admin"
+        ]
+      },
+      "delete": {
+        "summary": "Xoá tài khoản",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/users/{user_id}/status": {
+      "patch": {
+        "summary": "Khoá / mở khoá tài khoản",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/auth/change-password": {
+      "post": {
+        "summary": "Xác thực mã 6 số + đặt mật khẩu mới — bước 2",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/change-password/send-code": {
+      "post": {
+        "summary": "Gửi mã xác thực 6 số về email — bước 1 đổi mật khẩu",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/check-email": {
+      "post": {
+        "summary": "Email đã đăng ký chưa",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/check-username": {
+      "post": {
+        "summary": "Username đã có ai dùng chưa",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/forgot-password": {
+      "post": {
+        "summary": "Gửi email đặt lại mật khẩu",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/login": {
+      "post": {
+        "summary": "Đăng nhập bằng username + password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/logout": {
+      "post": {
+        "summary": "Đăng xuất — thu hồi refresh token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/me": {
+      "get": {
+        "summary": "Thông tin người dùng hiện tại",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/profile": {
+      "patch": {
+        "summary": "User tự cập nhật hồ sơ (email, username)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/refresh": {
+      "post": {
+        "summary": "Đổi refresh token lấy access token mới",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/register": {
+      "post": {
+        "summary": "Đăng ký tài khoản mới bằng invite key",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/resend-verify": {
+      "post": {
+        "summary": "Gửi lại email xác thực",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/reset-password": {
+      "post": {
+        "summary": "Đặt lại mật khẩu bằng token từ email",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/validate-key": {
+      "post": {
+        "summary": "Kiểm tra invite key hợp lệ không",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/verify-email": {
+      "get": {
+        "summary": "Xác thực email (click link từ email)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/ops/batches": {
+      "post": {
+        "summary": "Tạo batch mới — 1 batch nên cùng 1 platform",
+        "tags": [
+          "ops"
+        ]
+      },
+      "get": {
+        "summary": "Danh sách batch",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/batches/{batch_id}": {
+      "get": {
+        "summary": "Chi tiết batch + toàn bộ item",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/batches/{batch_id}/items": {
+      "post": {
+        "summary": "Thêm resource vào Run Queue — resource không thoả điều kiện bị SKIP kèm lý do",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/inventory": {
+      "get": {
+        "summary": "Toàn bộ resource user đã khai báo — filter được",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/inventory/revision": {
+      "get": {
+        "summary": "Revision inventory — Tool B so sánh để biết có cần tải lại không",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/items/{item_id}/cancel": {
+      "patch": {
+        "summary": "Huỷ 1 item trong queue",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/platform-policies": {
+      "get": {
+        "summary": "Danh sách policy platform",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/platform-policies/{platform}": {
+      "patch": {
+        "summary": "Sửa policy platform (chỉ admin)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/platforms": {
+      "get": {
+        "summary": "Danh sách platform + policy hiện tại",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/resources/{resource_id}/execution-mode": {
+      "patch": {
+        "summary": "Đổi execution_mode của 1 resource (chỉ admin, có audit log)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/sources": {
+      "get": {
+        "summary": "Toàn bộ Source của mọi user",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/ops/users": {
+      "get": {
+        "summary": "Danh sách user đang có resource (cho filter dropdown)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/v1/resources": {
+      "get": {
+        "summary": "Danh sách resource của chính mình — filter được",
+        "tags": [
+          "resources"
+        ]
+      },
+      "post": {
+        "summary": "Nhập 1 resource (page/channel/profile) vào 1 Source",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
+    "/v1/resources/import": {
+      "post": {
+        "summary": "Nhập resource hàng loạt — mỗi dòng 1 URL/username/ID",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
+    "/v1/resources/platforms": {
+      "get": {
+        "summary": "Danh sách platform user được phép nhập trên website",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
+    "/v1/resources/sources": {
+      "get": {
+        "summary": "Danh sách Source của chính mình",
+        "tags": [
+          "resources"
+        ]
+      },
+      "post": {
+        "summary": "Tạo Source mới — namespace nghiệp vụ, vd 'Facebook / ITL'",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
+    "/v1/resources/sources/{source_id}": {
+      "patch": {
+        "summary": "Sửa tên/metadata Source",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
+    "/v1/resources/{resource_id}": {
+      "patch": {
+        "summary": "Sửa thông tin hiển thị resource (KHÔNG đổi execution_mode)",
+        "tags": [
+          "resources"
+        ]
+      },
+      "delete": {
+        "summary": "Xoá resource",
+        "tags": [
+          "resources"
+        ]
+      }
+    },
+    "/v1/viewer/channel-breakdown": {
+      "get": {
+        "summary": "Kênh/page theo platform + chủ đề (group) + quốc gia — KHÔNG đụng stats_core.py",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/v1/viewer/country-tags": {
+      "get": {
+        "summary": "Danh sách quốc gia từ dữ liệu",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/v1/viewer/groups": {
+      "post": {
+        "summary": "Tạo group kênh mới",
+        "tags": [
+          "groups"
+        ]
+      },
+      "get": {
+        "summary": "Danh sách group — của chính mình, hoặc của account chỉ định nếu admin/dash_admin",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/groups/{group_id}": {
+      "patch": {
+        "summary": "Đổi tên group",
+        "tags": [
+          "groups"
+        ]
+      },
+      "delete": {
+        "summary": "Xoá group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/groups/{group_id}/members": {
+      "post": {
+        "summary": "Thêm/cập nhật kênh vào group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/groups/{group_id}/members/{channel_ref}": {
+      "delete": {
+        "summary": "Gỡ kênh khỏi group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/links": {
+      "get": {
+        "summary": "Danh sách Tool đã liên kết với account hiện tại",
+        "tags": [
+          "links"
+        ]
+      }
+    },
+    "/v1/viewer/links/code": {
+      "post": {
+        "summary": "Tạo mã liên kết Tool mới (TTL 15 phút)",
+        "tags": [
+          "links"
+        ]
+      }
+    },
+    "/v1/viewer/links/redeem": {
+      "post": {
+        "summary": "Tool đổi mã lấy liên kết (public — không cần JWT dashboard)",
+        "tags": [
+          "links"
+        ]
+      }
+    },
+    "/v1/viewer/links/{tool_user_id}": {
+      "delete": {
+        "summary": "Gỡ liên kết",
+        "tags": [
+          "links"
+        ]
+      }
+    },
+    "/v1/viewer/metrics": {
+      "get": {
+        "summary": "Danh sách metric khả dụng",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/v1/viewer/platform-tags": {
+      "get": {
+        "summary": "Danh sách nhãn nền tảng đã gắn (tự do, từ Nhóm kênh)",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/v1/viewer/summary": {
+      "get": {
+        "summary": "KPI tổng hợp — shape AnalyticsSummary",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/v1/viewer/top-channels": {
+      "get": {
+        "summary": "Top kênh/page theo views",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/v1/viewer/traffic": {
+      "get": {
+        "summary": "Traffic theo chỉ số — shape TrafficMetricSeries",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/v1/viewer/views-by-country": {
+      "get": {
+        "summary": "Views theo quốc gia/ngày — shape CountryViewsSeries",
+        "tags": [
+          "viewer"
+        ]
+      }
+    }
+  }
+}
