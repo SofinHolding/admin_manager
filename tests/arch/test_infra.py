@@ -84,6 +84,28 @@ def test_port_check_is_exact_not_substring():
     assert [int(m) for m in re.findall(r'"127\.0\.0\.1:(\d+):\d+"', '["127.0.0.1:55432:5432"]')] == [55432]
 
 
+def test_compose_names_every_resource_explicitly_with_project_prefix():
+    """Tên tường minh có tiền tố riêng: không thể trùng/ghi đè container, volume, network của project khác."""
+    containers = re.findall(r"container_name:\s*(\S+)", COMPOSE)
+    assert len(containers) == len(re.findall(r"^  (?:postgres|redis):", COMPOSE, re.M)) >= 2
+    assert all(c.startswith("mp-dev-") for c in containers), containers
+    explicit = re.findall(r"^    name:\s*(\S+)", COMPOSE, re.M)
+    assert explicit and all(n.startswith("mp_dev_") for n in explicit), explicit
+    declared = set(re.findall(r"^  (mp_dev_\w+):", COMPOSE, re.M))
+    assert declared == set(explicit), "volume/network khai báo mà thiếu `name:` tường minh"
+
+
+def test_compose_never_attaches_to_external_resources():
+    assert "external:" not in COMPOSE, "không được dùng volume/network của project khác"
+    assert "network_mode" not in COMPOSE
+
+
+def test_redis_acl_file_has_no_comments_or_blank_directives():
+    """Redis từ chối khởi động nếu file ACL có dòng không bắt đầu bằng `user` (kể cả chú thích #)."""
+    lines = [ln for ln in ACL.splitlines() if ln.strip()]
+    assert lines and all(ln.startswith("user ") for ln in lines), lines
+
+
 def test_compose_mounts_isolation_config():
     assert "./initdb:/docker-entrypoint-initdb.d" in COMPOSE
     assert "--aclfile" in COMPOSE
@@ -118,3 +140,33 @@ def test_service_role_cannot_connect_to_another_services_database():
     for svc in REGISTRY["services"].values():
         if svc["database"] != "identity_db":
             assert asyncio.run(attempt("identity_svc", svc["database"])) == "denied", svc["database"]
+
+
+REDIS_REASON = ("cần Redis đã khởi tạo bằng infra/docker (docker compose up). "
+                "Đặt TEST_REDIS_HOST/TEST_REDIS_PORT để chạy. KHÔNG được coi là đã kiểm chứng khi SKIP.")
+
+
+@pytest.mark.skipif(not os.environ.get("TEST_REDIS_HOST"), reason=REDIS_REASON)
+def test_redis_acl_enforces_prefix_and_blocks_dangerous_commands():
+    """Redis thật: analytics chỉ chạm key `analytics:*`, không FLUSHALL/KEYS, user `default` bị tắt."""
+    import redis
+
+    host, port = os.environ["TEST_REDIS_HOST"], int(os.environ.get("TEST_REDIS_PORT", "6379"))
+    ok = redis.Redis(host=host, port=port, username="analytics_cache",
+                     password="dev_analytics_change_me", decode_responses=True, socket_timeout=3)
+    assert ok.ping()
+    assert ok.set("analytics:acl-test", "1", ex=30)
+    assert ok.get("analytics:acl-test") == "1"
+    assert ok.incr("analytics:acl-seal") >= 1  # seal phiên bản cho cache-aside
+    ok.delete("analytics:acl-test", "analytics:acl-seal")
+
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        ok.set("identity:forbidden", "x")  # key ngoài prefix của service
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        ok.flushall()
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        ok.keys("*")
+
+    anon = redis.Redis(host=host, port=port, decode_responses=True, socket_timeout=3)
+    with pytest.raises(redis.exceptions.AuthenticationError):
+        anon.ping()  # user default đã tắt

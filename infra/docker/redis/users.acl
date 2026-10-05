@@ -1,5 +1,2 @@
-# ACL Redis: cache THUẦN, mỗi service chỉ chạm key có prefix của mình. CHỈ DÙNG CHO DEV.
-# Giai đoạn đầu chỉ analytics-service bật cache (quyết định D14). Thêm user khi service khác bật cache,
-# đồng thời thêm module `cache` vào registry (test_infra.py kiểm tra hai bên khớp nhau).
 user default off
 user analytics_cache on >dev_analytics_change_me ~analytics:* &analytics:* +@read +@write +@keyspace +@connection -@dangerous

@@ -90,6 +90,9 @@ python infra/scripts/test_all.py --fast     # bỏ test tiến trình thật (~2
 python infra/scripts/test_all.py --legacy   # thêm test admin-server cũ
 ```
 
+- Hạ tầng dev riêng (Postgres `127.0.0.1:55440`, Redis `127.0.0.1:56390`, tên `mp-dev-*`): xem `infra/docker/README.md`.
+  Bật: `docker compose -f infra/docker/compose.dev.yml up -d`. Test cần hạ tầng đặt `TEST_PG_HOST`, `TEST_PG_PORT`,
+  `TEST_REDIS_HOST`, `TEST_REDIS_PORT`. **Không bao giờ** dùng, sửa hay xóa container/volume/cổng của project khác trên máy.
 - Mỗi service chạy pytest **riêng** (`cd services/<s> && python -m pytest -q`), không gộp một lần.
 - Mỗi thay đổi hành vi phải có test; mỗi quy tắc kiến trúc phải có "test của test" (ca giả lập vi phạm).
 - **SKIP không phải là PASS.** Test cần Postgres/Redis (`requires_postgres`) phải báo SKIP rõ lý do và không được tính là đã kiểm chứng.
