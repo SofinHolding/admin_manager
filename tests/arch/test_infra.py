@@ -107,12 +107,12 @@ def test_redis_acl_file_has_no_comments_or_blank_directives():
 
 
 def test_container_files_are_pinned_to_lf():
-    """Git trên Windows có thể đổi sang CRLF; Redis từ chối file ACL có ."""
+    """Git tren Windows co the doi sang CRLF; Redis tu choi file ACL co ky tu CR."""
     attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8")
     for pattern in ("*.acl text eol=lf", "*.sql text eol=lf", "Dockerfile text eol=lf"):
         assert pattern in attrs, pattern
     acl_bytes = (ROOT / "infra" / "docker" / "redis" / "users.acl").read_bytes()
-    assert b"" not in acl_bytes
+    assert b'\r' not in acl_bytes
 
 
 def test_compose_mounts_isolation_config():
