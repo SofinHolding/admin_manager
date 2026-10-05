@@ -63,6 +63,27 @@ def test_redis_users_are_prefix_scoped_and_match_cache_services():
         assert "-@dangerous" in line, f"{user} còn lệnh nguy hiểm (FLUSHALL, KEYS...)"
 
 
+def test_compose_has_unique_project_name():
+    """Không có `name:` riêng thì Compose dùng tên thư mục (`docker`) và có thể ghi đè container của
+    project khác trùng tên service (đã xảy ra với `redis` của RAGFlow)."""
+    m = re.search(r"^name:\s*(\S+)", COMPOSE, re.M)
+    assert m, "compose.dev.yml thiếu `name:` riêng"
+    assert m.group(1) not in {"docker", "compose", "infra", "default"}, m.group(1)
+    assert m.group(1).startswith("manager-platform")
+
+
+def test_compose_host_ports_are_not_common_defaults():
+    """Cổng host mặc định (5432, 6379...) dễ đụng dịch vụ đang chạy sẵn trên máy dev."""
+    defaults = {5432, 6379, 3306, 9200, 3000, 8000, 8080}
+    host_ports = [int(m) for m in re.findall(r'"127\.0\.0\.1:(\d+):\d+"', COMPOSE)]
+    assert host_ports, "không đọc được cổng host (đổi định dạng?)"
+    assert not set(host_ports) & defaults, host_ports
+
+
+def test_port_check_is_exact_not_substring():
+    assert [int(m) for m in re.findall(r'"127\.0\.0\.1:(\d+):\d+"', '["127.0.0.1:55432:5432"]')] == [55432]
+
+
 def test_compose_mounts_isolation_config():
     assert "./initdb:/docker-entrypoint-initdb.d" in COMPOSE
     assert "--aclfile" in COMPOSE

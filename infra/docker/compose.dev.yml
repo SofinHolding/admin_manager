@@ -1,6 +1,11 @@
 # Hạ tầng dữ liệu cho dev: Postgres (DB + user riêng từng service) và Redis (ACL theo service).
 # Chưa gồm các service ứng dụng: ảnh Docker của service chưa được build/kiểm chứng ở bước scaffold.
 #   docker compose -f infra/docker/compose.dev.yml up -d
+#
+# BẮT BUỘC có `name:` riêng. Nếu thiếu, Compose lấy tên thư mục (`docker`) làm tên project và sẽ
+# GHI ĐÈ container cùng tên service của project khác (từng xảy ra: thay mất container `redis` của RAGFlow).
+name: manager-platform-dev
+
 services:
   postgres:
     image: postgres:16-alpine
