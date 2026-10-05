@@ -37,8 +37,8 @@ def pytest_collection_modifyitems(config, items):
 def stack():
     from dev_stack import DevStack
     s = DevStack()
+    s.reset_data()  # DB DEV riêng: dựng lại từ số 0 (khoá ký cũ mã hoá bằng khoá khác sẽ không giải mã được)
     s.migrate_all()
-    s.reset_data(("identity", "integration", "analytics"))  # DB DEV riêng: bắt đầu sạch (khoá ký cũ mã hoá bằng khoá khác sẽ không giải mã được)
     # reward tự migrate khi khởi động (REWARD_DB_MIGRATE_ON_BOOT=1)
     for name in ("identity", "integration", "analytics", "reward", "gateway"):
         s.start(name)
@@ -130,3 +130,76 @@ def wait_for(fn, *, timeout: float = 30.0, interval: float = 0.5, what: str = "�
             pass
         time.sleep(interval)
     raise AssertionError(f"quá hạn chờ {what} ({timeout}s); giá trị cuối: {last!r}")
+
+
+# ── Mock Tool X: một Tool HOÀN TOÀN MỚI (tên, nền tảng) — Manager không có dòng code nào biết nó ─────────────────────
+
+import datetime as dt  # noqa: E402
+
+from manager_sdk.integration_client import IntegrationClient  # noqa: E402
+
+TOOL_NAME = "Mock Tool X"
+TOOL_PLATFORM = "toolx_social"
+
+
+def now_z() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def day(days_ago: int = 1) -> str:
+    return (dt.date.today() - dt.timedelta(days=days_ago)).isoformat()
+
+
+class ToolX:
+    """Tool ngoài dùng SDK chính thức qua gateway; chỉ biết base URL + API key."""
+
+    def __init__(self, base_url: str, api_key: str) -> None:
+        self.base_url, self.api_key = base_url, api_key
+
+    def run(self, coro_fn):
+        async def go():
+            client = IntegrationClient(self.base_url, self.api_key, retries=1, backoff_base=0.05, timeout=10)
+            try:
+                return await coro_fn(client)
+            finally:
+                await client.aclose()
+        return asyncio.run(go())
+
+    def handshake(self):
+        return self.run(lambda c: c.handshake(device_id="toolx-dev-1", hostname="toolx-host", os_name="windows",
+                                              app_version="1.0", tool_name=TOOL_NAME, platforms=[TOOL_PLATFORM],
+                                              capabilities=["snapshots.push"]))
+
+    def push(self, *, resources=(), content=(), metrics=(), events=(), snapshot_type="full", scope=None):
+        ts = now_z()
+        scope = scope if scope is not None else ({"resources": True} if snapshot_type == "full" else None)
+        res = [{"resource_type": "channel", "state": "active", "observed_at": ts, **r} for r in resources]
+        con = [{"observed_at": ts, **c} for c in content]
+        met = [{"observed_at": ts, **m} for m in metrics]
+        return self.run(lambda c: c.push_snapshot(platform=TOOL_PLATFORM, observed_at=ts, report_timezone="UTC",
+                                                  snapshot_type=snapshot_type, scope=scope, resources=res, content=con,
+                                                  metrics=met, events=list(events)))
+
+
+@pytest.fixture(scope="session")
+def world(stack, api):
+    """Admin + chủ Tool đã đăng ký (kèm integration) + Mock Tool X có API key. Mọi thứ đi qua API công khai."""
+    admin = api.user("e2eadmin", api.seed_invite_key(role="admin"))
+    r = api.http.put(f"/v1/integrations/admin/platforms/{TOOL_PLATFORM}", headers=admin["headers"],
+                     json={"display_name": "Tool X Social"})  # DỮ LIỆU registry, không phải code
+    assert r.status_code == 200, r.text
+    r = api.http.post("/v1/admin/keys", headers=admin["headers"], json={
+        "role": "viewer", "max_uses": 3,
+        "integration_policy": {"allow_integration_registration": True, "allowed_platforms": [TOOL_PLATFORM],
+                               "max_integration_clients": 2}})
+    assert r.status_code == 200, r.text
+    key = r.json()["key"]
+    owner = api.user("e2eowner", key, integration={"create": True, "tool_name": TOOL_NAME, "platforms": [TOOL_PLATFORM]})
+    clients = wait_for(lambda: api.http.get("/v1/integrations/clients", headers=owner["headers"]).json()["data"],
+                       what="Integration client được provisioning từ feed của Identity")
+    cid = clients[0]["client_id"]
+    r = api.http.post(f"/v1/integrations/clients/{cid}/credentials", headers=owner["headers"], json={})
+    assert r.status_code == 201, r.text
+    other = api.user("e2eother", api.seed_invite_key(role="viewer"))  # người dùng khác: không được thấy dữ liệu của owner
+    return {"admin": admin, "owner": owner, "other": other, "client_id": cid, "client": clients[0],
+            "tool": ToolX(stack.url("gateway"), r.json()["data"]["api_key"])}

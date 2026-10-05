@@ -121,8 +121,9 @@ class DevStack:
             self.migrate(n)
 
     def reset_data(self, names: tuple[str, ...] = MIGRATABLE + ("reward",)) -> None:
-        """Xoá DỮ LIỆU (giữ schema + schema_migrations) trong DB DEV của từng service để E2E bắt đầu sạch.
+        """Dựng lại DB DEV của từng service từ số 0: xoá MỌI đối tượng do user của service sở hữu, rồi gọi `migrate_all()`.
 
+        (Không TRUNCATE: dữ liệu seed của migration như Platform/Metric Registry và catalog permission phải được dựng lại.)
         Chỉ chạm DB `<service>_db` bằng chính user của service (không có đường sang DB khác)."""
         import asyncio
 
@@ -131,10 +132,7 @@ class DevStack:
         async def run(svc: str) -> None:
             conn = await asyncpg.connect(devenv.pg_dsn(svc))
             try:
-                tables = [r["tablename"] for r in await conn.fetch(
-                    "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> 'schema_migrations'")]
-                if tables:
-                    await conn.execute("TRUNCATE " + ", ".join(f'"{t}"' for t in tables) + " RESTART IDENTITY CASCADE")
+                await conn.execute(f"DROP OWNED BY {svc}_svc CASCADE")
             finally:
                 await conn.close()
 
