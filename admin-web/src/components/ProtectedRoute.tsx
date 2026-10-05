@@ -5,7 +5,7 @@ import { SessionExpired } from "./SessionExpired";
 import { Skeleton } from "./ui/skeleton";
 
 export function ProtectedRoute() {
-  const { user, loading, sessionExpired, showWarning, warningSeconds, continueSession, logout, dismissExpired } = useAuth();
+  const { user, loading, sessionExpired, sessionReason, showWarning, warningSeconds, continueSession, logout, dismissExpired } = useAuth();
 
   if (loading) {
     return (
@@ -28,7 +28,7 @@ export function ProtectedRoute() {
       {showWarning && (
         <SessionWarning seconds={warningSeconds} onContinue={continueSession} onLogout={logout} />
       )}
-      {sessionExpired && <SessionExpired onLogin={dismissExpired} />}
+      {sessionExpired && <SessionExpired onLogin={dismissExpired} reason={sessionReason} />}
     </>
   );
 }

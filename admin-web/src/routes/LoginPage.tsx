@@ -8,7 +8,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 
 export default function LoginPage() {
-  const { login, user } = useAuth();
+  const { login, user, mode, loginWithOidc } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
 
@@ -40,6 +40,44 @@ export default function LoginPage() {
   }, [user, navigate]);
 
   if (user) return null;
+
+  // Chế độ OIDC (VITE_AUTH_MODE=oidc): đăng nhập qua Identity bằng Authorization Code + PKCE.
+  if (mode === "oidc") {
+    const startSso = async () => {
+      setLoading(true);
+      try {
+        await loginWithOidc("/dashboard");
+      } catch (err) {
+        toast.error((err as Error).message);
+        setLoading(false);
+      }
+    };
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="w-full max-w-[400px]">
+          <div className="mb-8 text-center">
+            <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-xl bg-primary/15">
+              <BarChart3 className="size-6 text-primary-text" />
+            </div>
+            <h1 className="text-xl font-semibold">Đăng nhập</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Xem thống kê và biểu đồ dữ liệu</p>
+          </div>
+          <div className="glass rounded-xl p-6">
+            <Button size="lg" className="w-full" onClick={startSso} disabled={loading}>
+              {loading && <Loader2 className="size-4 animate-spin" />}
+              Đăng nhập với Manager SSO
+            </Button>
+          </div>
+          <div className="mt-4 text-center text-sm text-muted-foreground">
+            Chưa có tài khoản?{" "}
+            <Link to="/register" className="font-medium text-primary-text hover:underline">
+              Đăng ký bằng mã mời
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,7 +150,7 @@ export default function LoginPage() {
                   onChange={(e) => setRemember(e.target.checked)}
                   className="rounded accent-primary"
                 />
-                Ghi nhớ đăng nhập
+                <span title="Giữ phiên khi tải lại trang (chỉ trong tab này, xoá khi đóng tab)">Ghi nhớ đăng nhập</span>
               </label>
               <Link to="/reset-password" className="text-sm text-primary-text hover:underline">
                 Quên mật khẩu?

@@ -55,7 +55,7 @@ export function useJobStream(jobId: string | undefined): JobStreamState {
     mode: "connecting",
   });
   const abortRef = useRef<AbortController | null>(null);
-  const pollTimerRef = useRef<number | undefined>(undefined);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const stoppedRef = useRef(false);
 
   useEffect(() => {

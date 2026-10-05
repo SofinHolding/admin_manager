@@ -1,6 +1,7 @@
 /**
- * Trang quản trị — tạo invite key (kèm vai trò Discord), quản lý tài khoản (lọc theo vai trò,
- * cấp/thu quyền Discord), job toàn hệ thống, khoá kênh, nhật ký đổi role.
+ * Trang quản trị — tạo invite key (kèm chính sách tích hợp Tool + allowed_apps), quản lý tài khoản (lọc theo
+ * vai trò, cấp/thu permission qua Identity), job toàn hệ thống, khoá kênh, nhật ký đổi role (3 tab Reward cần
+ * permission `reward:admin`).
  *
  * Chỉ admin (role='admin') mới vào được. Viewer bị chặn ở ProtectedRoute hoặc API trả 403.
  * Key tạo ra luôn single-use (max_uses=1) và hết hạn sau 7 ngày — đây là constraint cố định,
@@ -12,14 +13,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  Bot, Check, Copy, Globe, History, Key, ListChecks, Pencil, Plus, RefreshCw, ShieldCheck,
-  Trash2, Unlock, UserX, UserCheck, X,
+  Check, Copy, Globe, History, Key, ListChecks, Pencil, Plus, RefreshCw, ShieldCheck,
+  Trash2, Unlock, UserX, UserCheck, X, ShieldPlus,
 } from "lucide-react";
 import { adminApi, type InviteKey, type Account, type CountryAlias, type CountryCanonical } from "../api";
 import {
   adminApi as rewardAdminApi, type JobSummary, type RoleAuditEntry, type RunnerLock,
 } from "../reward/api";
 import { Button } from "../components/ui/button";
+import { PermissionsDialog } from "../components/PermissionsDialog";
+import { useAuth } from "../auth";
+import { PERM_REWARD_ADMIN } from "../auth/permissions";
+import { buildKeyExtra, DEFAULT_POLICY_SCOPES, POLICY_SCOPE_OPTIONS } from "./adminKeyForm";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
@@ -60,6 +65,8 @@ function userStatusBadge(s: string) {
 // ── Component chính ─────────────────────────────────────────────────────────
 
 export default function AdminPage() {
+  const { hasPerm } = useAuth();
+  const rewardAdmin = hasPerm(PERM_REWARD_ADMIN);
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-bold">Quản trị hệ thống</h1>
@@ -67,16 +74,16 @@ export default function AdminPage() {
         <TabsList className="w-full max-w-3xl">
           <TabsTrigger value="keys"><Key className="mr-1.5 size-4" /> Mã mời</TabsTrigger>
           <TabsTrigger value="users"><ShieldCheck className="mr-1.5 size-4" /> Tài khoản</TabsTrigger>
-          <TabsTrigger value="jobs"><ListChecks className="mr-1.5 size-4" /> Job toàn hệ thống</TabsTrigger>
-          <TabsTrigger value="locks"><Unlock className="mr-1.5 size-4" /> Khoá kênh</TabsTrigger>
-          <TabsTrigger value="audit"><History className="mr-1.5 size-4" /> Nhật ký role</TabsTrigger>
+          {rewardAdmin && <TabsTrigger value="jobs"><ListChecks className="mr-1.5 size-4" /> Job toàn hệ thống</TabsTrigger>}
+          {rewardAdmin && <TabsTrigger value="locks"><Unlock className="mr-1.5 size-4" /> Khoá kênh</TabsTrigger>}
+          {rewardAdmin && <TabsTrigger value="audit"><History className="mr-1.5 size-4" /> Nhật ký role</TabsTrigger>}
           <TabsTrigger value="countries"><Globe className="mr-1.5 size-4" /> Chuẩn hoá quốc gia</TabsTrigger>
         </TabsList>
         <TabsContent value="keys"><InviteKeysTab /></TabsContent>
         <TabsContent value="users"><AccountsTab /></TabsContent>
-        <TabsContent value="jobs"><SystemJobsTab /></TabsContent>
-        <TabsContent value="locks"><LocksTab /></TabsContent>
-        <TabsContent value="audit"><AuditTab /></TabsContent>
+        {rewardAdmin && <TabsContent value="jobs"><SystemJobsTab /></TabsContent>}
+        {rewardAdmin && <TabsContent value="locks"><LocksTab /></TabsContent>}
+        {rewardAdmin && <TabsContent value="audit"><AuditTab /></TabsContent>}
         <TabsContent value="countries"><CountryAliasesTab /></TabsContent>
       </Tabs>
     </div>
@@ -91,6 +98,13 @@ function InviteKeysTab() {
   const [creating, setCreating] = useState(false);
   const [role, setRole] = useState("viewer");
   const [label, setLabel] = useState("");
+  // Chính sách tích hợp Tool + app được phép (tuỳ chọn)
+  const [showPolicy, setShowPolicy] = useState(false);
+  const [allowIntegration, setAllowIntegration] = useState(false);
+  const [platforms, setPlatforms] = useState("facebook, youtube");
+  const [scopes, setScopes] = useState<string[]>([...DEFAULT_POLICY_SCOPES]);
+  const [maxClients, setMaxClients] = useState("1");
+  const [apps, setApps] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,9 +121,11 @@ function InviteKeysTab() {
   useEffect(() => { load(); }, [load]);
 
   const handleCreate = async () => {
+    const built = buildKeyExtra({ allowIntegration, platforms, scopes, maxClients, apps });
+    if (!built.ok) { toast.error(built.error); return; }
     setCreating(true);
     try {
-      const newKey = await adminApi.createKey(role, label.trim());
+      const newKey = await adminApi.createKey(role, label.trim(), 1, 7, built.extra);
       setKeys((prev) => [newKey, ...prev]);
       setLabel("");
       toast.success(`Đã tạo key: ${newKey.key}`);
@@ -191,6 +207,59 @@ function InviteKeysTab() {
         <p className="mt-2 text-xs text-muted-foreground">
           Key chỉ dùng được <strong>1 lần</strong> và <strong>hết hạn sau 7 ngày</strong>.
         </p>
+
+        <button type="button" onClick={() => setShowPolicy((v) => !v)}
+                aria-expanded={showPolicy}
+                className="mt-3 text-xs font-medium text-primary-text hover:underline">
+          {showPolicy ? "Ẩn" : "Hiện"} tuỳ chọn nâng cao: đăng ký kèm Tool &amp; app được phép
+        </button>
+        {showPolicy && (
+          <div className="mt-3 space-y-3 rounded-lg border border-border p-3" data-testid="policy-form">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="rounded accent-primary" checked={allowIntegration}
+                     onChange={(e) => setAllowIntegration(e.target.checked)} />
+              Cho phép người dùng đăng ký kèm Tool (allow_integration_registration)
+            </label>
+            {allowIntegration && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="pol-platforms" className="mb-1 block text-xs text-muted-foreground">
+                    Nền tảng cho phép (allowed_platforms, cách nhau bằng dấu phẩy)
+                  </label>
+                  <input id="pol-platforms" className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
+                         value={platforms} onChange={(e) => setPlatforms(e.target.value)} />
+                </div>
+                <div>
+                  <label htmlFor="pol-max" className="mb-1 block text-xs text-muted-foreground">
+                    Số client tối đa (max_integration_clients)
+                  </label>
+                  <input id="pol-max" type="number" min={1} max={100}
+                         className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
+                         value={maxClients} onChange={(e) => setMaxClients(e.target.value)} />
+                </div>
+                <fieldset className="sm:col-span-2">
+                  <legend className="mb-1 text-xs text-muted-foreground">Scope cho phép (allowed_scopes)</legend>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    {POLICY_SCOPE_OPTIONS.map((sc) => (
+                      <label key={sc} className="flex items-center gap-1.5 font-mono text-xs">
+                        <input type="checkbox" className="rounded accent-primary" checked={scopes.includes(sc)}
+                               onChange={(e) => setScopes((cur) => e.target.checked ? [...cur, sc] : cur.filter((x) => x !== sc))} />
+                        {sc}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              </div>
+            )}
+            <div>
+              <label htmlFor="pol-apps" className="mb-1 block text-xs text-muted-foreground">
+                App được phép (allowed_apps, cách nhau bằng dấu phẩy) — key chỉ cấp quyền <code>&lt;app&gt;:access</code> cho app đó
+              </label>
+              <input id="pol-apps" className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
+                     placeholder="vd: reward" value={apps} onChange={(e) => setApps(e.target.value)} />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Danh sách keys */}
@@ -238,7 +307,15 @@ function InviteKeysTab() {
                         </button>
                       </td>
                       <td className="px-4 py-2.5 capitalize">{k.role}</td>
-                      <td className="px-4 py-2.5 text-muted-foreground">{k.label || "—"}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {k.label || "—"}
+                        {k.integration_policy?.allow_integration_registration && (
+                          <span className="ml-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary-text">Tool</span>
+                        )}
+                        {k.allowed_apps?.length ? (
+                          <span className="ml-1.5 rounded bg-elev-2 px-1.5 py-0.5 text-[10px]">apps: {k.allowed_apps.join(", ")}</span>
+                        ) : null}
+                      </td>
                       <td className={`px-4 py-2.5 font-medium ${st.cls}`}>{st.text}</td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDate(k.expires_at)}</td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDate(k.created_at)}</td>
@@ -276,6 +353,7 @@ function AccountsTab() {
   const [editData, setEditData] = useState({ username: "", email: "", role: "" });
   const [saving, setSaving] = useState(false);
   const [roleFilter, setRoleFilter] = useState("all");
+  const [permTarget, setPermTarget] = useState<Account | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -347,25 +425,6 @@ function AccountsTab() {
       toast.success("Đã xoá tài khoản");
     } catch (e: any) {
       toast.error(e.message || "Xoá thất bại");
-    }
-  };
-
-  // Cấp/thu hồi quyền discord — đi qua reward-service (admin-server chỉ nhận viewer|admin nên
-  // KHÔNG thể set role='discord' qua API của nó; reward-service UPDATE trực tiếp accounts.role).
-  const handleToggleDiscord = async (u: Account) => {
-    const granting = u.role !== "discord";
-    try {
-      if (granting) {
-        const r = await rewardAdminApi.grantDiscord(u.id);
-        setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, role: r.to_role } : x)));
-        toast.success(`Đã cấp quyền Discord cho ${u.username}`);
-      } else {
-        const r = await rewardAdminApi.revokeDiscord(u.id);
-        setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, role: r.to_role } : x)));
-        toast.success(`Đã thu hồi quyền Discord của ${u.username}`);
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Thao tác Discord thất bại");
     }
   };
 
@@ -453,6 +512,7 @@ function AccountsTab() {
                           onChange={(e) => setEditData({ ...editData, role: e.target.value })}
                         >
                           <option value="viewer">Viewer</option>
+                          <option value="dash_admin">Admin Dashboard (ADD)</option>
                           <option value="admin">Admin</option>
                         </select>
                       ) : u.role}
@@ -502,11 +562,12 @@ function AccountsTab() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleToggleDiscord(u)}
-                              title={u.role === "discord" ? "Thu hồi quyền Discord" : "Cấp quyền Discord"}
-                              className={u.role === "discord" ? "text-indigo-500 hover:text-indigo-600" : "text-muted-foreground hover:text-indigo-500"}
+                              onClick={() => setPermTarget(u)}
+                              title="Quản lý quyền (permission)"
+                              aria-label={`Quản lý quyền của ${u.username}`}
+                              className="text-indigo-500 hover:text-indigo-600"
                             >
-                              <Bot className="size-4" />
+                              <ShieldPlus className="size-4" />
                             </Button>
                             <Button
                               variant="ghost"
@@ -537,6 +598,7 @@ function AccountsTab() {
           </table>
         </div>
       )}
+      <PermissionsDialog account={permTarget} onClose={() => setPermTarget(null)} />
     </div>
   );
 }

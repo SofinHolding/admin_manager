@@ -1,14 +1,15 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3, Coins, Database, Link2, LogOut, Settings, User, Users } from "lucide-react";
+import { BarChart3, Coins, Database, KeyRound, Link2, LogOut, Settings, User, Users } from "lucide-react";
 import { useAuth } from "../auth";
 import { Button } from "./ui/button";
+import { PERM_REWARD_ACCESS } from "../auth/permissions";
 
 export function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, hasPerm } = useAuth();
   const role = user?.role;
-  const isTrueAdmin = role === "admin";
   const isDashRole = role === "admin" || role === "dash_admin";
-  const isDiscord = role === "discord";
+  // Reward: theo permission `reward:access` (claim perms) — role admin được coi là có mọi quyền, role discord là shim legacy.
+  const canReward = hasPerm(PERM_REWARD_ACCESS);
 
   const navLinkCls = ({ isActive }: { isActive: boolean }) =>
     `flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -35,6 +36,9 @@ export function Layout() {
                 <NavLink to="/resources" className={navLinkCls}>
                   <Database className="size-4" /> Nguồn &amp; Resource
                 </NavLink>
+                <NavLink to="/integrations" className={navLinkCls}>
+                  <KeyRound className="size-4" /> Tích hợp Tool
+                </NavLink>
               </>
             )}
             {isDashRole && (
@@ -42,7 +46,7 @@ export function Layout() {
                 <Settings className="size-4" /> Quản trị
               </NavLink>
             )}
-            {(isDiscord || isTrueAdmin) && (
+            {canReward && (
               <>
                 <NavLink to="/reward/credentials" className={navLinkCls}>
                   <Link2 className="size-4" /> Kết nối Discord

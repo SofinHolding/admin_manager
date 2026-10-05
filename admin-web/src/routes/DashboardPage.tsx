@@ -7,21 +7,21 @@ import {
   PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  viewerApi,
   adminApi,
+  analyticsApi,
   groupsApi,
   type Account,
   type AnalyticsMetric,
   type AnalyticsSummary,
+  type AppliedFilter,
   type ChannelBreakdown,
-  type CountryTag,
+  type CompareDimension,
+  type CompareItem,
   type CountryViewsSeries,
-  type ScopeOpts,
   type TopChannel,
   type TrafficMetricKey,
   type TrafficMetricPoint,
   type TrafficMetricSeries,
-  type ViewerGroup,
   type Platform,
 } from "../api";
 import { Button } from "../components/ui/button";
@@ -33,18 +33,16 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
 import { useAuth } from "../auth";
+import { FilterProvider, useFilterContext } from "../filters/FilterContext";
+import { countryCatalogParams, todayStr } from "../filters/filterState";
+import { useAnalyticsQuery } from "../filters/useAnalyticsQuery";
+import { mergeFreshness } from "../filters/freshness";
+import { FreshnessBanner, AnalyticsUnavailableBanner, AppliedFilterBar } from "../components/AnalyticsStatus";
+import { errorMessage } from "../lib/errors";
+import { COMMON_COMPARE_DIMENSIONS, type CommonCompareDimension } from "../filters/compareDimensions";
+import { safeHttpUrl } from "../lib/safeUrl";
 
 // ── Helpers (copy từ AnalyticsView — cùng logic, cùng output) ──────────────
-
-function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 
 const fmtNum = (n: number | null | undefined) =>
   n === null || n === undefined ? "–" : n.toLocaleString("vi-VN");
@@ -71,7 +69,7 @@ function fbLink(id: string): string | null {
   const kind = id.slice(0, sep);
   const fid  = id.slice(sep + 1);
   if (!fid || (kind !== "page" && kind !== "profile")) return null;
-  return `https://www.facebook.com/profile.php?id=${fid}`;
+  return safeHttpUrl(`https://www.facebook.com/profile.php?id=${encodeURIComponent(fid)}`);
 }
 
 function useThemeColors() {
@@ -173,147 +171,105 @@ function useLazyLoad(): [(el: HTMLDivElement | null) => void, boolean] {
 // ══════════════════════════════════════════════════════════════════════════════
 
 export default function DashboardPage() {
-  // Bộ lọc ngày + quốc gia
-  const [from, setFrom] = useState(daysAgo(29));
-  const [to, setTo] = useState(todayStr());
-  const [country, setCountry] = useState("");
-  const [draftFrom, setDraftFrom] = useState(from);
-  const [draftTo, setDraftTo] = useState(to);
-  const [draftCountry, setDraftCountry] = useState("");
+  return (
+    <FilterProvider>
+      <DashboardInner />
+    </FilterProvider>
+  );
+}
 
-  const [scope, setScope] = useState("");
-  const [topLimit, setTopLimit] = useState(15);
-  const [topTab, setTopTab] = useState<"rieng" | "chung">("rieng");
+/** Hai nền tảng gốc của Tool (giữ nguyên UX cũ). Nhãn tự do khác lấy từ `platform-tags` của server. */
+const BUILTIN_PLATFORMS = ["youtube", "facebook"];
 
+function DashboardInner() {
+  // MỘT nguồn sự thật cho bộ lọc: URL query <-> FilterContext. Không state lọc nào khác trong trang này
+  // (chỉ có bản nháp ngày/quốc gia cho tới khi bấm "Lọc", và `topLimit` không phải bộ lọc).
+  const { filter, key: filterKey, setFilter } = useFilterContext();
   const { user } = useAuth();
   const isDashRole = user?.role === "admin" || user?.role === "dash_admin";
+
+  const [draftFrom, setDraftFrom] = useState(filter.date_from);
+  const [draftTo, setDraftTo] = useState(filter.date_to);
+  const [draftCountry, setDraftCountry] = useState(filter.country);
+  useEffect(() => {
+    setDraftFrom(filter.date_from); setDraftTo(filter.date_to); setDraftCountry(filter.country);
+  }, [filter.date_from, filter.date_to, filter.country]);
+
+  const [topLimit, setTopLimit] = useState(15);
+  const [topTab, setTopTab] = useState<"rieng" | "chung">("rieng");
   const [reloadKey, setReloadKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Lọc theo nhân sự (chỉ admin/dash_admin) → nhóm kênh (phụ thuộc nhân sự đang chọn). Nền tảng
-  // dùng CHUNG 1 biến `scope` với ô chọn trong Traffic chart — KHÔNG còn 2 nút nền tảng tách rời.
-  const [selectedOwner, setSelectedOwner] = useState("");
-  const [selectedGroup, setSelectedGroup] = useState("");
-  const [viewerAccounts, setViewerAccounts] = useState<Account[]>([]);
-  const [groupsList, setGroupsList] = useState<ViewerGroup[]>([]);
-  const [platformTags, setPlatformTags] = useState<string[]>([]);
-  // Danh sách nền tảng hợp nhất cho dropdown/so sánh: 2 nền tảng GỐC (suy thẳng từ dữ liệu Tool,
-  // luôn có) + nhãn tự do đã gắn ở Nhóm kênh (lọc trùng nếu ai đó lỡ gắn nhãn "youtube"/"facebook").
-  const allPlatforms = useMemo(
-    () => ["youtube", "facebook", ...platformTags.filter((p) => p !== "youtube" && p !== "facebook")],
-    [platformTags],
-  );
-  const apiOpts: ScopeOpts = useMemo(
-    () => ({ owner_account_id: selectedOwner, group_id: selectedGroup, platform_tag: scope }),
-    [selectedOwner, selectedGroup, scope],
-  );
-
-  // Data
-  const [tags, setTags] = useState<CountryTag[]>([]);
-  const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
-  const [traffic, setTraffic] = useState<TrafficMetricSeries | null>(null);
-  const [byCountry, setByCountry] = useState<CountryViewsSeries | null>(null);
-  const [top, setTop] = useState<TopChannel[] | null>(null);
-  const [channelBreakdown, setChannelBreakdown] = useState<ChannelBreakdown | null>(null);
-  const [metricList, setMetricList] = useState<AnalyticsMetric[]>([]);
-
-  // Loading
-  const [lSummary, setLSummary] = useState(true);
-  const [lTraffic, setLTraffic] = useState(true);
-  const [lByCountry, setLByCountry] = useState(true);
-  const [lTop, setLTop] = useState(true);
-  const [lChannelBreakdown, setLChannelBreakdown] = useState(true);
-  const [error, setError] = useState("");
-
-  const [topRef, topVisible] = useLazyLoad();
-
-  const bao_loi = useCallback((e: unknown) => {
-    setError((e as Error).message);
-    toast.error(`Lỗi tải thống kê: ${(e as Error).message}`);
-  }, []);
+  // Nền tảng dùng CHUNG 1 ô chọn (trong Traffic chart) cho toàn trang: gốc -> `platform`, nhãn tự do -> `platform_tag`.
+  const scope = filter.platform || filter.platform_tag;
 
   // Danh sách nhân sự (role=viewer) — chỉ admin/dash_admin cần
+  const [viewerAccounts, setViewerAccounts] = useState<Account[]>([]);
   useEffect(() => {
     if (!isDashRole) return;
-    adminApi.listUsers()
+    const ctl = new AbortController();
+    adminApi.listUsers({ signal: ctl.signal })
       .then((d) => setViewerAccounts(d.users.filter((u) => u.role === "viewer")))
-      .catch(() => setViewerAccounts([]));
+      .catch(() => { if (!ctl.signal.aborted) setViewerAccounts([]); });
+    return () => ctl.abort();
   }, [isDashRole]);
 
-  // Danh sách nhóm kênh + nhãn nền tảng theo nhân sự đang chọn (hoặc của chính mình nếu viewer).
-  // admin/dash_admin CHƯA chọn nhân sự cụ thể → không có "chủ sở hữu" rõ ràng để gộp nhóm có ý
-  // nghĩa, để rỗng thay vì gộp lẫn của mọi người (nhãn nền tảng GỐC youtube/facebook vẫn dùng được
-  // bình thường vì không phụ thuộc nhân sự nào — chỉ nhãn TỰ DO mới cần biết chủ sở hữu).
-  useEffect(() => {
-    if (isDashRole && !selectedOwner) {
-      setGroupsList([]); setPlatformTags([]); setSelectedGroup("");
-      return;
-    }
-    groupsApi.list(selectedOwner).then((d) => setGroupsList(d.items)).catch(() => setGroupsList([]));
-    viewerApi.platformTags(selectedOwner).then((d) => setPlatformTags(d.items)).catch(() => setPlatformTags([]));
-    setSelectedGroup("");
-  }, [isDashRole, selectedOwner]);
+  // Nhóm kênh + nhãn nền tảng theo nhân sự đang chọn (viewer: của chính mình). admin/dash_admin CHƯA chọn
+  // nhân sự -> không có "chủ sở hữu" rõ ràng để gộp nên để rỗng.
+  const ownerKnown = !isDashRole || !!filter.owner_account_id;
+  const groupsQ = useAnalyticsQuery((signal) => groupsApi.list(filter.owner_account_id, { signal }),
+    [filter.owner_account_id], { enabled: ownerKnown });
+  const groupsList = ownerKnown ? groupsQ.data?.items ?? [] : [];
+  const platformTagsQ = useAnalyticsQuery((signal) => analyticsApi.platformTags(filter, { signal }),
+    [filter.owner_account_id, reloadKey], { enabled: ownerKnown });
+  const platformTags = ownerKnown ? platformTagsQ.data?.items ?? [] : [];
+  const allPlatforms = useMemo(
+    () => [...BUILTIN_PLATFORMS, ...platformTags.filter((p) => !BUILTIN_PLATFORMS.includes(p))],
+    [platformTags],
+  );
 
-  // Tải tags quốc gia từ data (thay cho CountryTagManager)
-  useEffect(() => {
-    viewerApi.countryTags(apiOpts).then((d) => setTags(d.items)).catch(() => setTags([]));
-  }, [apiOpts, reloadKey]);
-  useEffect(() => {
-    viewerApi.metrics().then((d) => setMetricList(d.metrics)).catch(() => setMetricList([]));
-  }, [reloadKey]);
+  // Danh mục lọc (không co theo chính ô đang chọn — xem filterState.ts)
+  const countryCatKey = countryCatalogParams(filter).toString();
+  const tagsQ = useAnalyticsQuery((signal) => analyticsApi.countryTags(filter, { signal }), [countryCatKey, reloadKey]);
+  const tags = tagsQ.data?.items ?? [];
+  const metricsQ = useAnalyticsQuery((signal) => analyticsApi.metrics({ signal }), [reloadKey]);
+  const metricList: AnalyticsMetric[] = metricsQ.data?.metrics ?? [];
 
-  // Summary
-  useEffect(() => {
-    setLSummary(true);
-    viewerApi.summary(from, to, country, apiOpts)
-      .then((d) => { setSummary(d); setError(""); })
-      .catch((e) => { setSummary(null); bao_loi(e); })
-      .finally(() => setLSummary(false));
-  }, [from, to, country, apiOpts, bao_loi, reloadKey]);
+  // ── DỮ LIỆU: mọi KPI/biểu đồ phụ thuộc CÙNG `filterKey` và gửi CÙNG bộ tham số ──────────────
+  const summaryQ = useAnalyticsQuery((signal) => analyticsApi.summary(filter, { signal }), [filterKey, reloadKey]);
+  const breakdownQ = useAnalyticsQuery((signal) => analyticsApi.channelBreakdown(filter, { signal }), [filterKey, reloadKey]);
+  const trafficQ = useAnalyticsQuery((signal) => analyticsApi.traffic(filter, { signal }), [filterKey, reloadKey]);
+  const byCountryQ = useAnalyticsQuery((signal) => analyticsApi.viewsByCountry(filter, { signal }), [filterKey, reloadKey]);
+  const topQ = useAnalyticsQuery((signal) => analyticsApi.topChannels(filter, topLimit, { signal }),
+    [filterKey, topLimit, reloadKey]);
 
-  // Kênh/page breakdown — KHÔNG phụ thuộc khoảng ngày (trạng thái hiện tại, giống
-  // managed_channels/active_channels cũ), chỉ phụ thuộc owner/platform/group đang lọc.
-  useEffect(() => {
-    setLChannelBreakdown(true);
-    viewerApi.channelBreakdown(apiOpts)
-      .then((d) => { setChannelBreakdown(d); setError(""); })
-      .catch((e) => { setChannelBreakdown(null); bao_loi(e); })
-      .finally(() => setLChannelBreakdown(false));
-  }, [apiOpts, bao_loi, reloadKey]);
+  const dataQueries = [summaryQ, breakdownQ, trafficQ, byCountryQ, topQ];
+  const unavailable = dataQueries.some((q) => q.unavailable);
+  const hasAnyData = dataQueries.some((q) => q.data !== null);
+  const hardError = dataQueries.find((q) => q.error && !q.unavailable)?.error ?? null;
+  const freshness = mergeFreshness(dataQueries.map((q) => q.data?.freshness));
+  const applied: AppliedFilter | undefined = dataQueries.map((q) => q.data?.filter).find((f) => !!f);
 
-  // Traffic — `scope` (nền tảng) nay đi qua `apiOpts.platform_tag`, không còn tham số riêng.
   useEffect(() => {
-    setLTraffic(true);
-    viewerApi.traffic(from, to, country, apiOpts)
-      .then((d) => { setTraffic(d); setError(""); })
-      .catch((e) => { setTraffic(null); bao_loi(e); })
-      .finally(() => setLTraffic(false));
-  }, [from, to, country, apiOpts, bao_loi, reloadKey]);
+    // Một toast duy nhất (id cố định) dù nhiều widget cùng lỗi
+    if (hardError) toast.error(`Lỗi tải thống kê: ${hardError.message}`, { id: "analytics-error" });
+  }, [hardError?.message]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Views by country
-  useEffect(() => {
-    setLByCountry(true);
-    viewerApi.viewsByCountry(from, to, apiOpts)
-      .then((d) => { setByCountry(d); setError(""); })
-      .catch((e) => { setByCountry(null); bao_loi(e); })
-      .finally(() => setLByCountry(false));
-  }, [from, to, apiOpts, bao_loi, reloadKey]);
+  const summary = summaryQ.data;
+  const top = topQ.data?.items ?? null;
 
-  // Top channels — KHÔNG lazy nữa: cần sẵn cho tab "Biểu đồ chung" (so sánh kênh) kể cả khi
-  // TopChannelsCard chưa lọt vào viewport.
-  useEffect(() => {
-    setLTop(true);
-    viewerApi.topChannels(from, to, country, topLimit, apiOpts)
-      .then((d) => { setTop(d.items); setError(""); })
-      .catch((e) => { setTop(null); bao_loi(e); })
-      .finally(() => setLTop(false));
-  }, [from, to, country, topLimit, apiOpts, bao_loi, reloadKey]);
-
-  const dirty = draftFrom !== from || draftTo !== to || draftCountry !== country;
+  const dirty = draftFrom !== filter.date_from || draftTo !== filter.date_to || draftCountry !== filter.country;
   const applyFilter = () => {
     if (!dirty) return;
     const [a, b] = draftFrom <= draftTo ? [draftFrom, draftTo] : [draftTo, draftFrom];
-    setDraftFrom(a); setDraftTo(b); setFrom(a); setTo(b); setCountry(draftCountry);
+    setDraftFrom(a); setDraftTo(b);
+    setFilter({ date_from: a, date_to: b, country: draftCountry });
+  };
+
+  const onScope = (v: string) => {
+    if (!v) setFilter({ platform: "", platform_tag: "" });
+    else if (BUILTIN_PLATFORMS.includes(v) && !platformTags.includes(v)) setFilter({ platform: v, platform_tag: "" });
+    else setFilter({ platform: "", platform_tag: v });
   };
 
   const lamMoi = async () => {
@@ -323,15 +279,14 @@ export default function DashboardPage() {
       setReloadKey((k) => k + 1);
       toast.success("Đã tổng hợp lại từ cơ sở dữ liệu.");
     } catch (e) {
-      toast.error(`Không làm mới được: ${(e as Error).message}`);
+      toast.error(`Không làm mới được: ${errorMessage(e)}`);
     } finally {
       setRefreshing(false);
     }
   };
 
-  // Nhóm kênh CHỈ hiện khi đã có "chủ sở hữu" rõ ràng (viewer = chính mình; admin/dash_admin =
-  // đã chọn 1 nhân sự cụ thể) VÀ người đó thật sự có nhóm — không dữ liệu thì không cần chiếm chỗ.
-  const showGroupFilter = (isDashRole ? !!selectedOwner : true) && groupsList.length > 0;
+  const [topRef] = useLazyLoad();
+  const showGroupFilter = ownerKnown && groupsList.length > 0;
 
   return (
     <div className="flex flex-col gap-3">
@@ -347,7 +302,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ═══ Filter bar — giống Electron ═══ */}
+      {/* ═══ Filter bar — mọi giá trị đi vào FilterContext ═══ */}
       <div className="glass flex flex-wrap items-center gap-3 rounded-xl px-4 py-3">
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Khoảng ngày</span>
         <DateInput value={draftFrom} max={draftTo} onChange={setDraftFrom} onEnter={applyFilter} />
@@ -367,8 +322,8 @@ export default function DashboardPage() {
 
         {/* Nhân sự ĐỨNG TRƯỚC nhóm kênh — chọn WHO trước rồi mới lọc theo group/nhãn của người đó */}
         {isDashRole && (
-          <Select value={selectedOwner || MOI_NHAN_SU}
-                  onValueChange={(v) => setSelectedOwner(v === MOI_NHAN_SU ? "" : v)}>
+          <Select value={filter.owner_account_id || MOI_NHAN_SU}
+                  onValueChange={(v) => setFilter({ owner_account_id: v === MOI_NHAN_SU ? "" : v, group_id: "" })}>
             <SelectTrigger className="h-8 w-48 text-xs">
               <SelectValue placeholder="Chọn nhân sự" />
             </SelectTrigger>
@@ -380,8 +335,8 @@ export default function DashboardPage() {
         )}
 
         {showGroupFilter && (
-          <Select value={selectedGroup || MOI_NHOM}
-                  onValueChange={(v) => setSelectedGroup(v === MOI_NHOM ? "" : v)}>
+          <Select value={filter.group_id || MOI_NHOM}
+                  onValueChange={(v) => setFilter({ group_id: v === MOI_NHOM ? "" : v })}>
             <SelectTrigger className="h-8 w-44 text-xs">
               <SelectValue placeholder="Mọi nhóm kênh" />
             </SelectTrigger>
@@ -391,9 +346,6 @@ export default function DashboardPage() {
             </SelectContent>
           </Select>
         )}
-
-        {/* Nền tảng KHÔNG còn Select riêng ở đây — hợp nhất vào 1 ô chọn duy nhất bên trong
-            Traffic chart (mục B) áp dụng cho toàn trang, tránh 2 nút nền tảng chồng chéo. */}
 
         <Button size="sm" variant={dirty ? "default" : "outline"} onClick={applyFilter} disabled={!dirty}>
           <Filter className="size-4" /> Lọc
@@ -408,15 +360,22 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {error && (
-        <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+      <AppliedFilterBar
+        applied={applied}
+        selfId={user?.id}
+        ownerName={(id) => viewerAccounts.find((a) => a.id === id)?.username}
+        groupName={(id) => groupsList.find((g) => g.id === id)?.name}
+      />
+
+      {unavailable && (
+        <AnalyticsUnavailableBanner hasData={hasAnyData} onRetry={() => setReloadKey((k) => k + 1)} />
+      )}
+      <FreshnessBanner freshness={freshness} />
+
+      {hardError && !unavailable && (
+        <div role="alert" className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <div>
-            <div className="font-medium">Không tải được số liệu — {error}</div>
-            <div className="text-xs opacity-80">
-              Nếu báo 404 hoặc "Not Found": backend đang chạy chưa có endpoint mới. Restart backend.
-            </div>
-          </div>
+          <div className="font-medium">Không tải được số liệu — {hardError.message}</div>
         </div>
       )}
 
@@ -428,28 +387,24 @@ export default function DashboardPage() {
         </TabsList>
 
         <TabsContent value="rieng" className="flex flex-col gap-3">
-          <SummaryStrip data={summary} loading={lSummary} breakdown={channelBreakdown}
-                       lBreakdown={lChannelBreakdown} country={country} />
-          <TrafficMetricChart data={traffic} loading={lTraffic} metrics={metricList}
-                              scope={scope} onScope={setScope} platformTags={allPlatforms} />
-          <CountryComparisonCard byCountry={byCountry} />
-          {country && (
-            <PlatformBreakdownCard from={from} to={to} country={country} apiOpts={apiOpts}
-                                   platformTags={allPlatforms} reloadKey={reloadKey} />
+          <SummaryStrip data={summary} loading={summaryQ.loading} breakdown={breakdownQ.data}
+                       lBreakdown={breakdownQ.loading} country={filter.country} />
+          <TrafficMetricChart data={trafficQ.data} loading={trafficQ.loading} metrics={metricList}
+                              scope={scope} onScope={onScope} platformTags={allPlatforms} />
+          <CountryComparisonCard byCountry={byCountryQ.data} />
+          {filter.country && (
+            <PlatformBreakdownCard country={filter.country} reloadKey={reloadKey} />
           )}
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             <div ref={topRef}>
-              <TopChannelsCard items={top} loading={lTop} country={country} limit={topLimit} onLimit={setTopLimit} />
+              <TopChannelsCard items={top} loading={topQ.loading} country={filter.country} limit={topLimit} onLimit={setTopLimit} />
             </div>
-            <CountryViewsCard data={byCountry} loading={lByCountry} country={country} />
+            <CountryViewsCard data={byCountryQ.data} loading={byCountryQ.loading} country={filter.country} />
           </div>
         </TabsContent>
 
         <TabsContent value="chung">
-          <ComparisonView from={from} to={to} country={country} apiOpts={apiOpts}
-                          isDashRole={isDashRole} viewerAccounts={viewerAccounts}
-                          groupsList={groupsList} platformTags={allPlatforms}
-                          topChannels={top} reloadKey={reloadKey} />
+          <ComparisonView isDashRole={isDashRole} reloadKey={reloadKey} />
         </TabsContent>
       </Tabs>
     </div>
@@ -486,10 +441,6 @@ function SummaryStrip({ data, loading, breakdown, lBreakdown, country }: {
   if (!data) return null;
 
   const perDay = data.days_in_range > 0 ? data.videos_posted / data.days_in_range : 0;
-  // Ngưỡng 2h: dưới đó coi là đồng bộ bình thường (Tool push định kỳ), trên đó cảnh báo số kênh
-  // có thể lệch Tool thật (mục 26 đặc tả — vấn đề VPS/Tool không đồng nhất).
-  const staleHours = data.last_synced_at
-    ? (Date.now() - new Date(data.last_synced_at).getTime()) / 3_600_000 : null;
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -502,14 +453,6 @@ function SummaryStrip({ data, loading, breakdown, lBreakdown, country }: {
         </KpiCard>
         <ChannelKpiCard breakdown={breakdown} loading={lBreakdown} country={country} />
       </div>
-      {staleHours !== null && staleHours > 2 && (
-        <p className="flex items-center gap-1 text-[11px] text-amber-600">
-          <AlertTriangle className="size-3" />
-          Dữ liệu đồng bộ lần cuối{" "}
-          {staleHours < 48 ? `${Math.round(staleHours)} giờ` : `${Math.round(staleHours / 24)} ngày`} trước
-          — số kênh/view có thể chưa khớp Tool mới nhất.
-        </p>
-      )}
     </div>
   );
 }
@@ -914,14 +857,12 @@ function CountryViewsCard({ data, loading, country }: {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// E — Biểu đồ chung (so sánh quốc gia/nền tảng/nhân sự/kênh/nhóm kênh)
+// E — Biểu đồ chung (so sánh nền tảng/nhân sự/kênh/nhóm kênh — KHÔNG gồm quốc gia)
 // ══════════════════════════════════════════════════════════════════════════════
 //
 // Giống hệt tính linh hoạt của "Biểu đồ riêng": mỗi lát cắt so sánh đều xem được ở 3 dạng — Cột/
-// Đường/Tròn — KHÔNG chỉ 1 dạng cố định. Bộ lọc quốc gia/nền tảng/nhân sự/nhóm ở filter bar phía
-// trên áp dụng CHUNG cho cả tab này (đã truyền qua `apiOpts`/`country`): chọn 1 nền tảng cụ thể →
-// mọi so sánh (kể cả so sánh quốc gia) tự thu hẹp về đúng nền tảng đó; chọn 1 quốc gia cụ thể →
-// mọi so sánh tự thu hẹp về đúng quốc gia đó — không cần thao tác gì thêm ở đây.
+// Đường/Tròn. Bộ lọc ở filter bar áp dụng CHUNG cho cả tab này qua FilterContext: chọn 1 nền tảng/quốc gia/
+// nhóm → mọi so sánh tự thu hẹp. So sánh QUỐC GIA không nằm ở đây (biểu đồ riêng, tab "Biểu đồ riêng").
 
 interface CompareSeries { key: string; name: string; total: number; days?: { date: string; value: number | null }[] }
 
@@ -1071,90 +1012,59 @@ function CountryComparisonCard({ byCountry }: { byCountry: CountryViewsSeries | 
   );
 }
 
-function ComparisonView({
-  from, to, country, apiOpts, isDashRole, viewerAccounts, groupsList, platformTags,
-  topChannels, reloadKey,
-}: {
-  from: string; to: string; country: string; apiOpts: ScopeOpts;
-  isDashRole: boolean; viewerAccounts: Account[]; groupsList: ViewerGroup[]; platformTags: string[];
-  topChannels: TopChannel[] | null; reloadKey: number;
+const toSeries = (items: CompareItem[]): CompareSeries[] =>
+  items.map((it) => ({ key: it.key, name: it.name, total: it.total, days: it.series }));
+
+/**
+ * Một thẻ so sánh = MỘT request `GET /v1/analytics/compare/{dimension}` với CHÍNH bộ lọc của FilterContext
+ * (không còn fan-out nhiều request traffic với tham số lệch nhau như bản cũ).
+ */
+function CompareCard({ dimension, title, subtitle, emptyText, reloadKey }: {
+  dimension: CommonCompareDimension; title: string; subtitle: string; emptyText: string; reloadKey: number;
 }) {
-  const [platformCompare, setPlatformCompare] = useState<CompareSeries[] | null>(null);
-  const [lPlatform, setLPlatform] = useState(true);
-  const [staffCompare, setStaffCompare] = useState<CompareSeries[] | null>(null);
-  const [lStaff, setLStaff] = useState(true);
-  const [groupCompare, setGroupCompare] = useState<CompareSeries[] | null>(null);
-  const [lGroup, setLGroup] = useState(true);
+  const { filter, key } = useFilterContext();
+  const q = useAnalyticsQuery(
+    (signal) => analyticsApi.compare(dimension as CompareDimension, filter, { signal }),
+    [dimension, key, reloadKey],
+  );
+  const series = q.data ? toSeries(q.data.items) : null;
+  const hasDays = !!series?.some((s) => s.days?.length);
+  const unavailableText = q.unavailable && !q.data ? "Dịch vụ thống kê không khả dụng." : null;
+  return (
+    <ComparisonChart title={title} subtitle={subtitle} series={series} loading={q.loading}
+      emptyText={unavailableText ?? (q.error && !q.data ? `Không tải được: ${q.error.message}` : emptyText)}
+      allowLine={hasDays} />
+  );
+}
 
-  // Dùng `traffic()` (không phải `summary()`) cho fan-out — trả CẢ tổng (`totals.views`) LẪN chuỗi
-  // theo ngày (`days[].views`) trong 1 lượt gọi, đủ dữ liệu cho cả 3 dạng Cột/Đường/Tròn.
+const COMPARE_META: Record<CommonCompareDimension, { title: string; subtitle: string; emptyText: string; dashOnly?: boolean }> = {
+  platform: {
+    title: "So sánh nền tảng", subtitle: "Theo nhãn nền tảng đã gắn ở trang Nhóm kênh",
+    emptyText: "Chưa gắn nhãn nền tảng nào cho kênh — vào Nhóm kênh để gắn.",
+  },
+  owner: {
+    title: "So sánh nhân sự", subtitle: "Tổng + xu hướng view của từng nhân sự",
+    emptyText: "Chưa có nhân sự (account viewer) nào.", dashOnly: true,
+  },
+  channel: {
+    title: "So sánh kênh", subtitle: "Cùng bộ lọc với Top kênh ở tab Biểu đồ riêng",
+    emptyText: "Chưa có kênh nào có view.",
+  },
+  group: {
+    title: "So sánh nhóm kênh", subtitle: "Tổng + xu hướng view của từng nhóm đã tạo",
+    emptyText: "Chưa tạo nhóm kênh nào.",
+  },
+};
 
-  // So sánh nền tảng — theo nhãn platform_tag đã gắn ở Nhóm kênh (KHÔNG phải phân loại tự động).
-  useEffect(() => {
-    if (!platformTags.length) { setPlatformCompare([]); setLPlatform(false); return; }
-    let cancelled = false;
-    setLPlatform(true);
-    Promise.all(platformTags.map((tag) =>
-      viewerApi.traffic(from, to, country, { ...apiOpts, platform_tag: tag })
-        .then((d) => ({ key: tag, name: tag, total: d.totals?.views || 0,
-                        days: d.days.map((p) => ({ date: p.date, value: p.views })) }))
-        .catch(() => ({ key: tag, name: tag, total: 0, days: [] })),
-    )).then((rows) => { if (!cancelled) setPlatformCompare(rows); })
-      .finally(() => { if (!cancelled) setLPlatform(false); });
-    return () => { cancelled = true; };
-  }, [platformTags, from, to, country, apiOpts, reloadKey]);
-
-  // So sánh nhân sự — chỉ admin/dash_admin, đè `owner_account_id` lên apiOpts hiện tại (giữ nguyên
-  // bộ lọc nhóm/nền tảng/quốc gia nếu có, để so sánh đúng lát cắt đang xem).
-  useEffect(() => {
-    if (!isDashRole) { setStaffCompare(null); setLStaff(false); return; }
-    if (!viewerAccounts.length) { setStaffCompare([]); setLStaff(false); return; }
-    let cancelled = false;
-    setLStaff(true);
-    Promise.all(viewerAccounts.map((acc) =>
-      viewerApi.traffic(from, to, country, { ...apiOpts, owner_account_id: acc.id })
-        .then((d) => ({ key: acc.id, name: acc.username, total: d.totals?.views || 0,
-                        days: d.days.map((p) => ({ date: p.date, value: p.views })) }))
-        .catch(() => ({ key: acc.id, name: acc.username, total: 0, days: [] })),
-    )).then((rows) => { if (!cancelled) setStaffCompare(rows); })
-      .finally(() => { if (!cancelled) setLStaff(false); });
-    return () => { cancelled = true; };
-  }, [isDashRole, viewerAccounts, from, to, country, apiOpts, reloadKey]);
-
-  // So sánh nhóm kênh — đè `group_id` lên apiOpts hiện tại.
-  useEffect(() => {
-    if (!groupsList.length) { setGroupCompare([]); setLGroup(false); return; }
-    let cancelled = false;
-    setLGroup(true);
-    Promise.all(groupsList.map((g) =>
-      viewerApi.traffic(from, to, country, { ...apiOpts, group_id: g.id })
-        .then((d) => ({ key: g.id, name: g.name, total: d.totals?.views || 0,
-                        days: d.days.map((p) => ({ date: p.date, value: p.views })) }))
-        .catch(() => ({ key: g.id, name: g.name, total: 0, days: [] })),
-    )).then((rows) => { if (!cancelled) setGroupCompare(rows); })
-      .finally(() => { if (!cancelled) setLGroup(false); });
-    return () => { cancelled = true; };
-  }, [groupsList, from, to, country, apiOpts, reloadKey]);
-
-  // So sánh kênh — tận dụng `top_channels` đã tải cho tab Riêng. Không có API trả view/kênh/ngày
-  // nên CHỈ hỗ trợ Cột/Tròn (không có "Đường") cho lát cắt này.
-  const channelCompare: CompareSeries[] | null = topChannels
-    ? topChannels.map((ch) => ({ key: ch.id, name: ch.name, total: ch.views }))
-    : null;
-
+// Chỉ render các chiều trong COMMON_COMPARE_DIMENSIONS — so sánh QUỐC GIA KHÔNG nằm ở đây (có biểu đồ riêng).
+function ComparisonView({ isDashRole, reloadKey }: { isDashRole: boolean; reloadKey: number }) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      <ComparisonChart title="So sánh nền tảng" subtitle="Theo nhãn nền tảng đã gắn ở trang Nhóm kênh"
-        series={platformCompare} loading={lPlatform}
-        emptyText="Chưa gắn nhãn nền tảng nào cho kênh — vào Nhóm kênh để gắn." />
-      {isDashRole && (
-        <ComparisonChart title="So sánh nhân sự" subtitle="Tổng + xu hướng view của từng nhân sự"
-          series={staffCompare} loading={lStaff} emptyText="Chưa có nhân sự (account viewer) nào." />
-      )}
-      <ComparisonChart title="So sánh kênh" subtitle="Cùng danh sách với Top kênh ở tab Biểu đồ riêng"
-        series={channelCompare} loading={!topChannels} emptyText="Chưa có kênh nào có view." allowLine={false} />
-      <ComparisonChart title="So sánh nhóm kênh" subtitle="Tổng + xu hướng view của từng nhóm đã tạo"
-        series={groupCompare} loading={lGroup} emptyText="Chưa tạo nhóm kênh nào." />
+      {COMMON_COMPARE_DIMENSIONS.map((dim) => {
+        const m = COMPARE_META[dim];
+        if (m.dashOnly && !isDashRole) return null;
+        return <CompareCard key={dim} dimension={dim} reloadKey={reloadKey} {...m} />;
+      })}
     </div>
   );
 }
@@ -1164,35 +1074,21 @@ function ComparisonView({
 // F — Phân bổ nền tảng cho 1 quốc gia (drill-down của "Biểu đồ riêng theo quốc gia")
 // ══════════════════════════════════════════════════════════════════════════════
 
-function PlatformBreakdownCard({ from, to, country, apiOpts, platformTags, reloadKey }: {
-  from: string; to: string; country: string; apiOpts: ScopeOpts; platformTags: string[]; reloadKey: number;
-}) {
+function PlatformBreakdownCard({ country, reloadKey }: { country: string; reloadKey: number }) {
   const c = useThemeColors();
-  const [items, setItems] = useState<{ key: string; name: string; value: number }[] | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!platformTags.length) { setItems(null); setLoading(false); return; }
-    let cancelled = false;
-    setLoading(true);
-    Promise.all(platformTags.map((tag) =>
-      viewerApi.summary(from, to, country, { ...apiOpts, platform_tag: tag })
-        .then((d) => ({ key: tag, name: tag, value: d.total_views || 0 }))
-        .catch(() => ({ key: tag, name: tag, value: 0 })),
-    )).then((rows) => { if (!cancelled) setItems(rows.filter((r) => r.value > 0)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [country, platformTags, from, to, apiOpts, reloadKey]);
-
-  if (!platformTags.length) return null;
+  const { filter, key } = useFilterContext();
+  const q = useAnalyticsQuery((signal) => analyticsApi.compare("platform", filter, { signal }), [key, reloadKey]);
+  const items = (q.data?.items ?? [])
+    .map((it) => ({ key: it.key, name: it.name, value: it.total || 0 }))
+    .filter((r) => r.value > 0);
 
   return (
     <div className="glass rounded-xl p-4">
       <h3 className="font-semibold">Phân bổ nền tảng — {country}</h3>
       <p className="text-xs text-muted-foreground">Theo nhãn nền tảng đã gắn ở Nhóm kênh cho các kênh thuộc quốc gia này.</p>
       <div className="h-[220px] w-full">
-        {loading ? <EmptyNote text="Đang tải…" />
-          : !items?.length ? <EmptyNote text="Kênh trong quốc gia này chưa gắn nhãn nền tảng nào." />
+        {q.loading && !q.data ? <EmptyNote text="Đang tải…" />
+          : !items.length ? <EmptyNote text="Kênh trong quốc gia này chưa gắn nhãn nền tảng nào." />
           : (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>

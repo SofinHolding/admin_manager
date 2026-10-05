@@ -1,31 +1,29 @@
 /**
- * API client cho module reward (discord) — TÁI SỬ DỤNG token + refresh của admin-web.
+ * API client cho module reward (Discord) — TÁI SỬ DỤNG token + refresh của admin-web.
  *
- * Không tự quản token riêng: mọi request đi qua `apiFetchRaw` của `../api` (đã gắn Authorization +
- * tự refresh 401), chỉ khác là gọi đường dẫn tuyệt đối `/v1/reward/...` (reward-service :8422 qua
- * proxy) thay vì `/v1/...` (admin-server :8421). JWT dùng chung nên cùng một access token.
+ * Mọi request đi qua `apiFetchRaw` của `../api` (Bearer + refresh 401 + timeout), gọi `/v1/reward/...` CÙNG ORIGIN
+ * (API Gateway định tuyến tới reward-service). Quyền vào module do claim `perms` (`reward:access` / `reward:admin`)
+ * của access token quyết định — KHÔNG còn dựa vào role `discord`. Cấp/thu quyền làm ở Identity
+ * (`permissionsApi` trong ../api); reward-service không còn tự sửa role tài khoản.
  */
 
 import { apiFetchRaw, getAccessToken } from "../api";
+import { errorFromResponse } from "../lib/errors";
 
 export { getAccessToken };
 
 const BASE = "/v1/reward";
 
-/** Gọi JSON: gắn Content-Type, ném lỗi có `detail` giống admin-web, chịu được 204. */
+/** Gọi JSON: gắn Content-Type, ném `ApiError` (envelope mới hoặc `{detail}` legacy), chịu được 204. */
 async function rj<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const url = path.startsWith("/") ? path : `${BASE}/${path}`;
   const r = await apiFetchRaw(url, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers as Record<string, string> || {}) },
   });
-  if (r.status === 403) {
-    const d = await r.json().catch(() => ({ detail: "Không có quyền" }));
-    throw new Error(d.detail || "Không có quyền");
-  }
   if (!r.ok) {
-    const d = await r.json().catch(() => ({ detail: `Lỗi ${r.status}` }));
-    throw new Error(d.detail || d.message || `Lỗi ${r.status}`);
+    const body = await r.json().catch(() => null);
+    throw errorFromResponse(r.status, body);
   }
   if (r.status === 204) return undefined as T;
   return r.json();
@@ -317,7 +315,7 @@ export const jobsApi = {
 
   exportCsv: async (id: string): Promise<Blob> => {
     const r = await apiFetchRaw(`${BASE}/jobs/${id}/export.csv`);
-    if (!r.ok) throw new Error(`Lỗi ${r.status}`);
+    if (!r.ok) throw errorFromResponse(r.status, await r.json().catch(() => null));
     return r.blob();
   },
 
@@ -325,7 +323,7 @@ export const jobsApi = {
 
   exportXlsx: async (id: string): Promise<Blob> => {
     const r = await apiFetchRaw(`${BASE}/jobs/${id}/export.xlsx`);
-    if (!r.ok) throw new Error(`Lỗi ${r.status}`);
+    if (!r.ok) throw errorFromResponse(r.status, await r.json().catch(() => null));
     return r.blob();
   },
 
@@ -343,16 +341,6 @@ export const adminApi = {
     const qs = q.toString();
     return rj<{ accounts: AdminAccount[] }>(`admin/accounts${qs ? `?${qs}` : ""}`);
   },
-
-  grantDiscord: (id: string, reason?: string) =>
-    rj<{ ok: boolean; username: string; from_role: string; to_role: string }>(
-      `admin/accounts/${id}/grant-discord`, { method: "POST", body: JSON.stringify({ reason }) },
-    ),
-
-  revokeDiscord: (id: string, reason?: string) =>
-    rj<{ ok: boolean; to_role: string; paused_jobs: string[] }>(
-      `admin/accounts/${id}/revoke-discord`, { method: "POST", body: JSON.stringify({ reason }) },
-    ),
 
   roleAudit: (params: { account_id?: string; limit?: number } = {}) => {
     const q = new URLSearchParams();

@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./auth";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { RoleGate, HomeRedirect } from "./components/RoleGate";
+import { RoleGate, PermGate, HomeRedirect } from "./components/RoleGate";
 import { Layout } from "./components/Layout";
 import LoginPage from "./routes/LoginPage";
 import RegisterPage from "./routes/RegisterPage";
@@ -12,6 +12,9 @@ import AdminPage from "./routes/AdminPage";
 import ProfilePage from "./routes/ProfilePage";
 import GroupsPage from "./routes/GroupsPage";
 import ResourcesPage from "./routes/ResourcesPage";
+import IntegrationClientsPage from "./routes/IntegrationClientsPage";
+import OidcCallbackPage from "./routes/OidcCallbackPage";
+import { PERM_REWARD_ACCESS } from "./auth/permissions";
 import CredentialsPage from "./reward/pages/CredentialsPage";
 import JobsPage from "./reward/pages/JobsPage";
 import JobNewPage from "./reward/pages/JobNewPage";
@@ -22,6 +25,7 @@ export default function App() {
     <AuthProvider>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/callback" element={<OidcCallbackPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -37,9 +41,10 @@ export default function App() {
               <Route path="/manage" element={<AdminPage />} />
             </Route>
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/integrations" element={<IntegrationClientsPage />} />
 
-            {/* Module phân phối điểm Discord — role discord & admin dùng chung template */}
-            <Route element={<RoleGate allow={["discord", "admin"]} />}>
+            {/* Module phân phối điểm Discord — quyền do claim `perms` (reward:access); admin được coi là có mọi quyền */}
+            <Route element={<PermGate perm={PERM_REWARD_ACCESS} />}>
               <Route path="/reward/credentials" element={<CredentialsPage />} />
               <Route path="/reward/jobs" element={<JobsPage />} />
               <Route path="/reward/jobs/new" element={<JobNewPage />} />

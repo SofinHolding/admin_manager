@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, BarChart3, Check, Eye, EyeOff, Loader2, X } from "lucide-react";
-import { authApi } from "../api";
+import { authApi, type IntegrationPolicy, type RegisterIntegration } from "../api";
+import { parseList } from "./adminKeyForm";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -17,6 +18,14 @@ export default function RegisterPage() {
   const [inviteKey, setInviteKey] = useState("");
   const [keyRole, setKeyRole] = useState("");
   const [keyLoading, setKeyLoading] = useState(false);
+  // Chính sách tích hợp của invite key (nếu key cho phép đăng ký kèm Tool)
+  const [policy, setPolicy] = useState<IntegrationPolicy | null>(null);
+  const [withTool, setWithTool] = useState(false);
+  const [toolName, setToolName] = useState("");
+  const [toolKind, setToolKind] = useState<RegisterIntegration["client_kind"]>("primary_tool");
+  const [toolPlatforms, setToolPlatforms] = useState<string[]>([]);
+  const [toolPlatformsText, setToolPlatformsText] = useState("");
+  const [provisioning, setProvisioning] = useState("");
 
   // Bước 2
   const [username, setUsername] = useState("");
@@ -44,6 +53,9 @@ export default function RegisterPage() {
       const d = await authApi.validateKey(inviteKey.trim());
       if (d.valid) {
         setKeyRole(d.role || "viewer");
+        const pol = d.integration_policy ?? (d.allow_integration_registration ? { allow_integration_registration: true } : null);
+        setPolicy(pol && pol.allow_integration_registration ? pol : null);
+        setWithTool(false);
         setStep(2);
       } else {
         toast.error(d.reason || "Mã mời không hợp lệ");
@@ -84,15 +96,22 @@ export default function RegisterPage() {
 
   const pwOk = password.length >= 8;
   const confirmOk = confirmPw === password && confirmPw.length > 0;
-  const canRegister = username.length >= 3 && usernameOk && email.includes("@") && emailOk && pwOk && confirmOk;
+  const policyPlatforms = policy?.allowed_platforms ?? [];
+  const chosenPlatforms = policyPlatforms.length ? toolPlatforms : parseList(toolPlatformsText);
+  const toolOk = !withTool || (toolName.trim().length > 0 && chosenPlatforms.length > 0);
+  const canRegister = username.length >= 3 && usernameOk && email.includes("@") && emailOk && pwOk && confirmOk && toolOk;
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canRegister) return;
     setRegLoading(true);
     try {
-      const d = await authApi.register(inviteKey.trim(), username.trim(), password, email.trim());
+      const integration: RegisterIntegration | undefined = policy && withTool
+        ? { create: true, tool_name: toolName.trim(), client_kind: toolKind, platforms: chosenPlatforms }
+        : undefined;
+      const d = await authApi.register(inviteKey.trim(), username.trim(), password, email.trim(), integration);
       setRegisteredEmail(d.email);
+      setProvisioning(d.provisioning ?? "");
       setStep(3);
       toast.success("Đăng ký thành công!");
     } catch (err) {
@@ -261,6 +280,56 @@ export default function RegisterPage() {
                 )}
               </div>
 
+              {/* Đăng ký kèm Tool — chỉ hiện khi invite key cho phép (integration_policy) */}
+              {policy && (
+                <div className="rounded-lg border border-border p-3" data-testid="register-tool">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <input type="checkbox" className="rounded accent-primary" checked={withTool}
+                           onChange={(e) => setWithTool(e.target.checked)} />
+                    Đăng ký kèm Tool (tuỳ chọn)
+                  </label>
+                  {withTool && (
+                    <div className="mt-3 flex flex-col gap-3">
+                      <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="reg-tool-name">Tên Tool</Label>
+                        <Input id="reg-tool-name" value={toolName} maxLength={100}
+                               onChange={(e) => setToolName(e.target.value)} placeholder="vd: Tool đăng bài" />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <Label htmlFor="reg-tool-kind">Loại</Label>
+                        <select id="reg-tool-kind" value={toolKind}
+                                onChange={(e) => setToolKind(e.target.value as RegisterIntegration["client_kind"])}
+                                className="h-9 rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary">
+                          <option value="primary_tool">Tool chính</option>
+                          <option value="fallback_tool">Tool dự phòng</option>
+                          <option value="service">Service</option>
+                        </select>
+                      </div>
+                      <fieldset className="flex flex-col gap-1.5">
+                        <legend className="text-sm">Nền tảng</legend>
+                        {policyPlatforms.length ? (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            {policyPlatforms.map((pl) => (
+                              <label key={pl} className="flex items-center gap-1.5 text-sm">
+                                <input type="checkbox" className="rounded accent-primary" checked={toolPlatforms.includes(pl)}
+                                       onChange={(e) => setToolPlatforms((cur) => e.target.checked ? [...cur, pl] : cur.filter((x) => x !== pl))} />
+                                {pl}
+                              </label>
+                            ))}
+                          </div>
+                        ) : (
+                          <Input aria-label="Nền tảng" value={toolPlatformsText} placeholder="facebook, youtube"
+                                 onChange={(e) => setToolPlatformsText(e.target.value)} />
+                        )}
+                      </fieldset>
+                      <p className="text-xs text-muted-foreground">
+                        Client được khởi tạo sau khi bạn xác thực email; API key cấp ở trang “Tích hợp Tool”.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <Button type="button" variant="outline" onClick={() => setStep(1)} className="flex-1">
                   <ArrowLeft className="size-4" /> Quay lại
@@ -284,6 +353,11 @@ export default function RegisterPage() {
             <p className="mb-6 text-sm text-muted-foreground">
               Kiểm tra hộp thư và click vào link xác thực để kích hoạt tài khoản.
             </p>
+            {provisioning === "pending" && (
+              <p className="mb-6 text-xs text-muted-foreground" data-testid="provisioning-pending">
+                Tool đăng ký kèm đang chờ khởi tạo — sẽ sẵn sàng sau khi email được xác thực.
+              </p>
+            )}
             <div className="flex flex-col gap-3">
               <Button variant="outline" onClick={handleResend} disabled={resendCooldown > 0} className="w-full">
                 {resendCooldown > 0 ? `Gửi lại sau ${resendCooldown}s` : "Gửi lại email"}

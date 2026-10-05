@@ -2,13 +2,14 @@
  * Trang Nhóm kênh — viewer tự quản lý nhóm kênh của chính mình (tạo/đổi tên/xoá group,
  * thêm/xoá kênh vào group kèm nhãn nền tảng tự do).
  *
- * Kênh khả dụng lấy từ viewerApi.topChannels (cùng nguồn dữ liệu Dashboard đang dùng).
+ * Kênh khả dụng lấy từ analyticsApi.topChannels (cùng nguồn dữ liệu Dashboard đang dùng).
  */
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, Users, X } from "lucide-react";
-import { groupsApi, viewerApi, type TopChannel, type ViewerGroup } from "../api";
+import { analyticsApi, groupsApi, type TopChannel, type ViewerGroup } from "../api";
+import { daysAgo, defaultFilter } from "../filters/filterState";
 import { Button } from "../components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -16,16 +17,6 @@ import {
 
 function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
-}
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
 }
 
 const inputCls =
@@ -52,9 +43,11 @@ export default function GroupsPage() {
 
   useEffect(() => {
     load();
-    viewerApi.topChannels(daysAgo(89), todayStr(), "", 100)
+    const ctl = new AbortController();
+    analyticsApi.topChannels({ ...defaultFilter(), date_from: daysAgo(89) }, 100, { signal: ctl.signal })
       .then((d) => setChannels(d.items))
-      .catch(() => setChannels([]));
+      .catch(() => { if (!ctl.signal.aborted) setChannels([]); });
+    return () => ctl.abort();
   }, []);
 
   const handleCreate = async () => {
