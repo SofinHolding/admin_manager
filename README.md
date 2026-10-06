@@ -22,7 +22,7 @@ Người dùng xem Dashboard và quản trị qua web; các Tool ngoài đẩy d
 
 ```bash
 python infra/scripts/bootstrap_dev.py                                          # .env.dev ngẫu nhiên (không commit)
-docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d       # Postgres 55440 + Redis 56390 riêng của dự án
+docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d       # Postgres 55440 + Redis 26390 riêng của dự án
 python infra/scripts/test_all.py                                               # cổng chất lượng đầy đủ
 python infra/scripts/dev_stack.py up                                           # chạy cả stack bằng tiến trình thật
 ```

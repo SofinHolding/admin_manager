@@ -92,4 +92,4 @@ Một ngữ cảnh lọc duy nhất cho **mọi** KPI và biểu đồ: `date_fr
 |---|---|
 | Postgres | 1 cluster DEV, 4 database + 4 user không superuser; `REVOKE ALL … FROM PUBLIC`, `GRANT CONNECT` chỉ cho chủ. Test 4×4 (arch) + 12 cặp (e2e) chứng minh kết nối chéo bị `InsufficientPrivilege` |
 | Redis | ACL theo prefix |
-| Hạ tầng DEV | Compose project `manager-platform-dev`, container `mp-dev-postgres` (`127.0.0.1:55440`), `mp-dev-redis` (`127.0.0.1:56390`), network `mp_dev_net`. Test guard chặn tên chung chung (đã từng ghi đè container của project khác) |
+| Hạ tầng DEV | Compose project `manager-platform-dev`, container `mp-dev-postgres` (`127.0.0.1:55440`), `mp-dev-redis` (`127.0.0.1:26390`), network `mp_dev_net`. Test guard chặn tên chung chung (đã từng ghi đè container của project khác) |

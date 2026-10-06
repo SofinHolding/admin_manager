@@ -35,7 +35,7 @@ CONSTANTS = {
     "DEV_PG_HOST": "127.0.0.1",
     "DEV_PG_PORT": "55440",
     "DEV_REDIS_HOST": "127.0.0.1",
-    "DEV_REDIS_PORT": "56390",
+    "DEV_REDIS_PORT": "26390",
     "DEV_ISSUER": "http://127.0.0.1:8430",
     "DEV_AUDIENCE": "manager-api",
 }

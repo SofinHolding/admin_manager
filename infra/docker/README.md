@@ -6,7 +6,7 @@ Dùng riêng cho dự án này. **Không đụng** container, volume, network ha
 |---|---|---|
 | Compose project | `manager-platform-dev` | |
 | Postgres 16 | container `mp-dev-postgres`, volume `mp_dev_pgdata` | `127.0.0.1:55440` |
-| Redis 7 | container `mp-dev-redis`, volume `mp_dev_redisdata` | `127.0.0.1:56390` |
+| Redis 7 | container `mp-dev-redis`, volume `mp_dev_redisdata` | `127.0.0.1:26390` |
 | Network | `mp_dev_net` | |
 
 ```bash
@@ -30,7 +30,7 @@ docker compose -f infra/docker/compose.dev.yml down -v    # dừng và XÓA dữ
 ## Kiểm chứng
 
 ```bash
-TEST_PG_HOST=127.0.0.1 TEST_PG_PORT=55440 TEST_REDIS_HOST=127.0.0.1 TEST_REDIS_PORT=56390 \
+TEST_PG_HOST=127.0.0.1 TEST_PG_PORT=55440 TEST_REDIS_HOST=127.0.0.1 TEST_REDIS_PORT=26390 \
   python -m pytest tests/arch/test_infra.py -rs
 ```
 

@@ -108,7 +108,7 @@ python infra/scripts/test_all.py --legacy   # thêm test legacy/admin-server
 python infra/scripts/dev_stack.py up        # dựng cả stack bằng tiến trình thật (E2E: tests/e2e dùng DevStack)
 ```
 
-- Hạ tầng dev riêng (Postgres `127.0.0.1:55440`, Redis `127.0.0.1:56390`, tên `mp-dev-*`): xem `infra/docker/README.md`.
+- Hạ tầng dev riêng (Postgres `127.0.0.1:55440`, Redis `127.0.0.1:26390`, tên `mp-dev-*`): xem `infra/docker/README.md`.
   Bật: `docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d`. Test cần hạ tầng đặt `TEST_PG_HOST`, `TEST_PG_PORT`,
   `TEST_REDIS_HOST`, `TEST_REDIS_PORT`. **Không bao giờ** dùng, sửa hay xóa container/volume/cổng của project khác trên máy.
 - Mỗi service chạy pytest **riêng** (`cd services/<s> && python -m pytest -q`), không gộp một lần.

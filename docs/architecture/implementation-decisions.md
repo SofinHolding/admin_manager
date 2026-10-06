@@ -19,7 +19,7 @@ Lý do: lỗ hổng thật trong code đang chạy production. Hệ quả: **tha
 (deploy legacy phải có `JWT_SECRET` thật — vốn đã bắt buộc trong thực tế).
 
 **ADR-003 · Stack dữ liệu DEV tách biệt hoàn toàn.**
-Compose project `manager-platform-dev`, container/volume/network đặt tên tường minh `mp-dev-*`/`mp_dev_*`, cổng 55440/56390 chỉ bind `127.0.0.1`.
+Compose project `manager-platform-dev`, container/volume/network đặt tên tường minh `mp-dev-*`/`mp_dev_*`, cổng 55440/26390 chỉ bind `127.0.0.1`.
 Lý do: sự cố ghi đè container `redis` của project khác trên máy dev (project mặc định `docker` trùng tên). Hệ quả: test guard chặn tên chung chung.
 
 **ADR-004 · Cô lập DB bằng 4 database + 4 user không đặc quyền; Redis ACL theo prefix.**

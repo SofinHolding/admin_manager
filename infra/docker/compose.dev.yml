@@ -27,7 +27,7 @@ services:
     image: redis:7-alpine
     container_name: mp-dev-redis
     command: ["redis-server", "--aclfile", "/etc/redis/users.acl", "--appendonly", "yes"]
-    ports: ["127.0.0.1:56390:6379"]
+    ports: ["127.0.0.1:26390:6379"]
     environment:
       REDISCLI_AUTH: ${DEV_REDIS_ANALYTICS_PASSWORD:?chạy infra/scripts/bootstrap_dev.py trước}
     volumes:

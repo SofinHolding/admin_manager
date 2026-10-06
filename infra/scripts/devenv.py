@@ -46,7 +46,7 @@ def pg_dsn(service: str = "", *, admin: bool = False, database: str | None = Non
 def redis_url() -> str:
     load()
     return (f"redis://analytics_cache:{_get('DEV_REDIS_ANALYTICS_PASSWORD')}@"
-            f"{os.environ.get('DEV_REDIS_HOST', '127.0.0.1')}:{os.environ.get('DEV_REDIS_PORT', '56390')}/0")
+            f"{os.environ.get('DEV_REDIS_HOST', '127.0.0.1')}:{os.environ.get('DEV_REDIS_PORT', '26390')}/0")
 
 
 def _reachable(host: str, port: int) -> bool:
@@ -72,4 +72,4 @@ def redis_ready() -> bool:
     if not have_env_file():
         return False
     load()
-    return _reachable(os.environ.get("DEV_REDIS_HOST", "127.0.0.1"), int(os.environ.get("DEV_REDIS_PORT", "56390")))
+    return _reachable(os.environ.get("DEV_REDIS_HOST", "127.0.0.1"), int(os.environ.get("DEV_REDIS_PORT", "26390")))

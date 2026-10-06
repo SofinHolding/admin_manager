@@ -71,7 +71,7 @@ def step_infra() -> bool:
     if not shutil.which("docker"):
         log("LỖI: không có docker và hạ tầng DEV chưa chạy.")
         return False
-    log("… docker compose up (stack DEV riêng manager-platform-dev: Postgres 55440, Redis 56390)")
+    log("… docker compose up (stack DEV riêng manager-platform-dev: Postgres 55440, Redis 26390)")
     r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "up", "-d", "--wait"], cwd=ROOT)
     if r.returncode != 0:
         return False

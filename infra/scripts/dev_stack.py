@@ -1,6 +1,6 @@
 """Dựng stack DEV bằng TIẾN TRÌNH THẬT (mỗi service một process) để chạy E2E / kiểm thử cô lập lỗi.
 
-Chỉ dùng hạ tầng DEV riêng (`mp-dev-postgres` 55440, `mp-dev-redis` 56390) và cổng loopback ngẫu nhiên;
+Chỉ dùng hạ tầng DEV riêng (`mp-dev-postgres` 55440, `mp-dev-redis` 26390) và cổng loopback ngẫu nhiên;
 không đụng bất cứ container/cổng nào khác. Secret lấy từ `.env.dev` (bootstrap_dev.py), không có giá trị cứng.
 
 Dùng như thư viện trong test:

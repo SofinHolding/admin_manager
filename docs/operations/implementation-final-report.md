@@ -28,7 +28,7 @@ Browser / Tool ──► api-gateway :8400 (không DB) ──► identity :8430 
                                                 ├─► analytics :8432 → analytics_db (+ Redis cache, tùy chọn)
                                                 └─► reward :8422 → reward_db
 Liên service: feed kéo `/internal/v1/feed` (X-Service-Key, outbox) — không đi qua gateway.
-Hạ tầng DEV riêng: Postgres 127.0.0.1:55440 (project `manager-platform-dev`), Redis 127.0.0.1:56390; mỗi service một DB + một user không đặc quyền.
+Hạ tầng DEV riêng: Postgres 127.0.0.1:55440 (project `manager-platform-dev`), Redis 127.0.0.1:26390; mỗi service một DB + một user không đặc quyền.
 ```
 Dựng stack bằng tiến trình thật: `python infra/scripts/dev_stack.py up` (hoặc `DevStack` trong test).
 

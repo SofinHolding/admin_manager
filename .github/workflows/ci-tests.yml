@@ -7,7 +7,7 @@ name: CI tests (chạy tay)
 # mỗi job cần DB tự dựng `bootstrap_dev.py` (sinh .env.dev ngẫu nhiên) + `docker compose ... up -d --wait`
 # (Postgres 16 + Redis 7, DB và user riêng từng service, Redis ACL) — đúng như `python infra/scripts/test_all.py`.
 # Không dùng `services: postgres` thuần vì thiếu user/DB riêng từng service và Redis ACL mà test cần.
-# TEST_PG_*/TEST_REDIS_* khớp cổng compose.dev.yml (127.0.0.1:55440 / 56390). SKIP không phải PASS: job coi
+# TEST_PG_*/TEST_REDIS_* khớp cổng compose.dev.yml (127.0.0.1:55440 / 26390). SKIP không phải PASS: job coi
 # test cần hạ tầng mà bị SKIP là lỗi (bước "Không được SKIP vì thiếu hạ tầng").
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ env:
   TEST_PG_HOST: 127.0.0.1
   TEST_PG_PORT: "55440"
   TEST_REDIS_HOST: 127.0.0.1
-  TEST_REDIS_PORT: "56390"
+  TEST_REDIS_PORT: "26390"
 
 jobs:
   arch-and-contracts:

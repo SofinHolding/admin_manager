@@ -40,7 +40,7 @@ Mọi nội dung phản ánh trạng thái repo tại **2026-10-06**, nhánh `re
 
 ```bash
 python infra/scripts/bootstrap_dev.py                      # sinh .env.dev (secret ngẫu nhiên, không commit)
-docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d   # Postgres 55440 + Redis 56390 RIÊNG của dự án
+docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d   # Postgres 55440 + Redis 26390 RIÊNG của dự án
 python infra/scripts/test_all.py --fast                    # kiểm tra nhanh (bỏ tiến trình thật/e2e/frontend)
 python infra/scripts/dev_stack.py up                       # chạy cả 5 service bằng tiến trình thật (Ctrl+C để dừng)
 ```
