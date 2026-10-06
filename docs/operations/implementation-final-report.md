@@ -44,14 +44,14 @@ analytics `0001` (read models + sổ sách consumer); reward `001–004` (004: i
 
 | Bộ | Pass | Fail | Skip |
 |---|---:|---:|---:|
-| arch (ranh giới, cấu trúc, route map, hạ tầng, secret, 4×4 cô lập DB) | 117 | 0 | 0 |
-| contract (ingest, parity Identity↔legacy, parity Analytics↔`stats_core`, OpenAPI đóng băng) | 38 | 0 | 0 |
+| arch (ranh giới, cấu trúc, route map, hạ tầng, secret, 4×4 cô lập DB, layout, handbook) | 131 | 0 | 0 |
+| contract (ingest, parity Identity↔legacy, parity Analytics↔`stats_core`, OpenAPI đóng băng, đối soát Integration↔Analytics) | 42 | 0 | 0 |
 | packages: contracts / observability / sdk-python | 5 / 23 / 44 | 0 | 0 |
-| unit + integration theo service: identity | 439 | 0 | 0 |
-| integration-service | 454 | 0 | 0 |
-| analytics-service | 153 | 0 | 0 |
-| reward-service | 180 | 0 | 0 |
-| api-gateway | 452 | 0 | 1 (xem dưới) |
+| unit + integration theo service: identity | 455 | 0 | 0 |
+| integration-service | 463 | 0 | 0 |
+| analytics-service | 173 | 0 | 0 |
+| reward-service | 188 | 0 | 0 |
+| api-gateway | 456 | 0 | 1 (xem dưới) |
 | integration (tiến trình thật, DB chết, log JSON) | 8 | 0 | 0 |
 | **e2e (stack tiến trình thật qua gateway)** | **31** | 0 | 0 |
 | legacy admin-server | 6 | 0 | 0 |
@@ -107,3 +107,10 @@ build/deploy web; chuyển `local-ops-hub`; bật lại CI/CD (trigger `push`); 
 
 ## 10. Rollback / runbook
 `docs/operations/production-cutover-runbook.md` (từng bước có quay lui), `docs/operations/identity-migration-runbook.md`, `services/reward-service/DEPLOY.md`, `infra/docker/README.md` (hạ tầng DEV), `docs/architecture/implementation-decisions.md` (ADR).
+
+## 11. Cập nhật sau review mã (2026-10-06)
+
+Review toàn hệ thống (4 reviewer chỉ-đọc, 15 phát hiện đã xác minh) → đã sửa hết: checksum đối soát Integration↔Analytics (trước đây luôn lệch), removed không xóa bản ghi mới hơn snapshot, khóa read model gồm `resource_type`,
+Tool tiếp quản `origin`, rotate/revoke credential chỉ chủ/admin, nhóm không áp xuyên owner, dead-letter event hỏng, validate ngày 422, replay dead-letter theo khóa đặc trưng (reward `005`), SSE kiểm lại quyền, mật khẩu >72 byte, `dash_admin` không tác động `admin`,
+audience token OIDC third-party, workflow `deploy-reward`/`ci-tests` theo layout mới, che invite key trong log, breaker bỏ qua timeout route admin. Thay đổi hành vi có chủ đích ghi ở `docs/handbook/02-trang-thai-tinh-nang.md` §2.3.
+Lượt chạy `test_all.py --legacy` đầy đủ sau các bản sửa: **tất cả xanh** (số liệu bảng trên); riêng `nginx -t` thật vẫn chưa chạy (`NOT_RUN_EXTERNAL_DEPENDENCY`).
