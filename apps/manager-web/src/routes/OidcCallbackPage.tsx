@@ -5,8 +5,10 @@
 
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Loader2 } from "lucide-react";
 import { useAuth } from "../auth";
+import { Button } from "../components/ui/button";
+import { Notice } from "../components/kit";
+import { AuthShell, Spinner } from "../components/authKit";
 
 export default function OidcCallbackPage() {
   const { completeOidcLogin } = useAuth();
@@ -22,23 +24,27 @@ export default function OidcCallbackPage() {
     return () => { alive = false; };
   }, [completeOidcLogin, navigate, search]);
 
+  if (error) {
+    return (
+      <AuthShell title="Đăng nhập chưa hoàn tất" description="Có lỗi khi quay về từ trang đăng nhập chung của Manager.">
+        <div className="flex flex-col gap-5">
+          <Notice tone="error" title="Không hoàn tất được đăng nhập">
+            <span className="block break-words">{error}</span>
+            <span className="mt-1 block">Hãy thử đăng nhập lại. Nếu lỗi lặp lại, báo quản trị viên kèm nội dung trên.</span>
+          </Notice>
+          <Button asChild size="lg" className="w-full">
+            <Link to="/login" replace>Quay lại đăng nhập</Link>
+          </Button>
+        </div>
+      </AuthShell>
+    );
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <div className="glass w-full max-w-[400px] rounded-xl p-6 text-center">
-        {error ? (
-          <>
-            <h1 className="mb-2 text-lg font-semibold">Đăng nhập thất bại</h1>
-            <p role="alert" className="mb-4 text-sm text-destructive">{error}</p>
-            <Link to="/login" replace className="text-sm font-medium text-primary-text hover:underline">
-              Quay lại đăng nhập
-            </Link>
-          </>
-        ) : (
-          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Đang hoàn tất đăng nhập…
-          </div>
-        )}
-      </div>
-    </div>
+    <AuthShell title="Đang đăng nhập" description="Vui lòng chờ, bạn sẽ được chuyển vào ứng dụng ngay.">
+      <p role="status" className="flex items-center gap-2 text-muted-foreground">
+        <Spinner /> Đang hoàn tất đăng nhập
+      </p>
+    </AuthShell>
   );
 }

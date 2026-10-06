@@ -11,7 +11,7 @@ import { cn } from "../lib/utils";
 
 const itemCls = ({ isActive }: { isActive: boolean }) =>
   cn(
-    "flex min-h-11 items-center gap-3 rounded-md px-3 py-2 text-[0.9375rem] transition-colors",
+    "flex min-h-10 items-center gap-3 rounded-md px-3 py-1.5 text-sm transition-colors",
     isActive
       ? "bg-primary/10 font-semibold text-primary-text shadow-[inset_3px_0_0_0_var(--color-primary)]"
       : "text-foreground/85 hover:bg-elev-2 hover:text-foreground",
@@ -22,12 +22,12 @@ function NavList({ groups, onNavigate }: { groups: NavGroup[]; onNavigate?: () =
     <nav aria-label="Điều hướng chính" className="space-y-5">
       {groups.map((g) => (
         <div key={g.title}>
-          <p className="mb-1 px-3 text-[0.8125rem] font-semibold text-muted-foreground">{g.title}</p>
+          <p className="mb-1 px-3 text-xs font-semibold text-muted-foreground">{g.title}</p>
           <ul className="space-y-0.5">
             {g.items.map((it) => (
               <li key={it.to}>
                 <NavLink to={it.to} className={itemCls} onClick={onNavigate}>
-                  <it.icon className="size-5 shrink-0" aria-hidden />
+                  <it.icon className="size-[1.125rem] shrink-0" aria-hidden />
                   <span>{it.label}</span>
                 </NavLink>
               </li>
@@ -139,10 +139,10 @@ function AccountBlock({ onNavigate }: { onNavigate?: () => void }) {
 function Brand() {
   return (
     <div className="flex items-center gap-2.5 px-3">
-      <span className="grid size-9 place-items-center rounded-lg bg-primary text-primary-foreground" aria-hidden>
+      <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground" aria-hidden>
         <span className="size-3 rounded-full bg-accent-2" />
       </span>
-      <span className="text-lg font-bold tracking-tight">Manager</span>
+      <span className="text-base font-bold tracking-tight">Manager</span>
     </div>
   );
 }
@@ -221,7 +221,7 @@ export function Layout() {
               )}
             >
               <it.icon className="size-5" aria-hidden />
-              <span className="max-w-full truncate">{it.label}</span>
+              <span className="max-w-full truncate">{it.short ?? it.label}</span>
             </NavLink>
           ))}
           <button type="button" onClick={() => setDrawer(true)} className="flex min-h-14 cursor-pointer flex-col items-center justify-center gap-0.5 px-1 text-[0.75rem] font-medium text-muted-foreground">

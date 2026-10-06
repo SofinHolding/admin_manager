@@ -1,27 +1,49 @@
 /**
- * Trang kết nối Discord — cấu hình lệnh slash + DANH SÁCH token tài khoản Discord để xoay vòng khi chạy job.
+ * Kết nối Discord — nơi người vận hành cho hệ thống biết: gửi lệnh cộng điểm vào kênh nào, bằng tài khoản Discord nào.
  *
- * Mỗi lệnh /give-xp đi qua một token chọn NGẪU NHIÊN (không dùng 1 token 2 lần liên tiếp); token bị Discord từ
- * chối sẽ tự bị loại và item được gửi lại bằng token khác. Token chỉ dán một lần: API không bao giờ trả lại token.
+ * Gồm (1) danh sách tài khoản Discord (mã đăng nhập) xoay vòng khi chạy công việc, (2) nơi gửi lệnh (máy chủ, kênh, lệnh),
+ * (3) cài đặt nâng cao. Mỗi lệnh /give-xp đi qua một tài khoản chọn NGẪU NHIÊN; tài khoản bị Discord từ chối sẽ tự bị loại
+ * và mục đó được gửi lại bằng tài khoản khác. Mã đăng nhập chỉ dán MỘT lần: API không bao giờ trả lại, giao diện không hiện lại.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, Loader2, Plus, Power, RefreshCw, Trash2, XCircle } from "lucide-react";
+import { Link } from "react-router-dom";
+import {
+  CircleCheck, CircleHelp, CircleX, Link2, Loader2, Plus, Power, RefreshCw, ShieldAlert, ShieldOff, Trash2,
+} from "lucide-react";
 import { credentialsApi, type CommandMeta, type CredentialInfo, type DiscordToken } from "../api";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import { Label } from "../../components/ui/label";
 import { Textarea } from "../../components/ui/textarea";
 import { Badge } from "../../components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { EmptyState, Field, Notice, PageHeader, Section, TechDetails } from "../../components/kit";
+import { ConfirmDialog, type ConfirmSpec, relativeTime } from "./rewardUi";
 
-const STATUS_BADGE: Record<string, { label: string; variant: "success" | "destructive" | "warning" | "secondary" }> = {
-  valid: { label: "Đã xác thực", variant: "success" },
-  invalid: { label: "Không hợp lệ", variant: "destructive" },
-  unverified: { label: "Chưa xác thực", variant: "warning" },
-  revoked: { label: "Đã thu hồi", variant: "destructive" },
+type BadgeVariant = "success" | "destructive" | "warning" | "secondary";
+type Icon = ComponentType<{ className?: string }>;
+
+/** Trạng thái của cả kết nối. */
+const CONNECTION_STATUS: Record<string, { label: string; variant: BadgeVariant; icon: Icon }> = {
+  valid: { label: "Đang hoạt động", variant: "success", icon: CircleCheck },
+  unverified: { label: "Cần kiểm tra lại", variant: "warning", icon: CircleHelp },
+  invalid: { label: "Không dùng được", variant: "destructive", icon: CircleX },
+  revoked: { label: "Bị thu hồi", variant: "destructive", icon: ShieldOff },
 };
+
+/** Trạng thái của từng tài khoản Discord. */
+const TOKEN_STATUS: Record<string, { label: string; variant: BadgeVariant; icon: Icon }> = {
+  valid: { label: "Dùng được", variant: "success", icon: CircleCheck },
+  unverified: { label: "Chưa kiểm tra", variant: "warning", icon: CircleHelp },
+  invalid: { label: "Không dùng được", variant: "destructive", icon: CircleX },
+  revoked: { label: "Bị thu hồi", variant: "destructive", icon: ShieldOff },
+};
+
+function StatusPill({ info }: { info: { label: string; variant: BadgeVariant; icon: Icon } }) {
+  const I = info.icon;
+  return <Badge variant={info.variant}><I className="size-3.5 shrink-0" aria-hidden />{info.label}</Badge>;
+}
 
 interface FormState {
   guild_id: string;
@@ -35,8 +57,8 @@ interface FormState {
   jitter_ms: string;
 }
 
-// Mặc định khớp câu trả lời thật của Axolink Management ("N XP has been given to @user") — user
-// không cần tự gõ regex. Áp dụng cả khi tạo mới (EMPTY_FORM) lẫn khi tải lại 1 credential cũ đang
+// Mặc định khớp câu trả lời thật của Axolink Management ("N XP has been given to @user") — người dùng
+// không cần tự gõ regex. Áp dụng cả khi tạo mới (EMPTY_FORM) lẫn khi tải lại 1 kết nối cũ đang
 // thiếu pattern (load() bên dưới, dùng `||` chứ không phải `??` để tự phục hồi cả trường hợp rỗng).
 const DEFAULT_SUCCESS_PATTERN = "\\d+\\s*XP has been given to";
 
@@ -52,10 +74,15 @@ const EMPTY_FORM: FormState = {
   jitter_ms: "400",
 };
 
+type Outcome = { tone: "success" | "warning" | "error"; title: string; text?: string } | null;
+
+const isNonNegInt = (v: string) => v.trim() === "" || /^\d+$/.test(v.trim());
+
 export default function CredentialsPage() {
   const [info, setInfo] = useState<CredentialInfo | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [command, setCommand] = useState<CommandMeta | null>(null);
@@ -64,9 +91,15 @@ export default function CredentialsPage() {
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
   const [busyToken, setBusyToken] = useState<number | null>(null);
+  const [formTried, setFormTried] = useState(false);
+  const [tokenTried, setTokenTried] = useState(false);
+  const [formOutcome, setFormOutcome] = useState<Outcome>(null);
+  const [tokenOutcome, setTokenOutcome] = useState<Outcome>(null);
+  const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
 
   const load = async () => {
     setLoading(true);
+    setLoadFailed(false);
     try {
       const d = await credentialsApi.get();
       setInfo(d);
@@ -84,6 +117,7 @@ export default function CredentialsPage() {
         });
       }
     } catch (err) {
+      setLoadFailed(true);
       toast.error((err as Error).message);
     } finally {
       setLoading(false);
@@ -97,9 +131,21 @@ export default function CredentialsPage() {
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
+  const errors = {
+    guild_id: form.guild_id.trim() ? null : "Nhập mã máy chủ Discord.",
+    channel_id: form.channel_id.trim() ? null : "Nhập mã kênh Discord.",
+    command_name: form.command_name.trim() ? null : "Nhập tên lệnh, ví dụ give-xp.",
+    delay_ms: isNonNegInt(form.delay_ms) ? null : "Nhập số nguyên từ 0 trở lên.",
+    jitter_ms: isNonNegInt(form.jitter_ms) ? null : "Nhập số nguyên từ 0 trở lên.",
+  };
+  const shown = <K extends keyof typeof errors>(k: K) => (formTried ? errors[k] : null);
+  const formValid = Object.values(errors).every((e) => !e);
+
   const handleSave = async () => {
-    if (!form.guild_id.trim() || !form.channel_id.trim() || !form.command_name.trim()) {
-      toast.error("Guild ID, Channel ID và tên lệnh là bắt buộc");
+    setFormTried(true);
+    setFormOutcome(null);
+    if (!formValid) {
+      setFormOutcome({ tone: "error", title: "Chưa lưu được", text: "Sửa các ô báo lỗi phía trên rồi bấm Lưu cấu hình lại." });
       return;
     }
     setSaving(true);
@@ -116,11 +162,18 @@ export default function CredentialsPage() {
         jitter_ms: Number(form.jitter_ms) || undefined,
       });
       setCommand(result.command);
-      if (result.status === "valid") toast.success("Đã lưu cấu hình kết nối Discord");
-      else toast.warning(result.last_error || "Đã lưu nhưng cấu hình chưa hợp lệ — kiểm tra Guild ID / token");
+      if (result.status === "valid") {
+        setFormOutcome({ tone: "success", title: "Đã lưu và kết nối được với Discord" });
+        toast.success("Đã lưu cấu hình kết nối Discord");
+      } else {
+        setFormOutcome({
+          tone: "warning", title: "Đã lưu, nhưng kết nối chưa dùng được",
+          text: result.last_error || "Kiểm tra lại mã máy chủ, mã kênh và các tài khoản Discord ở phía trên.",
+        });
+      }
       await load();
     } catch (err) {
-      toast.error((err as Error).message);
+      setFormOutcome({ tone: "error", title: "Chưa lưu được cấu hình", text: (err as Error).message });
     } finally {
       setSaving(false);
     }
@@ -128,36 +181,53 @@ export default function CredentialsPage() {
 
   const handleVerify = async () => {
     setVerifying(true);
+    setFormOutcome(null);
     try {
       const result = await credentialsApi.verify();
       setCommand(result.command);
       const ok = result.tokens.filter((t) => t.enabled && t.status === "valid").length;
-      if (result.status === "valid") toast.success(`Kết nối OK — ${ok}/${result.tokens.length} token dùng được`);
-      else toast.error(result.last_error || "Không có token nào dùng được");
+      if (result.status === "valid") {
+        setFormOutcome({ tone: "success", title: "Kết nối hoạt động", text: `${ok}/${result.tokens.length} tài khoản Discord dùng được.` });
+        toast.success(`Kết nối OK — ${ok}/${result.tokens.length} tài khoản dùng được`);
+      } else {
+        setFormOutcome({
+          tone: "error", title: "Không có tài khoản Discord nào dùng được",
+          text: result.last_error || "Thêm một tài khoản mới hoặc kiểm tra lại mã máy chủ, mã kênh.",
+        });
+      }
       await load();
     } catch (err) {
-      toast.error((err as Error).message);
+      setFormOutcome({ tone: "error", title: "Chưa kiểm tra được kết nối", text: (err as Error).message });
     } finally {
       setVerifying(false);
     }
   };
 
   const handleAddToken = async () => {
-    if (!newToken.trim()) {
-      toast.error("Hãy dán token Discord");
-      return;
-    }
+    setTokenTried(true);
+    setTokenOutcome(null);
+    if (!newToken.trim()) return;
     setAdding(true);
     try {
       const r = await credentialsApi.addToken({ token: newToken.trim(), label: newLabel.trim() || undefined });
       if (r.command) setCommand(r.command);
-      if (r.token.status === "valid") toast.success(`Đã thêm token: ${r.token.discord_username ?? r.token.label}`);
-      else toast.warning(r.token.last_error || "Đã thêm token nhưng chưa dùng được");
+      if (r.token.status === "valid") {
+        const who = r.token.discord_username ?? r.token.label;
+        setTokenOutcome({ tone: "success", title: `Đã thêm tài khoản ${who}`, text: "Discord xác nhận tài khoản này dùng được." });
+        toast.success(`Đã thêm tài khoản: ${who}`);
+      } else {
+        setTokenOutcome({
+          tone: "warning", title: "Đã thêm nhưng tài khoản chưa dùng được",
+          text: r.token.last_error || "Discord chưa chấp nhận mã này. Kiểm tra lại mã rồi bấm Kiểm tra lại ở dòng tài khoản.",
+        });
+      }
+      // Mã đăng nhập không được nằm lại trong ô nhập sau khi gửi.
       setNewToken("");
       setNewLabel("");
+      setTokenTried(false);
       await load();
     } catch (err) {
-      toast.error((err as Error).message);
+      setTokenOutcome({ tone: "error", title: "Chưa thêm được tài khoản", text: (err as Error).message });
     } finally {
       setAdding(false);
     }
@@ -176,18 +246,38 @@ export default function CredentialsPage() {
     }
   };
 
-  const handleDelete = async () => {
-    if (!confirm("Xoá cấu hình kết nối Discord? Job đang chạy/tạm dừng sẽ chặn thao tác này.")) return;
+  const askDeleteToken = (t: DiscordToken) => {
+    const name = t.label || t.discord_username || `#${t.id}`;
+    setConfirm({
+      title: `Xóa tài khoản ${name}?`,
+      body: "Tài khoản này sẽ bị xóa khỏi danh sách xoay vòng và mã đăng nhập đã lưu bị hủy. Các công việc sau này không dùng nó nữa; muốn dùng lại bạn phải nhập mã mới.",
+      confirmLabel: "Xóa tài khoản",
+      destructive: true,
+      onConfirm: () => tokenAction(t, () => credentialsApi.deleteToken(t.id), "Đã xóa tài khoản"),
+    });
+  };
+
+  const doDelete = async () => {
     try {
       await credentialsApi.delete();
-      toast.success("Đã xoá cấu hình");
+      toast.success("Đã xóa kết nối Discord");
       setForm(EMPTY_FORM);
       setCommand(null);
+      setFormOutcome(null);
+      setFormTried(false);
       await load();
     } catch (err) {
-      toast.error((err as Error).message);
+      setFormOutcome({ tone: "error", title: "Chưa xóa được kết nối", text: (err as Error).message });
     }
   };
+
+  const askDelete = () => setConfirm({
+    title: "Xóa kết nối Discord?",
+    body: "Toàn bộ cấu hình kênh và mọi mã đăng nhập Discord đã lưu sẽ bị xóa. Muốn chạy công việc lại bạn phải thiết lập từ đầu. Không xóa được khi còn công việc đang chạy hoặc đang tạm dừng.",
+    confirmLabel: "Xóa kết nối",
+    destructive: true,
+    onConfirm: doDelete,
+  });
 
   let regexTestResult: "match" | "no-match" | "invalid" | null = null;
   if (regexSample && form.success_pattern) {
@@ -198,211 +288,228 @@ export default function CredentialsPage() {
     }
   }
 
-  const statusInfo = info?.status ? STATUS_BADGE[info.status] : undefined;
+  const statusInfo = info?.exists && info.status ? CONNECTION_STATUS[info.status] : undefined;
   const tokens = info?.tokens ?? [];
   const usableTokens = tokens.filter((t) => t.enabled && t.status === "valid").length;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold">Kết nối Discord</h1>
-          <p className="text-sm text-muted-foreground">
-            Cấu hình tài khoản Discord dùng để chạy lệnh cộng điểm.
-          </p>
-        </div>
-        {statusInfo && <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>}
-      </div>
+    <div>
+      <PageHeader
+        title="Kết nối Discord"
+        description="Cho hệ thống biết gửi lệnh cộng điểm vào kênh Discord nào và bằng tài khoản nào. Mã đăng nhập Discord được mã hóa khi lưu và không bao giờ hiện lại sau khi bạn nhập."
+        actions={statusInfo && <StatusPill info={statusInfo} />}
+      />
 
-      <div className="glass flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-        <AlertTriangle className="mt-0.5 size-5 shrink-0" />
-        <div>
-          <p className="font-semibold">Cảnh báo vi phạm Điều khoản dịch vụ Discord</p>
-          <p className="mt-1">
-            Token tài khoản người dùng (user token) vi phạm ToS Discord và có thể khiến tài khoản bị khoá vĩnh
-            viễn. Hãy dùng một tài khoản phụ, không dùng tài khoản chính.
-          </p>
-        </div>
-      </div>
+      <Notice tone="warning" title="Dùng tài khoản Discord phụ, không dùng tài khoản chính" className="mb-6">
+        Dùng mã đăng nhập của tài khoản cá nhân để gửi lệnh vi phạm điều khoản dịch vụ của Discord và có thể khiến tài khoản bị khóa vĩnh viễn.
+        Hãy chỉ thêm tài khoản phụ mà bạn sẵn sàng mất.
+      </Notice>
 
       {loading ? (
-        <div className="text-sm text-muted-foreground">Đang tải…</div>
+        <p role="status" className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4" aria-hidden /> Đang tải kết nối…</p>
+      ) : loadFailed && !info ? (
+        <Notice tone="error" title="Chưa tải được kết nối Discord" action={<Button variant="outline" onClick={load}>Thử lại</Button>}>
+          Kiểm tra kết nối mạng rồi bấm Thử lại.
+        </Notice>
       ) : (
-        <div className="glass grid gap-6 rounded-xl p-6 md:grid-cols-2">
-          <div className="flex flex-col gap-3 md:col-span-2">
-            <div className="flex items-center justify-between">
-              <Label>Tài khoản Discord xoay vòng ({usableTokens}/{tokens.length} dùng được)</Label>
-              <p className="text-xs text-muted-foreground">
-                Token được chọn ngẫu nhiên, xen kẽ. Khoảng cách giữa 2 lệnh ≈ (độ trễ + độ lệch/2) ÷ số token, ngẫu nhiên ±50%;
-                riêng từng token vẫn không gửi nhanh hơn độ trễ bên dưới.
-              </p>
-            </div>
-
-            {tokens.length === 0 && (
-              <p className="rounded-lg border border-border-strong bg-elev-1 p-3 text-sm text-muted-foreground">
-                Chưa có token nào. Thêm ít nhất một token bên dưới để chạy job.
-              </p>
+        <>
+          {/* ── Tài khoản Discord ─────────────────────────────────────────── */}
+          <Section
+            id="tai-khoan"
+            title={`Tài khoản Discord (${usableTokens}/${tokens.length} dùng được)`}
+            description="Mỗi lệnh cộng điểm đi qua một tài khoản chọn ngẫu nhiên, nên thêm nhiều tài khoản sẽ gửi nhanh hơn và an toàn hơn. Tài khoản bị Discord từ chối sẽ tự bị loại và lệnh được gửi lại bằng tài khoản khác."
+          >
+            {tokens.length === 0 ? (
+              <EmptyState icon={Link2} title="Chưa có tài khoản Discord nào">
+                Thêm ít nhất một tài khoản ở biểu mẫu bên dưới để có thể chạy công việc phân phối.
+              </EmptyState>
+            ) : (
+              <ul className="divide-y divide-border border-y border-border">
+                {tokens.map((t) => {
+                  const st = TOKEN_STATUS[t.status] ?? TOKEN_STATUS.unverified;
+                  const name = t.label || t.discord_username || `#${t.id}`;
+                  const busy = busyToken === t.id;
+                  return (
+                    <li key={t.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
+                      <div className="min-w-0 flex-1 basis-56">
+                        <p className="break-words font-semibold">
+                          {name}
+                          {t.discord_username && t.label && t.label !== t.discord_username && (
+                            <span className="ml-2 text-sm font-normal text-muted-foreground">@{t.discord_username}</span>
+                          )}
+                        </p>
+                        <p className="mt-1 flex flex-wrap items-center gap-2">
+                          <StatusPill info={st} />
+                          {!t.enabled && <Badge variant="secondary"><Power className="size-3.5" aria-hidden />Đang tắt</Badge>}
+                          {t.verified_at && <span className="text-sm text-muted-foreground">kiểm tra {relativeTime(t.verified_at)}</span>}
+                        </p>
+                        {t.last_error && t.status !== "valid" && (
+                          <p className="mt-1 break-words text-sm text-destructive">{t.last_error}</p>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline" disabled={busy}
+                          aria-label={`Kiểm tra lại tài khoản ${name}`}
+                          onClick={() => tokenAction(t, () => credentialsApi.verifyToken(t.id), "Đã kiểm tra lại tài khoản")}
+                        >
+                          {busy ? <Loader2 aria-hidden /> : <RefreshCw aria-hidden />} Kiểm tra lại
+                        </Button>
+                        <Button
+                          variant="outline" disabled={busy}
+                          aria-label={`${t.enabled ? "Tắt" : "Bật"} tài khoản ${name}`}
+                          title={t.enabled ? "Tắt: tài khoản không tham gia xoay vòng nhưng vẫn được lưu" : "Bật lại để tham gia xoay vòng"}
+                          onClick={() => tokenAction(
+                            t, () => credentialsApi.patchToken(t.id, { enabled: !t.enabled }),
+                            t.enabled ? "Đã tắt tài khoản" : "Đã bật tài khoản",
+                          )}
+                        >
+                          <Power aria-hidden /> {t.enabled ? "Tắt" : "Bật"}
+                        </Button>
+                        <Button variant="outline" disabled={busy} aria-label={`Xóa tài khoản ${name}`} onClick={() => askDeleteToken(t)}
+                                className="text-destructive hover:text-destructive">
+                          <Trash2 aria-hidden /> Xóa
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             )}
 
-            {tokens.map((t) => {
-              const badge = STATUS_BADGE[t.status] ?? STATUS_BADGE.unverified;
-              return (
-                <div key={t.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border-strong bg-elev-1 p-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">
-                      {t.label || t.discord_username || `#${t.id}`}
-                      {t.discord_username && t.label && t.label !== t.discord_username && (
-                        <span className="ml-2 text-xs font-normal text-muted-foreground">@{t.discord_username}</span>
-                      )}
-                    </p>
-                    {t.last_error && t.status !== "valid" && (
-                      <p className="truncate text-xs text-destructive" title={t.last_error}>{t.last_error}</p>
-                    )}
-                  </div>
-                  <Badge variant={badge.variant}>{badge.label}</Badge>
-                  {!t.enabled && <Badge variant="secondary">Đang tắt</Badge>}
-                  <Button
-                    size="sm" variant="outline" disabled={busyToken === t.id}
-                    onClick={() => tokenAction(t, () => credentialsApi.verifyToken(t.id), "Đã kiểm tra lại token")}
-                    title="Kiểm tra lại token"
-                  >
-                    {busyToken === t.id ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-                  </Button>
-                  <Button
-                    size="sm" variant="outline" disabled={busyToken === t.id}
-                    onClick={() => tokenAction(
-                      t, () => credentialsApi.patchToken(t.id, { enabled: !t.enabled }),
-                      t.enabled ? "Đã tắt token" : "Đã bật token",
-                    )}
-                    title={t.enabled ? "Tắt (không tham gia xoay vòng)" : "Bật"}
-                  >
-                    <Power className="size-4" />
-                  </Button>
-                  <Button
-                    size="sm" variant="destructive" disabled={busyToken === t.id}
-                    onClick={() => {
-                      if (confirm("Xoá token này khỏi danh sách xoay vòng?")) {
-                        tokenAction(t, () => credentialsApi.deleteToken(t.id), "Đã xoá token");
-                      }
-                    }}
-                    title="Xoá token"
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
-              );
-            })}
+            <div className="mt-6 max-w-2xl">
+              <h3>Thêm tài khoản Discord</h3>
+              <p className="reading mt-1 text-sm text-muted-foreground">
+                Dán mã đăng nhập Discord của tài khoản phụ. Hệ thống mã hóa, kiểm tra với Discord rồi chỉ giữ lại tên tài khoản; mã gốc không hiện lại ở bất kỳ đâu.
+              </p>
+              <div className="mt-4 grid gap-4 md:grid-cols-[1fr_2fr]">
+                <Field label="Tên gọi" optional hint="Để bạn nhận ra tài khoản, ví dụ Tài khoản phụ 1.">
+                  {(p) => <Input {...p} value={newLabel} onChange={(e) => setNewLabel(e.target.value)} />}
+                </Field>
+                <Field
+                  label="Mã đăng nhập Discord"
+                  hint="Dán mã vào đây. Mã chỉ hiển thị khi bạn nhập, sau khi thêm sẽ không xem lại được."
+                  error={tokenTried && !newToken.trim() ? "Hãy dán mã đăng nhập Discord." : null}
+                >
+                  {(p) => <Input {...p} type="password" autoComplete="off" value={newToken} onChange={(e) => setNewToken(e.target.value)} />}
+                </Field>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button onClick={handleAddToken} disabled={adding}>
+                  {adding ? <Loader2 aria-hidden /> : <Plus aria-hidden />} Thêm tài khoản
+                </Button>
+                {adding && <p role="status" className="text-sm text-muted-foreground">Đang thêm và hỏi Discord xem mã có dùng được không…</p>}
+              </div>
+              {tokenOutcome && (
+                <Notice className="mt-4" tone={tokenOutcome.tone} title={tokenOutcome.title}>{tokenOutcome.text}</Notice>
+              )}
+            </div>
+          </Section>
 
-            <div className="grid gap-2 rounded-lg border border-dashed border-border-strong p-3 md:grid-cols-[1fr_2fr_auto]">
-              <Input
-                value={newLabel} onChange={(e) => setNewLabel(e.target.value)}
-                placeholder="Nhãn (tuỳ chọn)" aria-label="Nhãn token"
-              />
-              <Input
-                type="password" autoComplete="off" value={newToken} onChange={(e) => setNewToken(e.target.value)}
-                placeholder="Dán token Discord (chỉ hiển thị một lần)" aria-label="Discord token"
-              />
-              <Button onClick={handleAddToken} disabled={adding}>
-                {adding ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-                Thêm token
+          {/* ── Nơi gửi lệnh ──────────────────────────────────────────────── */}
+          <Section id="noi-gui" title="Nơi gửi lệnh" description="Máy chủ và kênh Discord có bot phát điểm, cùng tên lệnh cộng điểm.">
+            <div className="grid max-w-3xl gap-4 md:grid-cols-2">
+              <Field label="Mã máy chủ Discord (Guild ID)" hint="Dãy số dài 17–20 chữ số. Trong Discord bật Chế độ nhà phát triển, bấm chuột phải vào máy chủ rồi chọn Sao chép ID." error={shown("guild_id")}>
+                {(p) => <Input {...p} inputMode="numeric" value={form.guild_id} onChange={(e) => set("guild_id", e.target.value)} placeholder="123456789012345678" />}
+              </Field>
+              <Field label="Mã kênh Discord (Channel ID)" hint="Kênh nơi bot nhận lệnh cộng điểm. Lấy ID tương tự như máy chủ." error={shown("channel_id")}>
+                {(p) => <Input {...p} inputMode="numeric" value={form.channel_id} onChange={(e) => set("channel_id", e.target.value)} placeholder="123456789012345678" />}
+              </Field>
+              <Field label="Tên lệnh" hint="Thường giữ nguyên give-xp." error={shown("command_name")}>
+                {(p) => <Input {...p} value={form.command_name} onChange={(e) => set("command_name", e.target.value)} placeholder="give-xp" />}
+              </Field>
+              <Field label="Cách xác nhận kết quả" hint="Chờ bot trả lời giúp biết chắc điểm đã được cộng; chọn không chờ chỉ khi bot không trả lời.">
+                {(p) => (
+                  <Select value={form.confirm_mode} onValueChange={(v) => set("confirm_mode", v)}>
+                    <SelectTrigger {...p}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="reply">Chờ bot trả lời (khuyên dùng)</SelectItem>
+                      <SelectItem value="off">Không chờ xác nhận</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              </Field>
+              <Field label="Độ trễ giữa các lệnh của mỗi tài khoản (ms)" hint="Một tài khoản không gửi nhanh hơn mức này. Mặc định 1200." error={shown("delay_ms")}>
+                {(p) => <Input {...p} type="number" min={0} value={form.delay_ms} onChange={(e) => set("delay_ms", e.target.value)} />}
+              </Field>
+              <Field label="Độ lệch ngẫu nhiên (ms)" hint="Cộng thêm thời gian chờ ngẫu nhiên để lệnh không đều đặn như máy. Mặc định 400." error={shown("jitter_ms")}>
+                {(p) => <Input {...p} type="number" min={0} value={form.jitter_ms} onChange={(e) => set("jitter_ms", e.target.value)} />}
+              </Field>
+            </div>
+          </Section>
+
+          {/* ── Nâng cao ─────────────────────────────────────────────────── */}
+          <Section id="nang-cao" title="Cài đặt nâng cao" description="Chỉ cần đổi khi bot của bạn trả lời khác mặc định.">
+            <div className="grid max-w-3xl gap-4 md:grid-cols-2">
+              <Field label="Mã bot phát điểm" optional hint="Giúp nhận đúng câu trả lời của bot khi kênh có nhiều bot.">
+                {(p) => <Input {...p} value={form.leveling_bot_id} onChange={(e) => set("leveling_bot_id", e.target.value)} />}
+              </Field>
+              <div className="hidden md:block" />
+              <Field label="Mẫu nhận biết thành công (regex)" hint="Câu trả lời của bot khớp mẫu này thì tính là đã cộng điểm. Mặc định đã khớp với bot hiện dùng.">
+                {(p) => <Textarea {...p} className="font-mono text-sm" value={form.success_pattern} onChange={(e) => set("success_pattern", e.target.value)} />}
+              </Field>
+              <Field label="Mẫu nhận biết thất bại (regex)" optional hint="Câu trả lời khớp mẫu này thì tính là thất bại.">
+                {(p) => <Textarea {...p} className="font-mono text-sm" value={form.failure_pattern} onChange={(e) => set("failure_pattern", e.target.value)} placeholder="lỗi|error|không tìm thấy" />}
+              </Field>
+              <div className="md:col-span-2">
+                <Field label="Thử mẫu thành công trên một câu mẫu" optional hint="Dán một câu trả lời thật của bot để xem mẫu có khớp không.">
+                  {(p) => <Input {...p} value={regexSample} onChange={(e) => setRegexSample(e.target.value)} />}
+                </Field>
+                {regexTestResult && (
+                  <p role="status" className={`mt-2 flex items-center gap-1.5 text-sm font-medium ${regexTestResult === "match" ? "text-success" : regexTestResult === "invalid" ? "text-destructive" : "text-warning"}`}>
+                    {regexTestResult === "match" && <><CircleCheck className="size-4" aria-hidden /> Khớp: câu này sẽ được tính là thành công.</>}
+                    {regexTestResult === "no-match" && <><CircleX className="size-4" aria-hidden /> Không khớp: câu này sẽ không được tính là thành công.</>}
+                    {regexTestResult === "invalid" && <><ShieldAlert className="size-4" aria-hidden /> Mẫu không hợp lệ, hãy kiểm tra lại cú pháp.</>}
+                  </p>
+                )}
+              </div>
+            </div>
+          </Section>
+
+          {/* ── Hành động ────────────────────────────────────────────────── */}
+          <Section id="hanh-dong">
+            {info?.last_error && (
+              <Notice className="mb-4" tone="error" title="Lần kiểm tra gần nhất thất bại">{info.last_error}</Notice>
+            )}
+            {formOutcome && (
+              <Notice className="mb-4" tone={formOutcome.tone} title={formOutcome.title}>{formOutcome.text}</Notice>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={handleSave} disabled={saving}>
+                {saving && <Loader2 aria-hidden />} Lưu cấu hình
               </Button>
+              <Button variant="outline" onClick={handleVerify} disabled={verifying || !info?.exists}>
+                {verifying ? <Loader2 aria-hidden /> : <RefreshCw aria-hidden />} Kiểm tra kết nối
+              </Button>
+              {info?.exists && (
+                <Button variant="outline" onClick={askDelete} className="text-destructive hover:text-destructive">
+                  <Trash2 aria-hidden /> Xóa kết nối
+                </Button>
+              )}
             </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="guild_id">Guild ID</Label>
-            <Input id="guild_id" value={form.guild_id} onChange={(e) => set("guild_id", e.target.value)} placeholder="123456789012345678" />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="channel_id">Channel ID</Label>
-            <Input id="channel_id" value={form.channel_id} onChange={(e) => set("channel_id", e.target.value)} placeholder="123456789012345678" />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="command_name">Tên lệnh</Label>
-            <Input id="command_name" value={form.command_name} onChange={(e) => set("command_name", e.target.value)} placeholder="give-xp" />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label>Chế độ xác nhận</Label>
-            <Select value={form.confirm_mode} onValueChange={(v) => set("confirm_mode", v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="reply">reply — chờ bot trả lời</SelectItem>
-                <SelectItem value="off">off — không chờ xác nhận</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="leveling_bot_id">ID bot leveling (tuỳ chọn)</Label>
-            <Input id="leveling_bot_id" value={form.leveling_bot_id} onChange={(e) => set("leveling_bot_id", e.target.value)} placeholder="Dùng để liên kết reply theo bot_id" />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="delay_ms">Độ trễ giữa các lệnh của mỗi token (ms)</Label>
-            <Input id="delay_ms" type="number" value={form.delay_ms} onChange={(e) => set("delay_ms", e.target.value)} />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="jitter_ms">Độ lệch ngẫu nhiên (ms)</Label>
-            <Input id="jitter_ms" type="number" value={form.jitter_ms} onChange={(e) => set("jitter_ms", e.target.value)} />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="success_pattern">Success pattern (regex)</Label>
-            <Textarea id="success_pattern" value={form.success_pattern} onChange={(e) => set("success_pattern", e.target.value)} placeholder="đã nhận|received \\+\\d+" />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="failure_pattern">Failure pattern (regex)</Label>
-            <Textarea id="failure_pattern" value={form.failure_pattern} onChange={(e) => set("failure_pattern", e.target.value)} placeholder="lỗi|error|không tìm thấy" />
-          </div>
-
-          <div className="flex flex-col gap-1.5 md:col-span-2 rounded-lg border border-border-strong bg-elev-1 p-3">
-            <Label htmlFor="regex_sample">Thử regex trên một câu mẫu</Label>
-            <Input id="regex_sample" value={regexSample} onChange={(e) => setRegexSample(e.target.value)} placeholder="Dán nội dung reply mẫu của bot vào đây" />
-            {regexTestResult && (
-              <p className={`text-xs ${regexTestResult === "match" ? "text-success" : regexTestResult === "invalid" ? "text-destructive" : "text-warning"}`}>
-                {regexTestResult === "match" && "✓ Khớp success_pattern"}
-                {regexTestResult === "no-match" && "✗ Không khớp success_pattern"}
-                {regexTestResult === "invalid" && "Regex không hợp lệ"}
+            <p role="status" className="mt-2 min-h-5 text-sm text-muted-foreground">
+              {saving ? "Đang lưu và kiểm tra với Discord…" : verifying ? "Đang hỏi Discord xem từng tài khoản có dùng được không…" : ""}
+            </p>
+            {!info?.exists && (
+              <p className="mt-2 text-sm text-muted-foreground">Chưa lưu cấu hình thì chưa kiểm tra kết nối được.</p>
+            )}
+            {info?.exists && statusInfo?.variant === "success" && (
+              <p className="mt-4 text-sm">
+                Kết nối đã sẵn sàng. <Link to="/reward/jobs/new" className="font-medium text-primary-text underline underline-offset-2">Tạo công việc phân phối</Link>
               </p>
             )}
-          </div>
-
-          {command && (
-            <div className="flex flex-col gap-1 rounded-lg border border-border-strong bg-elev-1 p-3 text-xs text-muted-foreground md:col-span-2">
-              <p className="font-medium text-foreground">Metadata lệnh /{form.command_name}</p>
-              <p>application_id: {command.application_id} · command_id: {command.command_id} · version: {command.version}</p>
-              <p>option thành viên: {command.member_option_name} (type {command.member_option_type}) · option số điểm: {command.amount_option_name} (type {command.amount_option_type})</p>
-            </div>
-          )}
-
-          {info?.last_error && (
-            <p className="text-xs text-destructive md:col-span-2">Lỗi gần nhất: {info.last_error}</p>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2 md:col-span-2">
-            <Button onClick={handleSave} disabled={saving}>
-              {saving && <Loader2 className="size-4 animate-spin" />}
-              Lưu cấu hình
-            </Button>
-            <Button variant="outline" onClick={handleVerify} disabled={verifying || !info?.exists}>
-              {verifying ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-              Kiểm tra kết nối
-            </Button>
-            {info?.exists && (
-              <Button variant="destructive" onClick={handleDelete}>
-                <Trash2 className="size-4" /> Xoá cấu hình
-              </Button>
+            {command && (
+              <TechDetails className="mt-4 max-w-3xl">
+                <p className="font-medium">Thông tin lệnh /{form.command_name}</p>
+                <p className="mt-1 break-all text-muted-foreground">application_id: {command.application_id} · command_id: {command.command_id} · version: {command.version}</p>
+                <p className="mt-1 text-muted-foreground">Ô thành viên: {command.member_option_name} (type {command.member_option_type}) · Ô số điểm: {command.amount_option_name} (type {command.amount_option_type})</p>
+              </TechDetails>
             )}
-            {statusInfo?.variant === "success" && <CheckCircle2 className="size-4 text-success" />}
-            {statusInfo?.variant === "destructive" && <XCircle className="size-4 text-destructive" />}
-          </div>
-        </div>
+          </Section>
+        </>
       )}
+
+      <ConfirmDialog spec={confirm} onClose={() => setConfirm(null)} />
     </div>
   );
 }

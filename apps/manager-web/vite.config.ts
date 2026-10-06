@@ -17,6 +17,8 @@ export default defineConfig(({ mode }) => {
       // 127.0.0.1 (không phải "localhost") để khớp redirect URI OIDC đã đăng ký: http://127.0.0.1:5174/admin/callback
       host: "127.0.0.1",
       port: 5174,
+      // Sửa file test/tài liệu KHÔNG được làm tải lại cả trang (gây nhấp nháy khi đang chỉnh sửa nhiều file)
+      watch: { ignored: ["**/*.test.ts", "**/*.test.tsx", "**/src/test/**", "**/dist/**", "**/*.timestamp-*.mjs"] },
       proxy: {
         "/v1": viaGateway,
         "/oauth": viaGateway,

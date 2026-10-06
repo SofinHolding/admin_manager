@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Check, X, Loader2 } from "lucide-react";
 import { authApi } from "../api";
 import { Button } from "../components/ui/button";
+import { Notice } from "../components/kit";
+import { AuthShell, Spinner } from "../components/authKit";
 
 export default function VerifyEmailPage() {
   const [params] = useSearchParams();
@@ -16,7 +17,7 @@ export default function VerifyEmailPage() {
   useEffect(() => {
     if (!token) {
       setStatus("error");
-      setMessage("Link xác thực không hợp lệ.");
+      setMessage("Liên kết xác thực không hợp lệ.");
       return;
     }
     if (called.current) return;
@@ -28,40 +29,43 @@ export default function VerifyEmailPage() {
       .catch((e) => { setStatus("error"); setMessage((e as Error).message); });
   }, [token]);
 
+  if (status === "loading") {
+    return (
+      <AuthShell title="Đang xác thực email" description="Vui lòng chờ trong giây lát.">
+        <p role="status" className="flex items-center gap-2 text-muted-foreground">
+          <Spinner /> Đang xác thực email của bạn
+        </p>
+      </AuthShell>
+    );
+  }
+
+  if (status === "ok") {
+    return (
+      <AuthShell title="Đã xác thực email" description="Tài khoản của bạn đã sẵn sàng.">
+        <div className="flex flex-col gap-5">
+          <Notice tone="success" title="Xác thực thành công">{message || "Email của bạn đã được xác thực."}</Notice>
+          <Button asChild size="lg" className="w-full">
+            <Link to="/login?verified=true">Đăng nhập</Link>
+          </Button>
+        </div>
+      </AuthShell>
+    );
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <div className="glass w-full max-w-sm rounded-xl p-8 text-center">
-        {status === "loading" && (
-          <>
-            <Loader2 className="mx-auto mb-4 size-8 animate-spin text-primary-text" />
-            <p className="text-sm text-muted-foreground">Đang xác thực...</p>
-          </>
-        )}
-        {status === "ok" && (
-          <>
-            <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-success/15">
-              <Check className="size-6 text-success" />
-            </div>
-            <h2 className="mb-2 font-semibold">Xác thực thành công!</h2>
-            <p className="mb-6 text-sm text-muted-foreground">{message}</p>
-            <Link to="/login?verified=true">
-              <Button className="w-full" size="lg">Đăng nhập ngay</Button>
-            </Link>
-          </>
-        )}
-        {status === "error" && (
-          <>
-            <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-destructive/15">
-              <X className="size-6 text-destructive" />
-            </div>
-            <h2 className="mb-2 font-semibold">Xác thực thất bại</h2>
-            <p className="mb-6 text-sm text-muted-foreground">{message}</p>
-            <Link to="/login">
-              <Button variant="outline" className="w-full">Về trang đăng nhập</Button>
-            </Link>
-          </>
-        )}
+    <AuthShell title="Chưa xác thực được email" description="Liên kết này không dùng được.">
+      <div className="flex flex-col gap-5">
+        <Notice tone="error" title="Xác thực chưa thành công">
+          {message}
+          <span className="mt-1 block">
+            Liên kết chỉ dùng được một lần và có thời hạn. Nếu bạn đã xác thực trước đó, hãy đăng nhập. Nếu chưa,
+            hãy dùng liên kết trong thư mới nhất, hoặc báo quản trị viên.
+          </span>
+        </Notice>
+        <Button asChild variant="outline" size="lg" className="w-full">
+          <Link to="/login">Về trang đăng nhập</Link>
+        </Button>
       </div>
-    </div>
+    </AuthShell>
   );
 }

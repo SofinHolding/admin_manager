@@ -1,24 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, BarChart3, Check, Eye, EyeOff, Loader2, X } from "lucide-react";
+import { Check, Mail } from "lucide-react";
 import { authApi, type IntegrationPolicy, type RegisterIntegration } from "../api";
 import { parseList } from "./adminKeyForm";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
+import { Field, Notice } from "../components/kit";
+import {
+  AuthShell, PASSWORD_RULE, PasswordField, Spinner, TextLink, formError, passwordLengthError, MIN_PASSWORD_CHARS,
+  type FriendlyError,
+} from "../components/authKit";
 
 type Step = 1 | 2 | 3;
 
+const AVAILABLE = "inline-flex items-center gap-1 text-success";
+
 export default function RegisterPage() {
-  const navigate = useNavigate();
   const [step, setStep] = useState<Step>(1);
 
   // Bước 1
   const [inviteKey, setInviteKey] = useState("");
-  const [keyRole, setKeyRole] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
   const [keyLoading, setKeyLoading] = useState(false);
-  // Chính sách tích hợp của invite key (nếu key cho phép đăng ký kèm Tool)
+  // Chính sách tích hợp của mã mời (nếu mã cho phép tạo công cụ đẩy dữ liệu cùng lúc)
   const [policy, setPolicy] = useState<IntegrationPolicy | null>(null);
   const [withTool, setWithTool] = useState(false);
   const [toolName, setToolName] = useState("");
@@ -32,8 +35,8 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
-  const [showPw, setShowPw] = useState(false);
   const [regLoading, setRegLoading] = useState(false);
+  const [regError, setRegError] = useState<FriendlyError | null>(null);
 
   // Validation debounce
   const [usernameOk, setUsernameOk] = useState<boolean | null>(null);
@@ -44,30 +47,35 @@ export default function RegisterPage() {
   // Bước 3
   const [registeredEmail, setRegisteredEmail] = useState("");
 
-  // ── Bước 1: validate key ────────────────────────────────────────────────
+  // ── Bước 1: kiểm tra mã mời ─────────────────────────────────────────────
 
-  const validateKey = async () => {
-    if (!inviteKey.trim()) return;
+  const validateKey = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!inviteKey.trim()) {
+      setKeyError("Nhập mã mời bạn nhận được từ quản trị viên.");
+      return;
+    }
     setKeyLoading(true);
+    setKeyError(null);
     try {
       const d = await authApi.validateKey(inviteKey.trim());
       if (d.valid) {
-        setKeyRole(d.role || "viewer");
         const pol = d.integration_policy ?? (d.allow_integration_registration ? { allow_integration_registration: true } : null);
         setPolicy(pol && pol.allow_integration_registration ? pol : null);
         setWithTool(false);
         setStep(2);
       } else {
-        toast.error(d.reason || "Mã mời không hợp lệ");
+        setKeyError(`${d.reason || "Mã mời không hợp lệ"}. Kiểm tra lại mã, hoặc xin quản trị viên một mã mới.`);
       }
     } catch (err) {
-      toast.error((err as Error).message);
+      const fe = formError(err, "Chưa kiểm tra được mã mời");
+      setKeyError(`${fe.title}. ${fe.body}`);
     } finally {
       setKeyLoading(false);
     }
   };
 
-  // ── Bước 2: debounce check username/email ───────────────────────────────
+  // ── Bước 2: debounce kiểm tra tên đăng nhập / email ─────────────────────
 
   const checkUsername = useCallback((v: string) => {
     clearTimeout(usernameTimer.current);
@@ -94,17 +102,29 @@ export default function RegisterPage() {
   useEffect(() => { checkUsername(username); }, [username, checkUsername]);
   useEffect(() => { checkEmail(email); }, [email, checkEmail]);
 
-  const pwOk = password.length >= 8;
+  const lengthError = passwordLengthError(password);
+  const pwOk = password.length >= MIN_PASSWORD_CHARS && !lengthError;
   const confirmOk = confirmPw === password && confirmPw.length > 0;
   const policyPlatforms = policy?.allowed_platforms ?? [];
   const chosenPlatforms = policyPlatforms.length ? toolPlatforms : parseList(toolPlatformsText);
   const toolOk = !withTool || (toolName.trim().length > 0 && chosenPlatforms.length > 0);
   const canRegister = username.length >= 3 && usernameOk && email.includes("@") && emailOk && pwOk && confirmOk && toolOk;
 
+  // Cho người dùng biết còn thiếu gì khi nút chưa bấm được (không chỉ làm mờ nút).
+  const missing: string[] = [];
+  if (username.length < 3) missing.push("tên đăng nhập");
+  else if (usernameOk === false) missing.push("tên đăng nhập khác (tên này đã có người dùng)");
+  if (!email.includes("@")) missing.push("email");
+  else if (emailOk === false) missing.push("email khác (email này đã đăng ký)");
+  if (!pwOk) missing.push("mật khẩu hợp lệ");
+  if (!confirmOk) missing.push("nhập lại mật khẩu cho khớp");
+  if (withTool && !toolOk) missing.push("tên công cụ và ít nhất một nền tảng");
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canRegister) return;
     setRegLoading(true);
+    setRegError(null);
     try {
       const integration: RegisterIntegration | undefined = policy && withTool
         ? { create: true, tool_name: toolName.trim(), client_kind: toolKind, platforms: chosenPlatforms }
@@ -113,24 +133,26 @@ export default function RegisterPage() {
       setRegisteredEmail(d.email);
       setProvisioning(d.provisioning ?? "");
       setStep(3);
-      toast.success("Đăng ký thành công!");
     } catch (err) {
-      toast.error((err as Error).message);
+      setRegError(formError(err, "Chưa đăng ký được"));
     } finally {
       setRegLoading(false);
     }
   };
 
-  // ── Bước 3: resend verify ──────────────────────────────────────────────
+  // ── Bước 3: gửi lại thư xác thực ────────────────────────────────────────
 
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendNote, setResendNote] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const resendTimer = useRef<ReturnType<typeof setInterval>>(undefined);
+  useEffect(() => () => clearInterval(resendTimer.current), []);
 
   const handleResend = async () => {
     if (resendCooldown > 0) return;
+    setResendNote(null);
     try {
       await authApi.resendVerify(registeredEmail);
-      toast.success("Đã gửi lại email xác thực");
+      setResendNote({ tone: "success", text: "Đã gửi lại thư xác thực. Thư có thể mất vài phút để tới." });
       setResendCooldown(60);
       resendTimer.current = setInterval(() => {
         setResendCooldown((s) => {
@@ -139,238 +161,232 @@ export default function RegisterPage() {
         });
       }, 1000);
     } catch (err) {
-      toast.error((err as Error).message);
+      const fe = formError(err, "Chưa gửi lại được");
+      setResendNote({ tone: "error", text: `${fe.title}. ${fe.body}` });
     }
   };
 
   // ── Render ──────────────────────────────────────────────────────────────
 
-  return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <div className="w-full max-w-[400px]">
-        {/* Logo */}
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-xl bg-primary/15">
-            <BarChart3 className="size-6 text-primary-text" />
+  if (step === 3) {
+    return (
+      <AuthShell
+        title="Kiểm tra email"
+        description="Còn một bước nữa: xác thực email để kích hoạt tài khoản."
+        footer={<p>Đã xác thực xong? <TextLink to="/login">Đăng nhập</TextLink></p>}
+      >
+        <div className="flex flex-col gap-5">
+          <p className="flex items-start gap-3">
+            <Mail className="mt-0.5 size-5 shrink-0 text-primary-text" aria-hidden />
+            <span>
+              Chúng tôi đã gửi thư xác thực tới <strong className="break-all">{registeredEmail}</strong>.
+            </span>
+          </p>
+          <ol className="list-decimal space-y-1.5 pl-6 text-[0.9375rem]">
+            <li>Mở hộp thư của bạn. Nếu chưa thấy thư sau vài phút, xem cả mục thư rác.</li>
+            <li>Bấm vào liên kết xác thực trong thư.</li>
+            <li>Quay lại đây và đăng nhập.</li>
+          </ol>
+          {provisioning === "pending" && (
+            <p className="text-sm text-muted-foreground" data-testid="provisioning-pending">
+              Công cụ đẩy dữ liệu bạn chọn tạo cùng lúc sẽ được khởi tạo sau khi email được xác thực.
+            </p>
+          )}
+          {resendNote && (
+            <Notice tone={resendNote.tone}>{resendNote.text}</Notice>
+          )}
+          <div className="flex flex-col gap-1">
+            <Button variant="outline" size="lg" onClick={handleResend} disabled={resendCooldown > 0} className="w-full">
+              {resendCooldown > 0 ? `Gửi lại thư sau ${resendCooldown} giây` : "Gửi lại thư xác thực"}
+            </Button>
+            <p className="text-sm text-muted-foreground">Sai địa chỉ email? Đăng ký lại với địa chỉ đúng.</p>
           </div>
-          <h1 className="text-xl font-semibold">Đăng ký tài khoản</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Bước {step}/3</p>
         </div>
+      </AuthShell>
+    );
+  }
 
-        {/* ── Bước 1: Invite key ───────────────────────────────────────── */}
-        {step === 1 && (
-          <div className="glass rounded-xl p-6">
-            <h2 className="mb-1 font-semibold">Nhập mã mời</h2>
-            <p className="mb-4 text-sm text-muted-foreground">
-              Paste mã mời bạn nhận được từ quản trị viên
-            </p>
-            <div className="flex flex-col gap-4">
+  if (step === 1) {
+    return (
+      <AuthShell
+        title="Đăng ký tài khoản"
+        description="Bạn cần mã mời từ quản trị viên để tạo tài khoản. Bước 1 trên 2."
+        footer={<p>Đã có tài khoản? <TextLink to="/login">Đăng nhập</TextLink></p>}
+      >
+        <form onSubmit={validateKey} noValidate className="flex flex-col gap-5">
+          <Field label="Mã mời" hint="Dán mã mời bạn nhận được từ quản trị viên." error={keyError}>
+            {(p) => (
               <Input
+                {...p}
+                name="invite"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 value={inviteKey}
-                onChange={(e) => setInviteKey(e.target.value)}
-                placeholder="Mã mời"
+                onChange={(e) => { setInviteKey(e.target.value); setKeyError(null); }}
                 autoFocus
-                onKeyDown={(e) => e.key === "Enter" && validateKey()}
               />
-              <Button onClick={validateKey} disabled={keyLoading || !inviteKey.trim()} className="w-full">
-                {keyLoading && <Loader2 className="size-4 animate-spin" />}
-                Tiếp tục <ArrowRight className="size-4" />
-              </Button>
-            </div>
-            <div className="mt-4 text-center text-sm text-muted-foreground">
-              <Link to="/login" className="text-primary-text hover:underline">
-                <ArrowLeft className="mr-1 inline size-3" />
-                Quay lại đăng nhập
-              </Link>
-            </div>
-          </div>
-        )}
-
-        {/* ── Bước 2: Form đăng ký ────────────────────────────────────── */}
-        {step === 2 && (
-          <form onSubmit={handleRegister} className="glass rounded-xl p-6">
-            <h2 className="mb-1 font-semibold">Tạo tài khoản</h2>
-            <p className="mb-4 text-sm text-muted-foreground">Điền thông tin để tạo tài khoản mới</p>
-            <div className="flex flex-col gap-4">
-              {/* Username */}
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="reg-username">Tên đăng nhập</Label>
-                <div className="relative">
-                  <Input
-                    id="reg-username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))}
-                    placeholder="3-30 ký tự, chữ/số/gạch dưới"
-                    maxLength={30}
-                    autoFocus
-                  />
-                  {usernameOk !== null && (
-                    <span className={`absolute right-2.5 top-1/2 -translate-y-1/2 ${usernameOk ? "text-success" : "text-destructive"}`}>
-                      {usernameOk ? <Check className="size-4" /> : <X className="size-4" />}
-                    </span>
-                  )}
-                </div>
-                {usernameOk === false && (
-                  <p className="text-xs text-destructive">Tên đã được sử dụng</p>
-                )}
-              </div>
-
-              {/* Email */}
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="reg-email">Email</Label>
-                <div className="relative">
-                  <Input
-                    id="reg-email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="Dùng để xác thực tài khoản"
-                  />
-                  {emailOk !== null && (
-                    <span className={`absolute right-2.5 top-1/2 -translate-y-1/2 ${emailOk ? "text-success" : "text-destructive"}`}>
-                      {emailOk ? <Check className="size-4" /> : <X className="size-4" />}
-                    </span>
-                  )}
-                </div>
-                {emailOk === false && (
-                  <p className="text-xs text-destructive">Email đã được đăng ký</p>
-                )}
-              </div>
-
-              {/* Password */}
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="reg-password">Mật khẩu</Label>
-                <div className="relative">
-                  <Input
-                    id="reg-password"
-                    type={showPw ? "text" : "password"}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Tối thiểu 8 ký tự"
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPw(!showPw)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    tabIndex={-1}
-                  >
-                    {showPw ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                  </button>
-                </div>
-                {password && (
-                  <p className={`text-xs ${pwOk ? "text-success" : "text-muted-foreground"}`}>
-                    {pwOk ? "✓ Đủ độ dài" : `Cần thêm ${8 - password.length} ký tự`}
-                  </p>
-                )}
-              </div>
-
-              {/* Confirm password */}
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="reg-confirm">Xác nhận mật khẩu</Label>
-                <Input
-                  id="reg-confirm"
-                  type="password"
-                  value={confirmPw}
-                  onChange={(e) => setConfirmPw(e.target.value)}
-                  placeholder="Nhập lại mật khẩu"
-                />
-                {confirmPw && !confirmOk && (
-                  <p className="text-xs text-destructive">Mật khẩu không khớp</p>
-                )}
-              </div>
-
-              {/* Đăng ký kèm Tool — chỉ hiện khi invite key cho phép (integration_policy) */}
-              {policy && (
-                <div className="rounded-lg border border-border p-3" data-testid="register-tool">
-                  <label className="flex items-center gap-2 text-sm font-medium">
-                    <input type="checkbox" className="rounded accent-primary" checked={withTool}
-                           onChange={(e) => setWithTool(e.target.checked)} />
-                    Đăng ký kèm Tool (tuỳ chọn)
-                  </label>
-                  {withTool && (
-                    <div className="mt-3 flex flex-col gap-3">
-                      <div className="flex flex-col gap-1.5">
-                        <Label htmlFor="reg-tool-name">Tên Tool</Label>
-                        <Input id="reg-tool-name" value={toolName} maxLength={100}
-                               onChange={(e) => setToolName(e.target.value)} placeholder="vd: Tool đăng bài" />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <Label htmlFor="reg-tool-kind">Loại</Label>
-                        <select id="reg-tool-kind" value={toolKind}
-                                onChange={(e) => setToolKind(e.target.value as RegisterIntegration["client_kind"])}
-                                className="h-9 rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary">
-                          <option value="primary_tool">Tool chính</option>
-                          <option value="fallback_tool">Tool dự phòng</option>
-                          <option value="service">Service</option>
-                        </select>
-                      </div>
-                      <fieldset className="flex flex-col gap-1.5">
-                        <legend className="text-sm">Nền tảng</legend>
-                        {policyPlatforms.length ? (
-                          <div className="flex flex-wrap gap-x-4 gap-y-1">
-                            {policyPlatforms.map((pl) => (
-                              <label key={pl} className="flex items-center gap-1.5 text-sm">
-                                <input type="checkbox" className="rounded accent-primary" checked={toolPlatforms.includes(pl)}
-                                       onChange={(e) => setToolPlatforms((cur) => e.target.checked ? [...cur, pl] : cur.filter((x) => x !== pl))} />
-                                {pl}
-                              </label>
-                            ))}
-                          </div>
-                        ) : (
-                          <Input aria-label="Nền tảng" value={toolPlatformsText} placeholder="facebook, youtube"
-                                 onChange={(e) => setToolPlatformsText(e.target.value)} />
-                        )}
-                      </fieldset>
-                      <p className="text-xs text-muted-foreground">
-                        Client được khởi tạo sau khi bạn xác thực email; API key cấp ở trang “Tích hợp Tool”.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                <Button type="button" variant="outline" onClick={() => setStep(1)} className="flex-1">
-                  <ArrowLeft className="size-4" /> Quay lại
-                </Button>
-                <Button type="submit" disabled={regLoading || !canRegister} className="flex-1">
-                  {regLoading && <Loader2 className="size-4 animate-spin" />}
-                  Đăng ký <ArrowRight className="size-4" />
-                </Button>
-              </div>
-            </div>
-          </form>
-        )}
-
-        {/* ── Bước 3: Xác thực email ──────────────────────────────────── */}
-        {step === 3 && (
-          <div className="glass rounded-xl p-6 text-center">
-            <div className="mb-4 text-4xl">✉️</div>
-            <h2 className="mb-2 font-semibold">Xác thực email</h2>
-            <p className="mb-1 text-sm text-muted-foreground">Đã gửi email xác thực tới</p>
-            <p className="mb-4 font-medium text-primary-text">{registeredEmail}</p>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Kiểm tra hộp thư và click vào link xác thực để kích hoạt tài khoản.
-            </p>
-            {provisioning === "pending" && (
-              <p className="mb-6 text-xs text-muted-foreground" data-testid="provisioning-pending">
-                Tool đăng ký kèm đang chờ khởi tạo — sẽ sẵn sàng sau khi email được xác thực.
-              </p>
             )}
-            <div className="flex flex-col gap-3">
-              <Button variant="outline" onClick={handleResend} disabled={resendCooldown > 0} className="w-full">
-                {resendCooldown > 0 ? `Gửi lại sau ${resendCooldown}s` : "Gửi lại email"}
-              </Button>
-              <Link to="/login">
-                <Button variant="ghost" className="w-full">
-                  <ArrowLeft className="size-4" /> Đăng nhập bằng tài khoản khác
-                </Button>
-              </Link>
-            </div>
+          </Field>
+          <Button type="submit" size="lg" disabled={keyLoading} className="w-full">
+            {keyLoading && <Spinner />}
+            Tiếp tục
+          </Button>
+        </form>
+      </AuthShell>
+    );
+  }
+
+  return (
+    <AuthShell
+      title="Tạo tài khoản"
+      description="Điền thông tin của bạn. Bước 2 trên 2."
+      footer={<p>Đã có tài khoản? <TextLink to="/login">Đăng nhập</TextLink></p>}
+    >
+      <form onSubmit={handleRegister} noValidate className="flex flex-col gap-5">
+        {regError && <Notice tone="error" title={regError.title}>{regError.body}</Notice>}
+
+        <Field
+          label="Tên đăng nhập"
+          hint={usernameOk
+            ? <span className={AVAILABLE}><Check className="size-4" aria-hidden />Tên này dùng được</span>
+            : "3 đến 30 ký tự: chữ không dấu, số và gạch dưới."}
+          error={usernameOk === false ? "Tên này đã có người dùng. Hãy chọn tên khác." : null}
+        >
+          {(p) => (
+            <Input
+              {...p}
+              name="username"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={username}
+              onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))}
+              maxLength={30}
+              autoFocus
+            />
+          )}
+        </Field>
+
+        <Field
+          label="Email"
+          hint={emailOk
+            ? <span className={AVAILABLE}><Check className="size-4" aria-hidden />Email này dùng được</span>
+            : "Chúng tôi gửi thư xác thực tới email này. Dùng email bạn đọc được."}
+          error={emailOk === false ? "Email này đã được đăng ký. Hãy đăng nhập, hoặc dùng “Quên mật khẩu” nếu bạn quên mật khẩu." : null}
+        >
+          {(p) => (
+            <Input
+              {...p}
+              name="email"
+              type="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          )}
+        </Field>
+
+        <PasswordField
+          label="Mật khẩu"
+          name="new-password"
+          autoComplete="new-password"
+          value={password}
+          onChange={setPassword}
+          error={lengthError}
+          hint={
+            <>
+              {PASSWORD_RULE}
+              {password.length > 0 && password.length < MIN_PASSWORD_CHARS && (
+                <span className="mt-0.5 block">Cần thêm {MIN_PASSWORD_CHARS - password.length} ký tự.</span>
+              )}
+            </>
+          }
+        />
+
+        <Field label="Nhập lại mật khẩu" error={confirmPw && !confirmOk ? "Hai mật khẩu chưa khớp. Nhập lại cho giống ô trên." : null}>
+          {(p) => (
+            <Input
+              {...p}
+              name="confirm-password"
+              type="password"
+              autoComplete="new-password"
+              value={confirmPw}
+              onChange={(e) => setConfirmPw(e.target.value)}
+            />
+          )}
+        </Field>
+
+        {/* Tạo công cụ đẩy dữ liệu cùng lúc: chỉ hiện khi mã mời cho phép (integration_policy) */}
+        {policy && (
+          <div className="border-t border-border pt-4" data-testid="register-tool">
+            <label className="flex min-h-11 cursor-pointer items-center gap-3 font-semibold">
+              <input type="checkbox" className="size-5 accent-primary" checked={withTool}
+                     aria-describedby="register-tool-hint"
+                     onChange={(e) => setWithTool(e.target.checked)} />
+              Tạo công cụ đẩy dữ liệu
+            </label>
+            <p id="register-tool-hint" className="ml-8 text-sm text-muted-foreground">
+              Không bắt buộc. Chọn nếu bạn muốn có sẵn một công cụ để đẩy dữ liệu kênh lên Manager.
+            </p>
+            {withTool && (
+              <div className="mt-4 flex flex-col gap-4">
+                <Field label="Tên công cụ" hint="Đặt tên dễ nhớ, ví dụ: Công cụ đăng bài.">
+                  {(p) => <Input {...p} value={toolName} maxLength={100} onChange={(e) => setToolName(e.target.value)} />}
+                </Field>
+                <Field label="Loại công cụ">
+                  {(p) => (
+                    <select {...p} value={toolKind}
+                            onChange={(e) => setToolKind(e.target.value as RegisterIntegration["client_kind"])}
+                            className="h-11 w-full rounded-md border border-border-strong bg-surface-1 px-3 text-base">
+                      <option value="primary_tool">Công cụ chính</option>
+                      <option value="fallback_tool">Công cụ dự phòng</option>
+                      <option value="service">Dịch vụ tự động</option>
+                    </select>
+                  )}
+                </Field>
+                <fieldset className="flex flex-col gap-1">
+                  <legend className="mb-1 text-sm font-semibold">Nền tảng</legend>
+                  {policyPlatforms.length ? (
+                    <div className="flex flex-wrap gap-x-5">
+                      {policyPlatforms.map((pl) => (
+                        <label key={pl} className="flex min-h-11 cursor-pointer items-center gap-2">
+                          <input type="checkbox" className="size-5 accent-primary" checked={toolPlatforms.includes(pl)}
+                                 onChange={(e) => setToolPlatforms((cur) => e.target.checked ? [...cur, pl] : cur.filter((x) => x !== pl))} />
+                          {pl}
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <Input aria-label="Nền tảng" value={toolPlatformsText} placeholder="facebook, youtube"
+                           onChange={(e) => setToolPlatformsText(e.target.value)} />
+                  )}
+                </fieldset>
+                <p className="text-sm text-muted-foreground">
+                  Công cụ được khởi tạo sau khi bạn xác thực email. Khóa kết nối cấp ở trang &ldquo;Công cụ đẩy dữ liệu&rdquo;.
+                </p>
+              </div>
+            )}
           </div>
         )}
-      </div>
-    </div>
+
+        <div className="flex flex-col gap-3">
+          {!canRegister && missing.length > 0 && (
+            <p className="text-sm text-muted-foreground" aria-live="polite">
+              Để đăng ký, còn cần: {missing.join("; ")}.
+            </p>
+          )}
+          <Button type="submit" size="lg" disabled={regLoading || !canRegister} className="w-full">
+            {regLoading && <Spinner />}
+            Đăng ký
+          </Button>
+          <Button type="button" variant="ghost" onClick={() => setStep(1)} className="w-full">
+            Quay lại bước nhập mã mời
+          </Button>
+        </div>
+      </form>
+    </AuthShell>
   );
 }

@@ -158,7 +158,7 @@ def main() -> int:
             ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
             rnd = random.Random(7)
             resources = [{"external_id": c[0], "resource_type": "channel", "display_name": c[1], "state": "active",
-                          "country": {"code": c[2], "name": c[3]}, "observed_at": ts} for c in CHANNELS]
+                          "country": {"code": c[2], "name": c[3]}, "managed": True, "active": True, "observed_at": ts} for c in CHANNELS]
             content, events = [], []
             for ci, c in enumerate(CHANNELS):
                 for d in range(1, 15):

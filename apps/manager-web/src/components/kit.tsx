@@ -75,9 +75,9 @@ export function StatStrip({ stats, className }: { stats: Stat[]; className?: str
   return (
     <dl className={cn("grid grid-cols-2 divide-x divide-border border-y border-border md:grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]", className)}>
       {stats.map((s) => (
-        <div key={s.label} className="min-w-0 px-4 py-4 first:pl-0">
+        <div key={s.label} className="min-w-0 px-4 py-4 odd:pl-0 md:odd:pl-4 md:first:pl-0">
           <dt className="text-sm text-muted-foreground">{s.label}</dt>
-          <dd className="figure mt-1 text-[1.625rem] leading-tight">{s.value}</dd>
+          <dd className="figure mt-1 text-2xl leading-tight">{s.value}</dd>
           {s.note && (
             <p className={cn("mt-1 text-sm", s.tone === "good" && "text-success", s.tone === "bad" && "text-destructive", (!s.tone || s.tone === "default") && "text-muted-foreground")}>
               {s.note}

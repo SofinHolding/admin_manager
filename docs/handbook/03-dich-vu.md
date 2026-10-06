@@ -176,6 +176,7 @@ React + Vite + TypeScript. Dev: `npm run dev` (bind `127.0.0.1:5174`, proxy `/v1
 - `src/filters/` (`filterState.ts` thuần 8 tham số, `FilterContext.tsx` nguồn sự thật duy nhất đồng bộ URL, `useAnalyticsQuery.ts` hủy request cũ/giữ dữ liệu cuối khi 503, `freshness.ts`, `compareDimensions.ts`).
 - `src/auth/` (`tokenStore.ts`, `oidc.ts` PKCE S256 + state + nonce, `permissions.ts`), `src/auth.tsx`; `VITE_AUTH_MODE=oidc` bật SSO.
 - `routes/`: Dashboard, Admin (invite key + `PermissionsDialog`), `IntegrationClientsPage` (`/integrations`), Register (đăng ký kèm Tool), Groups, Resources, Profile, Reset/Verify, `OidcCallbackPage`. `components/SecretOnceDialog` (API key hiện đúng một lần, không vào storage).
+- **Giao diện v1** (`docs/architecture/ui-design-v1.md`): thanh bên theo việc + thanh tab/ngăn kéo trên điện thoại (`src/nav.ts`, `Layout.tsx`), bộ kit dùng chung `src/components/kit.tsx`, token ở `src/index.css`, chữ Be Vietnam Pro tự host, nền 15px (người dùng chọn cỡ chữ chuẩn/lớn/rất lớn và sáng/tối/theo máy ở `lib/preferences.ts` — ngoại lệ DUY NHẤT được dùng `localStorage`, có test khóa). Trang mới phải dùng kit và theo quy tắc viết/vai trò ở tài liệu đó.
 - Quy tắc cứng: không `dangerouslySetInnerHTML/innerHTML` (test quét nguồn); refresh token **không** vào `localStorage`; quét bundle không được có secret.
 
 ---

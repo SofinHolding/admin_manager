@@ -10,6 +10,8 @@ import { PERM_REWARD_ACCESS, type PrincipalLike } from "./auth/permissions";
 export interface NavItem {
   to: string;
   label: string;
+  /** Tên ngắn cho thanh tab dưới (điện thoại), tránh bị cắt chữ. */
+  short?: string;
   icon: LucideIcon;
 }
 
@@ -44,8 +46,8 @@ export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: s
     groups.push({
       title: "Kết nối dữ liệu",
       items: [
-        { to: "/resources", label: "Kênh và nguồn", icon: Database },
-        { to: "/integrations", label: "Công cụ đẩy dữ liệu", icon: KeyRound },
+        { to: "/resources", label: "Kênh và nguồn", short: "Kênh", icon: Database },
+        { to: "/integrations", label: "Công cụ đẩy dữ liệu", short: "Công cụ", icon: KeyRound },
       ],
     });
   }
@@ -53,8 +55,8 @@ export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: s
     groups.push({
       title: "Phân phối điểm",
       items: [
-        { to: "/reward/credentials", label: "Kết nối Discord", icon: Link2 },
-        { to: "/reward/jobs", label: "Công việc phân phối", icon: Coins },
+        { to: "/reward/credentials", label: "Kết nối Discord", short: "Discord", icon: Link2 },
+        { to: "/reward/jobs", label: "Công việc phân phối", short: "Công việc", icon: Coins },
       ],
     });
   }

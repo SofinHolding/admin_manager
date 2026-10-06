@@ -21,7 +21,7 @@ function server(validate: Record<string, unknown>) {
 
 async function toStep2(user: ReturnType<typeof userEvent.setup>) {
   render(<MemoryRouter><RegisterPage /></MemoryRouter>);
-  await user.type(screen.getByPlaceholderText("Mã mời"), "INVITE-KEY");
+  await user.type(screen.getByLabelText("Mã mời"), "INVITE-KEY");
   await user.click(screen.getByRole("button", { name: /Tiếp tục/ }));
   await screen.findByText("Tạo tài khoản");
 }
@@ -30,7 +30,7 @@ async function fillAccount(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("Tên đăng nhập"), "newuser");
   await user.type(screen.getByLabelText("Email"), "a@b.co");
   await user.type(screen.getByLabelText("Mật khẩu"), "password-123");
-  await user.type(screen.getByLabelText("Xác nhận mật khẩu"), "password-123");
+  await user.type(screen.getByLabelText("Nhập lại mật khẩu"), "password-123");
   // chờ debounce kiểm tra username/email (500ms)
   await waitFor(() => expect(document.querySelectorAll(".text-success").length).toBeGreaterThanOrEqual(2), { timeout: 5000 });
 }
@@ -43,9 +43,9 @@ describe("RegisterPage — đăng ký kèm Tool (tuỳ chọn)", () => {
     expect(screen.getByTestId("register-tool")).toBeInTheDocument();
     await fillAccount(user);
 
-    await user.click(screen.getByRole("checkbox", { name: /Đăng ký kèm Tool/ }));
-    await user.type(screen.getByLabelText("Tên Tool"), "Tool đăng bài");
-    await user.selectOptions(screen.getByLabelText("Loại"), "fallback_tool");
+    await user.click(screen.getByRole("checkbox", { name: /Tạo công cụ đẩy dữ liệu/ }));
+    await user.type(screen.getByLabelText("Tên công cụ"), "Tool đăng bài");
+    await user.selectOptions(screen.getByLabelText("Loại công cụ"), "fallback_tool");
     // chưa chọn nền tảng => chưa đăng ký được
     expect(screen.getByRole("button", { name: /Đăng ký/ })).toBeDisabled();
     await user.click(screen.getByRole("checkbox", { name: "facebook" }));

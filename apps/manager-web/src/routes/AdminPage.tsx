@@ -1,30 +1,38 @@
 /**
- * Trang quản trị — tạo invite key (kèm chính sách tích hợp Tool + allowed_apps), quản lý tài khoản (lọc theo
- * vai trò, cấp/thu permission qua Identity), job toàn hệ thống, khoá kênh, nhật ký đổi role (3 tab Reward cần
- * permission `reward:admin`).
+ * Trang quản trị hệ thống (ui-design-v1.md): điều hướng trong trang theo VIỆC —
+ *   Mã mời (tạo + danh sách) · Tài khoản (tìm, sửa, quyền, khóa/mở, xóa) · Phân phối điểm (công việc toàn hệ thống +
+ *   nhật ký đổi vai trò; cần quyền `reward:admin`) · Khóa kênh (cần `reward:admin`) · Quốc gia (chuẩn hóa tên).
  *
- * Chỉ admin (role='admin') mới vào được. Viewer bị chặn ở ProtectedRoute hoặc API trả 403.
- * Key tạo ra luôn single-use (max_uses=1) và hết hạn sau 7 ngày — đây là constraint cố định,
- * không cho chọn trên giao diện để tránh tạo key vĩnh viễn.
- *
- * Trang "Reward admin" riêng (/reward/admin) đã gộp hết vào đây — không còn route riêng.
+ * Quản trị viên làm mọi việc. Quản lý Dashboard (`dash_admin`) KHÔNG khóa/sửa/xóa tài khoản quản trị viên: giao diện vô hiệu các nút
+ * đó kèm lời giải thích; server vẫn là nơi cưỡng chế (403 ADMIN_TARGET_FORBIDDEN, hiển thị bằng lời dễ hiểu).
+ * Mã mời tạo ra luôn dùng được 1 lần và hết hạn sau 7 ngày — ràng buộc cố định, không cho chọn để tránh tạo mã vĩnh viễn.
+ * Chỉ trình bày: không đổi logic gọi API.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
-  Check, Copy, Globe, History, Key, ListChecks, Pencil, Plus, RefreshCw, ShieldCheck,
-  Trash2, Unlock, UserX, UserCheck, X, ShieldPlus,
+  Ban, Check, CheckCircle2, Clock, Copy, Globe, Lock, Pencil, Plus, Search, ShieldPlus,
+  Trash2, Unlock, UserCheck, UserX, X, XCircle, KeyRound, Info,
 } from "lucide-react";
 import { adminApi, type InviteKey, type Account, type CountryAlias, type CountryCanonical } from "../api";
 import {
   adminApi as rewardAdminApi, type JobSummary, type RoleAuditEntry, type RunnerLock,
 } from "../reward/api";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Badge } from "../components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog";
 import { PermissionsDialog } from "../components/PermissionsDialog";
+import { EmptyState, Field, Notice, PageHeader, Section, TechDetails } from "../components/kit";
 import { useAuth } from "../auth";
 import { PERM_REWARD_ADMIN } from "../auth/permissions";
-import { buildKeyExtra, DEFAULT_POLICY_SCOPES, POLICY_SCOPE_OPTIONS } from "./adminKeyForm";
+import { roleLabel } from "../nav";
+import { cn } from "../lib/utils";
+import { errorMessage } from "../lib/errors";
+import {
+  ADMIN_ONLY_REASON, adminErrorText, buildKeyExtra, DEFAULT_POLICY_SCOPES, POLICY_SCOPE_LABEL, POLICY_SCOPE_OPTIONS,
+} from "./adminKeyForm";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
@@ -32,13 +40,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function fmtDate(iso: string) {
-  if (!iso) return "—";
+const ROLE_OPTIONS = ["viewer", "dash_admin", "admin", "discord"] as const;
+const ASSIGNABLE_ROLES = ["viewer", "dash_admin", "admin"] as const;
+const DAY = 86_400_000;
+
+function fmtDate(iso: string | null | undefined, empty = "—") {
+  if (!iso) return empty;
   const d = new Date(iso);
-  return d.toLocaleDateString("vi-VN", {
-    day: "2-digit", month: "2-digit", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  });
+  if (Number.isNaN(d.getTime())) return empty;
+  return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function isExpired(expiresAt: string) {
@@ -46,51 +56,186 @@ function isExpired(expiresAt: string) {
   return new Date(expiresAt) < new Date();
 }
 
-function keyStatusLabel(k: InviteKey) {
-  if (k.status === "revoked") return { text: "Đã thu hồi", cls: "text-red-500" };
-  if (isExpired(k.expires_at)) return { text: "Hết hạn", cls: "text-yellow-600" };
-  if (k.used_count >= k.max_uses) return { text: "Đã dùng", cls: "text-muted-foreground" };
-  return { text: "Hoạt động", cls: "text-green-600" };
+/** "còn 6 ngày", "còn 3 giờ", "đã hết hạn 2 ngày trước". */
+export function relativeExpiry(iso: string, now: number = Date.now()): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  const diff = t - now;
+  const abs = Math.abs(diff);
+  const days = Math.floor(abs / DAY);
+  const hours = Math.floor(abs / 3_600_000);
+  const span = days >= 1 ? `${days} ngày` : hours >= 1 ? `${hours} giờ` : "dưới 1 giờ";
+  if (diff >= 0) return days >= 1 || hours >= 1 ? `còn ${span}` : "còn dưới 1 giờ";
+  return days >= 1 || hours >= 1 ? `đã hết hạn ${span} trước` : "vừa hết hạn";
 }
 
-function userStatusBadge(s: string) {
-  switch (s) {
-    case "active": return { text: "Hoạt động", cls: "bg-green-500/15 text-green-700" };
-    case "suspended": return { text: "Đã khoá", cls: "bg-red-500/15 text-red-600" };
-    case "pending": return { text: "Chờ xác thực", cls: "bg-yellow-500/15 text-yellow-700" };
-    default: return { text: s, cls: "bg-muted text-muted-foreground" };
-  }
+type KeyState = "active" | "revoked" | "expired" | "used";
+
+function keyState(k: InviteKey): KeyState {
+  if (k.status === "revoked") return "revoked";
+  if (isExpired(k.expires_at)) return "expired";
+  if (k.used_count >= k.max_uses) return "used";
+  return "active";
+}
+
+const KEY_STATE: Record<KeyState, { text: string; variant: "success" | "destructive" | "warning" | "secondary"; icon: typeof Check }> = {
+  active: { text: "Dùng được", variant: "success", icon: CheckCircle2 },
+  revoked: { text: "Đã thu hồi", variant: "destructive", icon: XCircle },
+  expired: { text: "Hết hạn", variant: "warning", icon: Clock },
+  used: { text: "Đã dùng", variant: "secondary", icon: Ban },
+};
+
+const USER_STATUS: Record<string, { text: string; variant: "success" | "destructive" | "warning" | "secondary"; icon: typeof Check }> = {
+  active: { text: "Hoạt động", variant: "success", icon: CheckCircle2 },
+  suspended: { text: "Đã khóa", variant: "destructive", icon: Lock },
+  pending: { text: "Chờ xác thực email", variant: "warning", icon: Clock },
+};
+
+const JOB_STATUS: Record<string, string> = {
+  draft: "Bản nháp", ready: "Sẵn sàng", queued: "Đang chờ", running: "Đang chạy", paused: "Tạm dừng",
+  completed: "Hoàn thành", done: "Hoàn thành", failed: "Có lỗi", cancelled: "Đã hủy", canceled: "Đã hủy",
+};
+
+function StatusBadge({ spec }: { spec: { text: string; variant: "success" | "destructive" | "warning" | "secondary"; icon: typeof Check } }) {
+  const Icon = spec.icon;
+  return <Badge variant={spec.variant}><Icon className="size-3.5" aria-hidden />{spec.text}</Badge>;
+}
+
+async function copyText(text: string): Promise<boolean> {
+  // navigator.clipboard chỉ chạy trên HTTPS; rơi về execCommand cho HTTP
+  try {
+    if (navigator.clipboard) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* thử cách dự phòng */ }
+  try {
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.style.cssText = "position:fixed;top:-9999px;left:-9999px";
+    document.body.appendChild(el);
+    el.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(el);
+    return ok;
+  } catch { return false; }
+}
+
+/** Trạng thái "Đã sao chép" tự trả về sau vài giây (không hoạt ảnh). */
+function useCopied() {
+  const [copied, setCopied] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const copy = async (text: string) => {
+    const ok = await copyText(text);
+    if (!ok) { toast.error("Không sao chép được. Hãy chọn mã và sao chép thủ công."); return; }
+    setCopied(text);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(null), 3000);
+  };
+  return { copied, copy };
+}
+
+function Loading({ children = "Đang tải…" }: { children?: string }) {
+  return <p role="status" className="py-6 text-sm text-muted-foreground">{children}</p>;
+}
+
+// ── Hộp xác nhận (việc khó hoàn tác) ────────────────────────────────────────
+
+function ConfirmDialog({
+  open, title, description, confirmLabel, busy, danger = true, onConfirm, onCancel,
+}: {
+  open: boolean;
+  title: string;
+  description: ReactNode;
+  confirmLabel: string;
+  busy?: boolean;
+  danger?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onCancel(); }}>
+      <DialogContent className="max-w-md">
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription className="reading mt-2 text-base">{description}</DialogDescription>
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={onCancel} disabled={busy}>Hủy</Button>
+          <Button variant={danger ? "destructive" : "default"} onClick={onConfirm} disabled={busy}>
+            {busy ? "Đang xử lý…" : confirmLabel}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Bảng: bảng trên máy tính, danh sách xếp chồng trên điện thoại ───────────
+
+function RTable({ caption, columns, children }: { caption: string; columns: string[]; children: ReactNode }) {
+  return (
+    <table className="w-full border-collapse text-[0.9375rem]">
+      <caption className="sr-only">{caption}</caption>
+      <thead className="hidden md:table-header-group">
+        <tr className="border-b border-border-strong">
+          {columns.map((c, i) => <th key={c + i} scope="col" className="px-3 py-2 text-left text-sm font-semibold text-muted-foreground first:pl-0">{c}</th>)}
+        </tr>
+      </thead>
+      <tbody>{children}</tbody>
+    </table>
+  );
+}
+
+function RRow({ children }: { children: ReactNode }) {
+  return <tr className="block border-b border-border py-3 last:border-b-0 md:table-row md:py-0">{children}</tr>;
+}
+
+function RCell({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <td data-label={label} className={cn(
+      "block min-w-0 py-1 md:table-cell md:px-3 md:py-3 md:align-middle md:first:pl-0",
+      "before:block before:text-sm before:text-muted-foreground before:content-[attr(data-label)] md:before:hidden",
+      className,
+    )}>{children}</td>
+  );
 }
 
 // ── Component chính ─────────────────────────────────────────────────────────
 
 export default function AdminPage() {
-  const { hasPerm } = useAuth();
+  const { user, hasPerm } = useAuth();
   const rewardAdmin = hasPerm(PERM_REWARD_ADMIN);
+  const isDashAdmin = user?.role === "dash_admin";
   return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-bold">Quản trị hệ thống</h1>
+    <div>
+      <PageHeader
+        title="Quản trị hệ thống"
+        description="Tạo mã mời, quản lý tài khoản và quyền, chuẩn hóa tên quốc gia."
+      />
+      {isDashAdmin && (
+        <Notice tone="info" title="Bạn đang dùng vai trò Quản lý Dashboard" className="mb-6">
+          Bạn không khóa, sửa hay xóa được tài khoản quản trị viên. Những tài khoản đó chỉ quản trị viên mới thao tác được.
+        </Notice>
+      )}
       <Tabs defaultValue="keys">
-        <TabsList className="w-full max-w-3xl">
-          <TabsTrigger value="keys"><Key className="mr-1.5 size-4" /> Mã mời</TabsTrigger>
-          <TabsTrigger value="users"><ShieldCheck className="mr-1.5 size-4" /> Tài khoản</TabsTrigger>
-          {rewardAdmin && <TabsTrigger value="jobs"><ListChecks className="mr-1.5 size-4" /> Job toàn hệ thống</TabsTrigger>}
-          {rewardAdmin && <TabsTrigger value="locks"><Unlock className="mr-1.5 size-4" /> Khoá kênh</TabsTrigger>}
-          {rewardAdmin && <TabsTrigger value="audit"><History className="mr-1.5 size-4" /> Nhật ký role</TabsTrigger>}
-          <TabsTrigger value="countries"><Globe className="mr-1.5 size-4" /> Chuẩn hoá quốc gia</TabsTrigger>
+        <TabsList aria-label="Các việc quản trị" className="w-full">
+          <TabsTrigger value="keys">Mã mời</TabsTrigger>
+          <TabsTrigger value="users">Tài khoản</TabsTrigger>
+          {rewardAdmin && <TabsTrigger value="rewards">Phân phối điểm</TabsTrigger>}
+          {rewardAdmin && <TabsTrigger value="locks">Khóa kênh</TabsTrigger>}
+          <TabsTrigger value="countries">Quốc gia</TabsTrigger>
         </TabsList>
         <TabsContent value="keys"><InviteKeysTab /></TabsContent>
-        <TabsContent value="users"><AccountsTab /></TabsContent>
-        {rewardAdmin && <TabsContent value="jobs"><SystemJobsTab /></TabsContent>}
+        <TabsContent value="users"><AccountsTab isDashAdmin={isDashAdmin} /></TabsContent>
+        {rewardAdmin && <TabsContent value="rewards"><RewardsTab /></TabsContent>}
         {rewardAdmin && <TabsContent value="locks"><LocksTab /></TabsContent>}
-        {rewardAdmin && <TabsContent value="audit"><AuditTab /></TabsContent>}
         <TabsContent value="countries"><CountryAliasesTab /></TabsContent>
       </Tabs>
     </div>
   );
 }
 
-// ── Tab: Mã mời ─────────────────────────────────────────────────────────────
+// ── Mã mời ──────────────────────────────────────────────────────────────────
+
+const checkboxCls = "size-5 shrink-0 rounded accent-primary";
 
 function InviteKeysTab() {
   const [keys, setKeys] = useState<InviteKey[]>([]);
@@ -98,21 +243,27 @@ function InviteKeysTab() {
   const [creating, setCreating] = useState(false);
   const [role, setRole] = useState("viewer");
   const [label, setLabel] = useState("");
-  // Chính sách tích hợp Tool + app được phép (tuỳ chọn)
-  const [showPolicy, setShowPolicy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [created, setCreated] = useState<InviteKey | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<InviteKey | null>(null);
+  const [revoking, setRevoking] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  // Tùy chọn nâng cao: đăng ký kèm công cụ đẩy dữ liệu + ứng dụng được mở sẵn
   const [allowIntegration, setAllowIntegration] = useState(false);
   const [platforms, setPlatforms] = useState("facebook, youtube");
   const [scopes, setScopes] = useState<string[]>([...DEFAULT_POLICY_SCOPES]);
   const [maxClients, setMaxClients] = useState("1");
   const [apps, setApps] = useState("");
+  const { copied, copy } = useCopied();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const { keys: list } = await adminApi.listKeys();
       setKeys(list);
-    } catch (e: any) {
-      toast.error(e.message || "Không tải được danh sách key");
+      setListError(null);
+    } catch (e) {
+      setListError(adminErrorText(e, "Không tải được danh sách mã mời. Hãy bấm Tải lại."));
     } finally {
       setLoading(false);
     }
@@ -121,247 +272,210 @@ function InviteKeysTab() {
   useEffect(() => { load(); }, [load]);
 
   const handleCreate = async () => {
+    setFormError(null);
     const built = buildKeyExtra({ allowIntegration, platforms, scopes, maxClients, apps });
-    if (!built.ok) { toast.error(built.error); return; }
+    if (!built.ok) { setFormError(built.error); return; }
     setCreating(true);
     try {
       const newKey = await adminApi.createKey(role, label.trim(), 1, 7, built.extra);
       setKeys((prev) => [newKey, ...prev]);
+      setCreated(newKey);
       setLabel("");
-      toast.success(`Đã tạo key: ${newKey.key}`);
-    } catch (e: any) {
-      toast.error(e.message || "Tạo key thất bại");
+      toast.success("Đã tạo mã mời");
+    } catch (e) {
+      setFormError(adminErrorText(e, "Không tạo được mã mời. Hãy thử lại."));
     } finally {
       setCreating(false);
     }
   };
 
-  const handleRevoke = async (key: string) => {
+  const handleRevoke = async () => {
+    if (!revokeTarget) return;
+    const key = revokeTarget.key;
+    setRevoking(true);
     try {
       await adminApi.revokeKey(key);
-      setKeys((prev) =>
-        prev.map((k) => (k.key === key ? { ...k, status: "revoked" } : k)),
-      );
-      toast.success("Đã thu hồi key");
-    } catch (e: any) {
-      toast.error(e.message || "Thu hồi thất bại");
+      setKeys((prev) => prev.map((k) => (k.key === key ? { ...k, status: "revoked" } : k)));
+      setCreated((c) => (c && c.key === key ? { ...c, status: "revoked" } : c));
+      toast.success("Đã thu hồi mã mời");
+      setRevokeTarget(null);
+    } catch (e) {
+      setRevokeTarget(null);
+      setListError(adminErrorText(e, "Không thu hồi được mã mời. Hãy thử lại."));
+    } finally {
+      setRevoking(false);
     }
-  };
-
-  const copyKey = (key: string) => {
-    // navigator.clipboard chỉ hoạt động trên HTTPS; fallback execCommand cho HTTP
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(key).then(() => toast.success("Đã copy mã mời")).catch(() => copyFallback(key));
-    } else {
-      copyFallback(key);
-    }
-  };
-
-  const copyFallback = (text: string) => {
-    const el = document.createElement("textarea");
-    el.value = text;
-    el.style.cssText = "position:fixed;top:-9999px;left:-9999px";
-    document.body.appendChild(el);
-    el.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(el);
-    if (ok) toast.success("Đã copy mã mời"); else toast.error("Không copy được — hãy copy thủ công");
   };
 
   return (
-    <div className="space-y-4">
-      {/* Form tạo key */}
-      <div className="rounded-xl border border-border bg-elev-1 p-4">
-        <h3 className="mb-3 text-sm font-semibold">Tạo mã mời mới</h3>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[140px]">
-            <label className="mb-1 block text-xs text-muted-foreground">Vai trò</label>
-            <Select value={role} onValueChange={setRole}>
-              <SelectTrigger className="h-9 w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="viewer">Viewer</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
-                <SelectItem value="dash_admin">Admin Dashboard (ADD)</SelectItem>
-                <SelectItem value="discord">Discord</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex-1">
-            <label className="mb-1 block text-xs text-muted-foreground">Ghi chú (tuỳ chọn)</label>
-            <input
-              type="text"
-              className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none transition-colors focus:border-primary"
-              placeholder="VD: Dành cho nhóm marketing"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              maxLength={200}
-            />
-          </div>
-          <Button onClick={handleCreate} disabled={creating} className="h-9 gap-1.5">
-            {creating ? <RefreshCw className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            Tạo key
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Key chỉ dùng được <strong>1 lần</strong> và <strong>hết hạn sau 7 ngày</strong>.
-        </p>
-
-        <button type="button" onClick={() => setShowPolicy((v) => !v)}
-                aria-expanded={showPolicy}
-                className="mt-3 text-xs font-medium text-primary-text hover:underline">
-          {showPolicy ? "Ẩn" : "Hiện"} tuỳ chọn nâng cao: đăng ký kèm Tool &amp; app được phép
-        </button>
-        {showPolicy && (
-          <div className="mt-3 space-y-3 rounded-lg border border-border p-3" data-testid="policy-form">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" className="rounded accent-primary" checked={allowIntegration}
-                     onChange={(e) => setAllowIntegration(e.target.checked)} />
-              Cho phép người dùng đăng ký kèm Tool (allow_integration_registration)
-            </label>
-            {allowIntegration && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="pol-platforms" className="mb-1 block text-xs text-muted-foreground">
-                    Nền tảng cho phép (allowed_platforms, cách nhau bằng dấu phẩy)
-                  </label>
-                  <input id="pol-platforms" className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
-                         value={platforms} onChange={(e) => setPlatforms(e.target.value)} />
-                </div>
-                <div>
-                  <label htmlFor="pol-max" className="mb-1 block text-xs text-muted-foreground">
-                    Số client tối đa (max_integration_clients)
-                  </label>
-                  <input id="pol-max" type="number" min={1} max={100}
-                         className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
-                         value={maxClients} onChange={(e) => setMaxClients(e.target.value)} />
-                </div>
-                <fieldset className="sm:col-span-2">
-                  <legend className="mb-1 text-xs text-muted-foreground">Scope cho phép (allowed_scopes)</legend>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    {POLICY_SCOPE_OPTIONS.map((sc) => (
-                      <label key={sc} className="flex items-center gap-1.5 font-mono text-xs">
-                        <input type="checkbox" className="rounded accent-primary" checked={scopes.includes(sc)}
-                               onChange={(e) => setScopes((cur) => e.target.checked ? [...cur, sc] : cur.filter((x) => x !== sc))} />
-                        {sc}
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              </div>
+    <div>
+      <Section title="Tạo mã mời" description="Gửi mã này cho người bạn muốn mời. Họ nhập mã ở trang đăng ký để có tài khoản với vai trò bạn chọn.">
+        <form className="max-w-xl space-y-5" onSubmit={(e) => { e.preventDefault(); void handleCreate(); }}>
+          <Field label="Vai trò" hint="Vai trò của người dùng sau khi đăng ký.">
+            {(p) => (
+              <Select value={role} onValueChange={setRole}>
+                <SelectTrigger {...p} className="md:max-w-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ROLE_OPTIONS.map((r) => <SelectItem key={r} value={r}>{roleLabel(r)}</SelectItem>)}
+                </SelectContent>
+              </Select>
             )}
-            <div>
-              <label htmlFor="pol-apps" className="mb-1 block text-xs text-muted-foreground">
-                App được phép (allowed_apps, cách nhau bằng dấu phẩy) — key chỉ cấp quyền <code>&lt;app&gt;:access</code> cho app đó
+          </Field>
+          <Field label="Ghi chú" optional hint="Ghi chú để bạn nhớ mã này dành cho ai. Chỉ quản trị viên thấy.">
+            {(p) => <Input {...p} value={label} onChange={(e) => setLabel(e.target.value)} maxLength={200} placeholder="Ví dụ: Dành cho nhóm marketing" />}
+          </Field>
+
+          <TechDetails summary="Tùy chọn nâng cao">
+            <div className="space-y-5" data-testid="policy-form">
+              <label className="flex min-h-11 items-start gap-3">
+                <input type="checkbox" className={cn(checkboxCls, "mt-0.5")} checked={allowIntegration} onChange={(e) => setAllowIntegration(e.target.checked)} />
+                <span>
+                  <span className="block font-semibold">Cho phép tự tạo công cụ đẩy dữ liệu</span>
+                  <span className="block text-sm text-muted-foreground">Người đăng ký bằng mã này được tạo luôn công cụ đẩy dữ liệu của họ ngay khi đăng ký.</span>
+                </span>
               </label>
-              <input id="pol-apps" className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
-                     placeholder="vd: reward" value={apps} onChange={(e) => setApps(e.target.value)} />
+              {allowIntegration && (
+                <div className="space-y-5 border-l-2 border-border pl-4">
+                  <Field label="Nền tảng được phép" hint="Cách nhau bằng dấu phẩy, ví dụ: facebook, youtube.">
+                    {(p) => <Input {...p} value={platforms} onChange={(e) => setPlatforms(e.target.value)} />}
+                  </Field>
+                  <Field label="Số công cụ tối đa" hint="Mỗi người đăng ký bằng mã này tạo được tối đa bao nhiêu công cụ (1 đến 100).">
+                    {(p) => <Input {...p} type="number" min={1} max={100} value={maxClients} onChange={(e) => setMaxClients(e.target.value)} className="md:max-w-32" />}
+                  </Field>
+                  <fieldset>
+                    <legend className="text-sm font-semibold">Công cụ được phép làm gì</legend>
+                    <div className="mt-1 grid gap-x-6 sm:grid-cols-2">
+                      {POLICY_SCOPE_OPTIONS.map((sc) => (
+                        <label key={sc} className="flex min-h-11 items-center gap-3">
+                          <input type="checkbox" className={checkboxCls} checked={scopes.includes(sc)}
+                                 onChange={(e) => setScopes((cur) => e.target.checked ? [...cur, sc] : cur.filter((x) => x !== sc))} />
+                          <span>{POLICY_SCOPE_LABEL[sc] ?? sc} <span className="font-mono text-sm text-muted-foreground">({sc})</span></span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                </div>
+              )}
+              <Field label="Ứng dụng được mở sẵn" optional
+                     hint="Tên ứng dụng, cách nhau bằng dấu phẩy, ví dụ: reward. Người đăng ký bằng mã này chỉ được mở quyền vào đúng các ứng dụng đó.">
+                {(p) => <Input {...p} value={apps} onChange={(e) => setApps(e.target.value)} placeholder="Ví dụ: reward" />}
+              </Field>
+            </div>
+          </TechDetails>
+
+          {formError && <Notice tone="error" title="Chưa tạo được mã mời">{formError}</Notice>}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Button type="submit" disabled={creating}>
+              <Plus aria-hidden /> {creating ? "Đang tạo…" : "Tạo mã mời"}
+            </Button>
+            <p className="text-sm text-muted-foreground">Mã dùng được 1 lần và hết hạn sau 7 ngày.</p>
+          </div>
+        </form>
+
+        {created && (
+          <div className="mt-6 max-w-xl border-l-4 border-accent-2 bg-surface-2 px-4 py-4" role="status" aria-label="Mã mời vừa tạo">
+            <p className="font-semibold">Đã tạo mã mời. Hãy sao chép và gửi cho người được mời.</p>
+            <p className="my-3 break-all font-mono text-2xl font-semibold tracking-wide" data-testid="created-key">{created.key}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={() => void copy(created.key)}>
+                {copied === created.key ? <Check aria-hidden /> : <Copy aria-hidden />}
+                {copied === created.key ? "Đã sao chép" : "Sao chép mã"}
+              </Button>
+              <span className="text-sm text-muted-foreground">Vai trò {roleLabel(created.role)}, {relativeExpiry(created.expires_at)}.</span>
             </div>
           </div>
         )}
-      </div>
+      </Section>
 
-      {/* Danh sách keys */}
-      <div className="rounded-xl border border-border bg-elev-1">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h3 className="text-sm font-semibold">Danh sách mã mời ({keys.length})</h3>
-          <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
-
+      <Section
+        title={`Danh sách mã mời (${keys.length})`}
+        actions={<Button variant="outline" onClick={load} disabled={loading}>{loading ? "Đang tải…" : "Tải lại"}</Button>}
+      >
+        {listError && <Notice tone="error" className="mb-4">{listError}</Notice>}
         {loading && keys.length === 0 ? (
-          <div className="p-6 text-center text-sm text-muted-foreground">Đang tải…</div>
+          <Loading />
         ) : keys.length === 0 ? (
-          <div className="p-6 text-center text-sm text-muted-foreground">
-            Chưa có mã mời nào. Tạo key đầu tiên ở trên.
-          </div>
+          <EmptyState icon={KeyRound} title="Chưa có mã mời nào">Điền vai trò ở trên rồi bấm Tạo mã mời để mời người đầu tiên.</EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="px-4 py-2 font-medium">Mã</th>
-                  <th className="px-4 py-2 font-medium">Vai trò</th>
-                  <th className="px-4 py-2 font-medium">Ghi chú</th>
-                  <th className="px-4 py-2 font-medium">Trạng thái</th>
-                  <th className="px-4 py-2 font-medium">Hết hạn</th>
-                  <th className="px-4 py-2 font-medium">Tạo lúc</th>
-                  <th className="px-4 py-2 font-medium"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {keys.map((k) => {
-                  const st = keyStatusLabel(k);
-                  return (
-                    <tr key={k.key} className="border-b border-border/50 last:border-0 hover:bg-elev-2/50">
-                      <td className="px-4 py-2.5">
-                        <button
-                          onClick={() => copyKey(k.key)}
-                          className="inline-flex items-center gap-1 rounded bg-surface-1 px-2 py-0.5 font-mono text-xs transition-colors hover:bg-primary/10"
-                          title="Click để copy"
-                        >
-                          {k.key}
-                          <Copy className="size-3 text-muted-foreground" />
-                        </button>
-                      </td>
-                      <td className="px-4 py-2.5 capitalize">{k.role}</td>
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        {k.label || "—"}
-                        {k.integration_policy?.allow_integration_registration && (
-                          <span className="ml-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary-text">Tool</span>
-                        )}
-                        {k.allowed_apps?.length ? (
-                          <span className="ml-1.5 rounded bg-elev-2 px-1.5 py-0.5 text-[10px]">apps: {k.allowed_apps.join(", ")}</span>
-                        ) : null}
-                      </td>
-                      <td className={`px-4 py-2.5 font-medium ${st.cls}`}>{st.text}</td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDate(k.expires_at)}</td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDate(k.created_at)}</td>
-                      <td className="px-4 py-2.5">
-                        {k.status === "active" && !isExpired(k.expires_at) && k.used_count < k.max_uses && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleRevoke(k.key)}
-                            className="text-red-500 hover:text-red-600"
-                            title="Thu hồi"
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <RTable caption="Danh sách mã mời" columns={["Mã", "Vai trò", "Ghi chú", "Trạng thái", "Hạn dùng", "Tạo lúc", ""]}>
+            {keys.map((k) => {
+              const st = keyState(k);
+              return (
+                <RRow key={k.key}>
+                  <RCell label="Mã">
+                    <button type="button" onClick={() => void copy(k.key)} aria-label={`Sao chép mã ${k.key}`}
+                            className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border-strong px-2.5 font-mono text-sm hover:bg-elev-2 md:min-h-10">
+                      {k.key}
+                      {copied === k.key
+                        ? <span className="inline-flex items-center gap-1 font-sans text-success"><Check className="size-4" aria-hidden />Đã sao chép</span>
+                        : <Copy className="size-4 text-muted-foreground" aria-hidden />}
+                    </button>
+                  </RCell>
+                  <RCell label="Vai trò">{roleLabel(k.role)}</RCell>
+                  <RCell label="Ghi chú" className="text-muted-foreground">
+                    {k.label || "—"}
+                    <span className="mt-1 flex flex-wrap gap-1.5 empty:hidden">
+                      {k.integration_policy?.allow_integration_registration && <Badge variant="default">Được tạo công cụ</Badge>}
+                      {k.allowed_apps?.length ? <Badge variant="secondary">Ứng dụng: {k.allowed_apps.join(", ")}</Badge> : null}
+                    </span>
+                  </RCell>
+                  <RCell label="Trạng thái"><StatusBadge spec={KEY_STATE[st]} /></RCell>
+                  <RCell label="Hạn dùng">
+                    {st === "revoked" ? "—" : <time dateTime={k.expires_at} title={fmtDate(k.expires_at)}>{relativeExpiry(k.expires_at)}</time>}
+                  </RCell>
+                  <RCell label="Tạo lúc" className="text-muted-foreground">{fmtDate(k.created_at)}</RCell>
+                  <RCell label="" className="md:text-right">
+                    {st === "active" && (
+                      <Button variant="outline" onClick={() => setRevokeTarget(k)} aria-label={`Thu hồi mã ${k.key}`}>
+                        <Trash2 aria-hidden /> Thu hồi
+                      </Button>
+                    )}
+                  </RCell>
+                </RRow>
+              );
+            })}
+          </RTable>
         )}
-      </div>
+      </Section>
+
+      <ConfirmDialog
+        open={!!revokeTarget}
+        title="Thu hồi mã mời này?"
+        description={<>Mã <span className="font-mono">{revokeTarget?.key}</span> sẽ không dùng để đăng ký được nữa. Người đã đăng ký bằng mã này không bị ảnh hưởng.</>}
+        confirmLabel="Thu hồi mã mời"
+        busy={revoking}
+        onConfirm={handleRevoke}
+        onCancel={() => setRevokeTarget(null)}
+      />
     </div>
   );
 }
 
-// ── Tab: Tài khoản ──────────────────────────────────────────────────────────
+// ── Tài khoản ───────────────────────────────────────────────────────────────
 
-function AccountsTab() {
+function AccountsTab({ isDashAdmin }: { isDashAdmin: boolean }) {
   const [users, setUsers] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editData, setEditData] = useState({ username: "", email: "", role: "" });
-  const [saving, setSaving] = useState(false);
   const [roleFilter, setRoleFilter] = useState("all");
+  const [query, setQuery] = useState("");
   const [permTarget, setPermTarget] = useState<Account | null>(null);
+  const [editTarget, setEditTarget] = useState<Account | null>(null);
+  const [editData, setEditData] = useState({ username: "", email: "", role: "" });
+  const [editError, setEditError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [lockTarget, setLockTarget] = useState<Account | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Account | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const { users: list } = await adminApi.listUsers();
       setUsers(list);
-    } catch (e: any) {
-      toast.error(e.message || "Không tải được danh sách tài khoản");
+      setError(null);
+    } catch (e) {
+      setError(adminErrorText(e, "Không tải được danh sách tài khoản. Hãy bấm Tải lại."));
     } finally {
       setLoading(false);
     }
@@ -369,295 +483,318 @@ function AccountsTab() {
 
   useEffect(() => { load(); }, [load]);
 
+  const isLocked = (u: Account) => isDashAdmin && u.role === "admin";
+
   const startEdit = (u: Account) => {
-    setEditingId(u.id);
+    setEditTarget(u);
     setEditData({ username: u.username, email: u.email, role: u.role });
+    setEditError(null);
   };
 
-  const cancelEdit = () => {
-    setEditingId(null);
-  };
-
-  const handleSaveEdit = async (u: Account) => {
+  const handleSaveEdit = async () => {
+    const u = editTarget;
+    if (!u) return;
     const changes: Record<string, string> = {};
     if (editData.username !== u.username) changes.username = editData.username;
     if (editData.email !== u.email) changes.email = editData.email;
     if (editData.role !== u.role) changes.role = editData.role;
-
-    if (Object.keys(changes).length === 0) {
-      setEditingId(null);
-      return;
-    }
-
+    if (Object.keys(changes).length === 0) { setEditTarget(null); return; }
     setSaving(true);
+    setEditError(null);
     try {
       await adminApi.updateUser(u.id, changes);
-      setUsers((prev) =>
-        prev.map((x) => (x.id === u.id ? { ...x, ...changes } : x)),
-      );
-      setEditingId(null);
-      toast.success("Đã cập nhật thông tin tài khoản");
-    } catch (e: any) {
-      toast.error(e.message || "Cập nhật thất bại");
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, ...changes } : x)));
+      setEditTarget(null);
+      toast.success("Đã cập nhật tài khoản");
+    } catch (e) {
+      setEditError(adminErrorText(e, "Không cập nhật được tài khoản. Hãy thử lại."));
     } finally {
       setSaving(false);
     }
   };
 
-  const toggleStatus = async (u: Account) => {
-    const newStatus = u.status === "suspended" ? "active" : "suspended";
+  const setStatus = async (u: Account, status: "active" | "suspended") => {
+    setBusy(true);
+    setError(null);
     try {
-      await adminApi.setUserStatus(u.id, newStatus);
-      setUsers((prev) =>
-        prev.map((x) => (x.id === u.id ? { ...x, status: newStatus } : x)),
-      );
-      toast.success(newStatus === "suspended" ? "Đã khoá tài khoản" : "Đã mở khoá tài khoản");
-    } catch (e: any) {
-      toast.error(e.message || "Thao tác thất bại");
+      await adminApi.setUserStatus(u.id, status);
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, status } : x)));
+      toast.success(status === "suspended" ? "Đã khóa tài khoản" : "Đã mở khóa tài khoản");
+    } catch (e) {
+      setError(adminErrorText(e, status === "suspended" ? "Không khóa được tài khoản. Hãy thử lại." : "Không mở khóa được tài khoản. Hãy thử lại."));
+    } finally {
+      setBusy(false);
+      setLockTarget(null);
     }
   };
 
-  const handleDelete = async (u: Account) => {
-    if (!confirm(`Xoá tài khoản "${u.username}"? Hành động này không thể hoàn tác.`)) return;
+  const handleDelete = async () => {
+    const u = deleteTarget;
+    if (!u) return;
+    setBusy(true);
+    setError(null);
     try {
       await adminApi.deleteUser(u.id);
       setUsers((prev) => prev.filter((x) => x.id !== u.id));
-      toast.success("Đã xoá tài khoản");
-    } catch (e: any) {
-      toast.error(e.message || "Xoá thất bại");
+      toast.success("Đã xóa tài khoản");
+    } catch (e) {
+      setError(adminErrorText(e, "Không xóa được tài khoản. Hãy thử lại."));
+    } finally {
+      setBusy(false);
+      setDeleteTarget(null);
     }
   };
 
-  const editInput = "h-7 rounded border border-border bg-elev-1 px-2 text-sm outline-none focus:border-primary";
-  const filteredUsers = roleFilter === "all" ? users : users.filter((u) => u.role === roleFilter);
+  const q = query.trim().toLowerCase();
+  const filtered = useMemo(
+    () => users.filter((u) => (roleFilter === "all" || u.role === roleFilter)
+      && (!q || u.username.toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q))),
+    [users, roleFilter, q],
+  );
 
   return (
-    <div className="rounded-xl border border-border bg-elev-1">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <h3 className="text-sm font-semibold">
-          Danh sách tài khoản ({filteredUsers.length}{roleFilter !== "all" ? ` / ${users.length}` : ""})
-        </h3>
-        <div className="flex items-center gap-2">
-          <Select value={roleFilter} onValueChange={setRoleFilter}>
-            <SelectTrigger className="h-8 w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Tất cả</SelectItem>
-              <SelectItem value="viewer">Viewer</SelectItem>
-              <SelectItem value="admin">Admin</SelectItem>
-              <SelectItem value="dash_admin">Admin Dashboard (ADD)</SelectItem>
-              <SelectItem value="discord">Discord</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
-          </Button>
+    <div>
+      <Section
+        title={`Tài khoản (${filtered.length}${filtered.length !== users.length ? ` / ${users.length}` : ""})`}
+        description="Tìm người dùng để sửa thông tin, cấp quyền hoặc khóa tài khoản."
+        actions={<Button variant="outline" onClick={load} disabled={loading}>{loading ? "Đang tải…" : "Tải lại"}</Button>}
+      >
+        <div className="mb-4 flex flex-wrap items-end gap-4">
+          <Field label="Tìm tài khoản" className="w-full sm:max-w-xs">
+            {(p) => (
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                <Input {...p} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tên đăng nhập hoặc email" className="pl-9" />
+              </div>
+            )}
+          </Field>
+          <Field label="Vai trò" className="w-full sm:w-56">
+            {(p) => (
+              <Select value={roleFilter} onValueChange={setRoleFilter}>
+                <SelectTrigger {...p}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tất cả vai trò</SelectItem>
+                  {ROLE_OPTIONS.map((r) => <SelectItem key={r} value={r}>{roleLabel(r)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+          </Field>
         </div>
-      </div>
 
-      {loading && users.length === 0 ? (
-        <div className="p-6 text-center text-sm text-muted-foreground">Đang tải…</div>
-      ) : users.length === 0 ? (
-        <div className="p-6 text-center text-sm text-muted-foreground">
-          Chưa có tài khoản nào.
-        </div>
-      ) : filteredUsers.length === 0 ? (
-        <div className="p-6 text-center text-sm text-muted-foreground">
-          Không có tài khoản nào khớp bộ lọc.
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="px-4 py-2 font-medium">Username</th>
-                <th className="px-4 py-2 font-medium">Email</th>
-                <th className="px-4 py-2 font-medium">Vai trò</th>
-                <th className="px-4 py-2 font-medium">Trạng thái</th>
-                <th className="px-4 py-2 font-medium">Đăng nhập gần nhất</th>
-                <th className="px-4 py-2 font-medium">Tạo lúc</th>
-                <th className="px-4 py-2 font-medium"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredUsers.map((u) => {
-                const badge = userStatusBadge(u.status);
-                const isEditing = editingId === u.id;
-                return (
-                  <tr key={u.id} className="border-b border-border/50 last:border-0 hover:bg-elev-2/50">
-                    <td className="px-4 py-2.5 font-medium">
-                      {isEditing ? (
-                        <input
-                          className={editInput + " w-28"}
-                          value={editData.username}
-                          onChange={(e) => setEditData({ ...editData, username: e.target.value })}
-                        />
-                      ) : u.username}
-                    </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">
-                      {isEditing ? (
-                        <input
-                          className={editInput + " w-44"}
-                          value={editData.email}
-                          onChange={(e) => setEditData({ ...editData, email: e.target.value })}
-                        />
-                      ) : u.email}
-                    </td>
-                    <td className="px-4 py-2.5 capitalize">
-                      {isEditing ? (
-                        <select
-                          className={editInput + " w-24"}
-                          value={editData.role}
-                          onChange={(e) => setEditData({ ...editData, role: e.target.value })}
-                        >
-                          <option value="viewer">Viewer</option>
-                          <option value="dash_admin">Admin Dashboard (ADD)</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      ) : u.role}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${badge.cls}`}>
-                        {badge.text}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDate(u.last_login)}</td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDate(u.created_at)}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1">
-                        {isEditing ? (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleSaveEdit(u)}
-                              disabled={saving}
-                              className="text-green-600"
-                              title="Lưu"
-                            >
-                              {saving ? <RefreshCw className="size-4 animate-spin" /> : <Check className="size-4" />}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={cancelEdit}
-                              className="text-muted-foreground"
-                              title="Huỷ"
-                            >
-                              <X className="size-4" />
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => startEdit(u)}
-                              className="text-blue-500 hover:text-blue-600"
-                              title="Chỉnh sửa"
-                            >
-                              <Pencil className="size-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setPermTarget(u)}
-                              title="Quản lý quyền (permission)"
-                              aria-label={`Quản lý quyền của ${u.username}`}
-                              className="text-indigo-500 hover:text-indigo-600"
-                            >
-                              <ShieldPlus className="size-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => toggleStatus(u)}
-                              title={u.status === "suspended" ? "Mở khoá" : "Khoá"}
-                              className={u.status === "suspended" ? "text-green-600" : "text-yellow-600"}
-                            >
-                              {u.status === "suspended" ? <UserCheck className="size-4" /> : <UserX className="size-4" />}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDelete(u)}
-                              className="text-red-500 hover:text-red-600"
-                              title="Xoá"
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
-                          </>
-                        )}
+        {error && <Notice tone="error" className="mb-4">{error}</Notice>}
+
+        {loading && users.length === 0 ? (
+          <Loading />
+        ) : users.length === 0 ? (
+          <EmptyState title="Chưa có tài khoản nào">Tài khoản xuất hiện ở đây sau khi có người đăng ký bằng mã mời.</EmptyState>
+        ) : filtered.length === 0 ? (
+          <EmptyState title="Không có tài khoản nào khớp"
+                      action={<Button variant="outline" onClick={() => { setQuery(""); setRoleFilter("all"); }}>Bỏ lọc</Button>}>
+            Thử tên khác hoặc chọn vai trò &quot;Tất cả vai trò&quot;.
+          </EmptyState>
+        ) : (
+          <RTable caption="Danh sách tài khoản" columns={["Tài khoản", "Vai trò", "Trạng thái", "Đăng nhập gần nhất", "Tạo lúc", "Thao tác"]}>
+            {filtered.map((u) => {
+              const st = USER_STATUS[u.status] ?? { text: u.status, variant: "secondary" as const, icon: Info };
+              const locked = isLocked(u);
+              const whyId = `why-${u.id}`;
+              const suspended = u.status === "suspended";
+              return (
+                <RRow key={u.id}>
+                  <RCell label="Tài khoản">
+                    <span className="block font-semibold">{u.username}</span>
+                    <span className="block break-all text-sm text-muted-foreground">{u.email}</span>
+                  </RCell>
+                  <RCell label="Vai trò">{roleLabel(u.role)}</RCell>
+                  <RCell label="Trạng thái"><StatusBadge spec={st} /></RCell>
+                  <RCell label="Đăng nhập gần nhất" className="text-muted-foreground">{fmtDate(u.last_login, "Chưa đăng nhập")}</RCell>
+                  <RCell label="Tạo lúc" className="text-muted-foreground">{fmtDate(u.created_at)}</RCell>
+                  <RCell label="Thao tác">
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" disabled={locked} aria-describedby={locked ? whyId : undefined}
+                                onClick={() => startEdit(u)} aria-label={`Sửa ${u.username}`}>
+                          <Pencil aria-hidden /> Sửa
+                        </Button>
+                        <Button variant="outline" disabled={locked} aria-describedby={locked ? whyId : undefined}
+                                onClick={() => setPermTarget(u)} aria-label={`Quản lý quyền của ${u.username}`}>
+                          <ShieldPlus aria-hidden /> Quyền
+                        </Button>
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                      <Button variant="outline" disabled={locked || busy} aria-describedby={locked ? whyId : undefined}
+                              onClick={() => (suspended ? void setStatus(u, "active") : setLockTarget(u))}
+                              aria-label={`${suspended ? "Mở khóa" : "Khóa"} ${u.username}`}>
+                        {suspended ? <UserCheck aria-hidden /> : <UserX aria-hidden />} {suspended ? "Mở khóa" : "Khóa"}
+                      </Button>
+                    </div>
+                    {locked && (
+                      <p id={whyId} className="mt-2 flex items-start gap-1.5 text-sm text-muted-foreground">
+                        <Lock className="mt-0.5 size-4 shrink-0" aria-hidden /> {ADMIN_ONLY_REASON}
+                      </p>
+                    )}
+                  </RCell>
+                </RRow>
+              );
+            })}
+          </RTable>
+        )}
+      </Section>
+
       <PermissionsDialog account={permTarget} onClose={() => setPermTarget(null)} />
+
+      {/* Sửa thông tin; việc xóa nằm riêng ở cuối hộp thoại, tách khỏi nút Lưu */}
+      <Dialog open={!!editTarget} onOpenChange={(o) => { if (!o && !saving) setEditTarget(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogTitle>Sửa tài khoản {editTarget?.username}</DialogTitle>
+          <DialogDescription className="mt-1">Đổi tên đăng nhập, email hoặc vai trò. Đổi vai trò có hiệu lực ở lần đăng nhập kế tiếp.</DialogDescription>
+          <div className="mt-4 space-y-4">
+            <Field label="Tên đăng nhập">
+              {(p) => <Input {...p} value={editData.username} onChange={(e) => setEditData({ ...editData, username: e.target.value })} />}
+            </Field>
+            <Field label="Email">
+              {(p) => <Input {...p} type="email" value={editData.email} onChange={(e) => setEditData({ ...editData, email: e.target.value })} />}
+            </Field>
+            <Field label="Vai trò">
+              {(p) => (
+                <Select value={editData.role} onValueChange={(v) => setEditData({ ...editData, role: v })}>
+                  <SelectTrigger {...p}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {(ASSIGNABLE_ROLES.includes(editData.role as typeof ASSIGNABLE_ROLES[number]) ? ASSIGNABLE_ROLES : [...ASSIGNABLE_ROLES, editData.role])
+                      .map((r) => <SelectItem key={r} value={r}>{roleLabel(r)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+            </Field>
+            {editError && <Notice tone="error">{editError}</Notice>}
+          </div>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setEditTarget(null)} disabled={saving}>Hủy</Button>
+            <Button onClick={() => void handleSaveEdit()} disabled={saving}>{saving ? "Đang lưu…" : "Lưu thay đổi"}</Button>
+          </div>
+          <div className="mt-8 border-t border-border pt-5">
+            <h2 className="text-base">Xóa tài khoản</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Xóa vĩnh viễn tài khoản này. Không khôi phục được.</p>
+            <Button variant="outline" className="mt-3 border-destructive/60 text-destructive" disabled={saving}
+                    onClick={() => { setDeleteTarget(editTarget); setEditTarget(null); }}>
+              <Trash2 aria-hidden /> Xóa tài khoản…
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={!!lockTarget}
+        title={`Khóa tài khoản ${lockTarget?.username ?? ""}?`}
+        description="Người này sẽ bị đăng xuất ngay và không đăng nhập lại được cho đến khi bạn mở khóa. Dữ liệu của họ được giữ nguyên."
+        confirmLabel="Khóa tài khoản"
+        busy={busy}
+        onConfirm={() => lockTarget && void setStatus(lockTarget, "suspended")}
+        onCancel={() => setLockTarget(null)}
+      />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={`Xóa tài khoản ${deleteTarget?.username ?? ""}?`}
+        description="Người này sẽ bị đăng xuất ngay và tài khoản bị xóa vĩnh viễn. Việc này không hoàn tác được."
+        confirmLabel="Xóa tài khoản"
+        busy={busy}
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }
 
-// ── Tab: Job toàn hệ thống ───────────────────────────────────────────────────
+// ── Phân phối điểm: công việc toàn hệ thống + nhật ký đổi vai trò ───────────
 
-function SystemJobsTab() {
+function RewardsTab() {
+  return (
+    <div>
+      <SystemJobsSection />
+      <AuditSection />
+    </div>
+  );
+}
+
+function SystemJobsSection() {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    rewardAdminApi.jobs().then((d) => setJobs(d.jobs)).catch((err) => toast.error((err as Error).message)).finally(() => setLoading(false));
+    rewardAdminApi.jobs().then((d) => setJobs(d.jobs)).catch((e) => setError(errorMessage(e, "Không tải được công việc phân phối điểm."))).finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" /> Đang tải…</div>;
-
   return (
-    <div className="overflow-auto rounded-xl border border-border bg-elev-1">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-4 py-2 font-medium">Tên</th>
-            <th className="px-4 py-2 font-medium">Chủ sở hữu</th>
-            <th className="px-4 py-2 font-medium">Trạng thái</th>
-            <th className="px-4 py-2 font-medium">Tổng item</th>
-            <th className="px-4 py-2 font-medium">Tạo lúc</th>
-          </tr>
-        </thead>
-        <tbody>
+    <Section title="Công việc phân phối điểm toàn hệ thống" description="Mọi công việc của mọi người dùng, để theo dõi và hỗ trợ.">
+      {error && <Notice tone="error" className="mb-4">{error}</Notice>}
+      {loading ? <Loading /> : jobs.length === 0 ? (
+        <EmptyState title="Chưa có công việc nào">Công việc xuất hiện ở đây khi có người tạo ở mục Công việc phân phối.</EmptyState>
+      ) : (
+        <RTable caption="Công việc phân phối điểm toàn hệ thống" columns={["Tên", "Chủ sở hữu", "Trạng thái", "Số mục", "Tạo lúc"]}>
           {jobs.map((j) => (
-            <tr key={j.id} className="border-b border-border/50 last:border-0 hover:bg-elev-2/50">
-              <td className="px-4 py-2.5 font-medium">{j.name}</td>
-              <td className="px-4 py-2.5 text-xs">{j.owner_username ?? "—"}</td>
-              <td className="px-4 py-2.5 capitalize">{j.status}</td>
-              <td className="px-4 py-2.5 text-xs">{j.total_items}</td>
-              <td className="px-4 py-2.5 text-xs text-muted-foreground">{new Date(j.created_at).toLocaleString("vi-VN")}</td>
-            </tr>
+            <RRow key={j.id}>
+              <RCell label="Tên" className="font-semibold">{j.name}</RCell>
+              <RCell label="Chủ sở hữu">{j.owner_username ?? "—"}</RCell>
+              <RCell label="Trạng thái">{JOB_STATUS[j.status] ?? j.status}</RCell>
+              <RCell label="Số mục" className="tabular-nums">{j.total_items.toLocaleString("vi-VN")}</RCell>
+              <RCell label="Tạo lúc" className="text-muted-foreground">{fmtDate(j.created_at)}</RCell>
+            </RRow>
           ))}
-          {jobs.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">Không có job</td></tr>}
-        </tbody>
-      </table>
-    </div>
+        </RTable>
+      )}
+    </Section>
   );
 }
 
-// ── Tab: Khoá kênh ────────────────────────────────────────────────────────────
+function AuditSection() {
+  const [entries, setEntries] = useState<RoleAuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    rewardAdminApi.roleAudit({ limit: 200 }).then((d) => setEntries(d.entries)).catch((e) => setError(errorMessage(e, "Không tải được nhật ký đổi vai trò."))).finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <Section title="Nhật ký đổi vai trò" description="Ai đã đổi vai trò của ai, lúc nào (tối đa 200 lần gần nhất).">
+      {error && <Notice tone="error" className="mb-4">{error}</Notice>}
+      {loading ? <Loading /> : entries.length === 0 ? (
+        <EmptyState title="Chưa có lần đổi vai trò nào" />
+      ) : (
+        <ul className="divide-y divide-border border-y border-border">
+          {entries.map((e) => (
+            <li key={e.id} className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-3">
+              <span>
+                <span className="font-semibold">{e.username}</span>: từ {roleLabel(e.from_role)} sang {roleLabel(e.to_role)}
+                {e.reason && <span className="text-muted-foreground"> ({e.reason})</span>}
+                <span className="text-muted-foreground"> — bởi {e.actor_username}</span>
+              </span>
+              <span className="text-sm text-muted-foreground">{fmtDate(e.created_at)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
+// ── Khóa kênh ───────────────────────────────────────────────────────────────
 
 function LocksTab() {
   const [locks, setLocks] = useState<RunnerLock[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [target, setTarget] = useState<RunnerLock | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const d = await rewardAdminApi.locks();
       setLocks(d.locks);
-    } catch (err) {
-      toast.error((err as Error).message);
+      setError(null);
+    } catch (e) {
+      setError(errorMessage(e, "Không tải được danh sách khóa kênh."));
     } finally {
       setLoading(false);
     }
@@ -665,91 +802,73 @@ function LocksTab() {
 
   useEffect(() => { load(); }, [load]);
 
-  const release = async (jobId: string) => {
-    if (!confirm("Giải phóng khoá kênh này? Chỉ làm khi lock đã chết (tuổi > 30s).")) return;
-    setBusyId(jobId);
+  const release = async () => {
+    if (!target) return;
+    setBusy(true);
     try {
-      await rewardAdminApi.releaseLock(jobId);
-      toast.success("Đã giải phóng khoá kênh");
+      await rewardAdminApi.releaseLock(target.job_id);
+      toast.success("Đã giải phóng khóa kênh");
+      setTarget(null);
       await load();
-    } catch (err) {
-      toast.error((err as Error).message);
+    } catch (e) {
+      setTarget(null);
+      setError(errorMessage(e, "Không giải phóng được khóa kênh. Hãy thử lại."));
     } finally {
-      setBusyId(null);
+      setBusy(false);
     }
   };
 
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" /> Đang tải…</div>;
-
   return (
-    <div className="overflow-auto rounded-xl border border-border bg-elev-1">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-4 py-2 font-medium">Job</th>
-            <th className="px-4 py-2 font-medium">Channel</th>
-            <th className="px-4 py-2 font-medium">PID / Host</th>
-            <th className="px-4 py-2 font-medium">Nhịp tim gần nhất</th>
-            <th className="px-4 py-2 font-medium">Tuổi (giây)</th>
-            <th className="px-4 py-2 font-medium"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {locks.map((l) => (
-            <tr key={l.job_id} className="border-b border-border/50 last:border-0 hover:bg-elev-2/50">
-              <td className="px-4 py-2.5 text-xs">{l.job_id}</td>
-              <td className="px-4 py-2.5 text-xs">{l.channel_id}</td>
-              <td className="px-4 py-2.5 text-xs">{l.pid} / {l.host}</td>
-              <td className="px-4 py-2.5 text-xs">{new Date(l.heartbeat_at).toLocaleString("vi-VN")}</td>
-              <td className="px-4 py-2.5 text-xs">{l.age_s}</td>
-              <td className="px-4 py-2.5">
-                <Button size="sm" variant="outline" disabled={l.age_s <= 30 || busyId === l.job_id} onClick={() => release(l.job_id)}>
-                  <Unlock className="size-4" /> Giải phóng
-                </Button>
-              </td>
-            </tr>
-          ))}
-          {locks.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">Không có khoá nào</td></tr>}
-        </tbody>
-      </table>
-    </div>
+    <Section
+      title="Khóa kênh"
+      description="Khi một công việc đang chạy trên kênh nào, kênh đó bị khóa để không chạy trùng. Nếu tiến trình chết, khóa có thể bị kẹt và cần giải phóng tay."
+      actions={<Button variant="outline" onClick={load} disabled={loading}>{loading ? "Đang tải…" : "Tải lại"}</Button>}
+    >
+      {error && <Notice tone="error" className="mb-4">{error}</Notice>}
+      {loading && locks.length === 0 ? <Loading /> : locks.length === 0 ? (
+        <EmptyState icon={Unlock} title="Không có khóa nào đang giữ">Khi có công việc đang chạy, khóa của nó hiện ở đây.</EmptyState>
+      ) : (
+        <RTable caption="Khóa kênh đang giữ" columns={["Công việc", "Kênh", "Tiến trình / máy", "Nhịp tim gần nhất", "Tuổi khóa", ""]}>
+          {locks.map((l) => {
+            const young = l.age_s <= 30;
+            const hintId = `lock-${l.job_id}`;
+            return (
+              <RRow key={l.job_id}>
+                <RCell label="Công việc" className="break-all font-mono text-sm">{l.job_id}</RCell>
+                <RCell label="Kênh" className="break-all">{l.channel_id}</RCell>
+                <RCell label="Tiến trình / máy">{l.pid} / {l.host}</RCell>
+                <RCell label="Nhịp tim gần nhất" className="text-muted-foreground">{fmtDate(l.heartbeat_at)}</RCell>
+                <RCell label="Tuổi khóa" className="tabular-nums">{l.age_s} giây</RCell>
+                <RCell label="">
+                  <Button variant="outline" disabled={young || busy} aria-describedby={young ? hintId : undefined} onClick={() => setTarget(l)}
+                          aria-label={`Giải phóng khóa của công việc ${l.job_id}`}>
+                    <Unlock aria-hidden /> Giải phóng
+                  </Button>
+                  {young && <p id={hintId} className="mt-1 text-sm text-muted-foreground">Khóa còn mới, chỉ giải phóng được sau 30 giây.</p>}
+                </RCell>
+              </RRow>
+            );
+          })}
+        </RTable>
+      )}
+      <ConfirmDialog
+        open={!!target}
+        title="Giải phóng khóa kênh này?"
+        description="Chỉ làm khi tiến trình giữ khóa đã chết (khóa quá 30 giây không có nhịp tim). Nếu nó vẫn đang chạy, hai tiến trình có thể cùng xử lý một kênh."
+        confirmLabel="Giải phóng khóa"
+        busy={busy}
+        onConfirm={() => void release()}
+        onCancel={() => setTarget(null)}
+      />
+    </Section>
   );
 }
 
-// ── Tab: Nhật ký role ───────────────────────────────────────────────────────
-
-function AuditTab() {
-  const [entries, setEntries] = useState<RoleAuditEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    rewardAdminApi.roleAudit({ limit: 200 }).then((d) => setEntries(d.entries)).catch((err) => toast.error((err as Error).message)).finally(() => setLoading(false));
-  }, []);
-
-  if (loading) return <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin" /> Đang tải…</div>;
-
-  return (
-    <div className="flex flex-col divide-y divide-border rounded-xl border border-border bg-elev-1">
-      {entries.map((e) => (
-        <div key={e.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-          <span>
-            <span className="font-medium">{e.username}</span>: {e.from_role} → {e.to_role}
-            {e.reason && <span className="text-muted-foreground"> ({e.reason})</span>}
-            <span className="text-xs text-muted-foreground"> bởi {e.actor_username}</span>
-          </span>
-          <span className="text-xs text-muted-foreground">{new Date(e.created_at).toLocaleString("vi-VN")}</span>
-        </div>
-      ))}
-      {entries.length === 0 && <p className="p-4 text-sm text-muted-foreground">Chưa có thay đổi role nào</p>}
-    </div>
-  );
-}
-
-// ── Tab: Chuẩn hoá quốc gia ──────────────────────────────────────────────────
+// ── Quốc gia: chuẩn hóa tên ─────────────────────────────────────────────────
 //
 // Vấn đề thật: Tool ở nhiều máy khác nhau tự gõ tay tên quốc gia khi cấu hình page/kênh (vd
-// "BR"/"Brazil"/"brazil" đều cùng 1 nước) — không validate được từ xa. Bảng này cho admin/dash_admin
-// tự gộp các biến thể về đúng 1 tên chuẩn — áp dụng NGAY cho mọi biểu đồ, KHÔNG cần sửa gì bên Tool.
+// "BR"/"Brazil"/"brazil" đều cùng 1 nước) — không validate được từ xa. Mục này cho quản trị tự gộp các cách viết
+// về đúng 1 tên chuẩn — áp dụng NGAY cho mọi biểu đồ, KHÔNG cần sửa gì bên Tool.
 
 function CountryAliasesTab() {
   const [items, setItems] = useState<CountryAlias[]>([]);
@@ -758,17 +877,20 @@ function CountryAliasesTab() {
   const [alias, setAlias] = useState("");
   const [canonical, setCanonical] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [newCanonical, setNewCanonical] = useState("");
   const [savingCanonical, setSavingCanonical] = useState(false);
   const [editingCanonical, setEditingCanonical] = useState<string | null>(null);
   const [editCanonicalValue, setEditCanonicalValue] = useState("");
+  const [deleteCanonical, setDeleteCanonical] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
     Promise.all([adminApi.listCountryAliases(), adminApi.listCountryCanonicals()])
-      .then(([a, c]) => { setItems(a.items); setCanonicals(c.items); })
-      .catch((e) => toast.error((e as Error).message))
+      .then(([a, c]) => { setItems(a.items); setCanonicals(c.items); setError(null); })
+      .catch((e) => setError(errorMessage(e, "Không tải được danh sách quốc gia.")))
       .finally(() => setLoading(false));
   }, []);
 
@@ -779,11 +901,11 @@ function CountryAliasesTab() {
     setSaving(true);
     try {
       await adminApi.upsertCountryAlias(alias.trim(), canonical);
-      toast.success("Đã lưu — số liệu tính lại ngay (cache đã tự xoá)");
+      toast.success("Đã lưu cách viết. Số liệu được tính lại ngay.");
       setAlias(""); setCanonical("");
       load();
     } catch (e) {
-      toast.error((e as Error).message);
+      setError(errorMessage(e, "Không lưu được cách viết này. Hãy thử lại."));
     } finally {
       setSaving(false);
     }
@@ -792,10 +914,10 @@ function CountryAliasesTab() {
   const handleDelete = async (a: string) => {
     try {
       await adminApi.deleteCountryAlias(a);
-      toast.success("Đã xoá");
+      toast.success("Đã bỏ cách viết");
       load();
     } catch (e) {
-      toast.error((e as Error).message);
+      setError(errorMessage(e, "Không bỏ được cách viết này. Hãy thử lại."));
     }
   };
 
@@ -804,11 +926,11 @@ function CountryAliasesTab() {
     setSavingCanonical(true);
     try {
       await adminApi.createCountryCanonical(newCanonical.trim());
-      toast.success("Đã tạo tên chuẩn mới");
+      toast.success("Đã tạo tên chuẩn");
       setNewCanonical("");
       load();
     } catch (e) {
-      toast.error((e as Error).message);
+      setError(errorMessage(e, "Không tạo được tên chuẩn. Hãy thử lại."));
     } finally {
       setSavingCanonical(false);
     }
@@ -820,171 +942,138 @@ function CountryAliasesTab() {
     if (!newName) return;
     try {
       await adminApi.renameCountryCanonical(editingCanonical, newName);
-      toast.success("Đã đổi tên — số liệu tính lại ngay");
+      toast.success("Đã đổi tên chuẩn. Số liệu được tính lại ngay.");
       setEditingCanonical(null);
       load();
     } catch (e) {
-      toast.error((e as Error).message);
+      setError(errorMessage(e, "Không đổi được tên chuẩn. Hãy thử lại."));
     }
   };
 
-  const handleDeleteCanonical = async (name: string) => {
+  const confirmDeleteCanonical = async () => {
+    if (!deleteCanonical) return;
+    setDeleting(true);
     try {
-      await adminApi.deleteCountryCanonical(name);
-      toast.success("Đã xoá tên chuẩn");
+      await adminApi.deleteCountryCanonical(deleteCanonical);
+      toast.success("Đã xóa tên chuẩn");
       load();
     } catch (e) {
-      toast.error((e as Error).message);
+      setError(errorMessage(e, "Không xóa được tên chuẩn. Hãy thử lại."));
+    } finally {
+      setDeleting(false);
+      setDeleteCanonical(null);
     }
   };
 
-  // Gộp theo canonical để dễ nhìn — 1 nhóm/1 tên chuẩn, liệt kê hết các biến thể gộp vào đó.
+  // Gộp theo tên chuẩn để dễ nhìn: mỗi tên chuẩn một khối, liệt kê các cách viết đã gộp vào đó.
   const groups: Record<string, CountryAlias[]> = {};
-  for (const it of items) {
-    (groups[it.canonical] ??= []).push(it);
-  }
+  for (const it of items) (groups[it.canonical] ??= []).push(it);
+  const names = Array.from(new Set([...canonicals.map((c) => c.name), ...Object.keys(groups)])).sort((a, b) => a.localeCompare(b));
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl border border-border bg-elev-1 p-4">
-        <h3 className="mb-3 text-sm font-semibold">Tên quốc gia chuẩn</h3>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="w-64">
-            <label className="mb-1 block text-xs text-muted-foreground">Tên chuẩn mới</label>
-            <input
-              type="text"
-              className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
-              placeholder="VD: Brazil"
-              value={newCanonical}
-              onChange={(e) => setNewCanonical(e.target.value)}
-              maxLength={100}
-              onKeyDown={(e) => e.key === "Enter" && handleAddCanonical()}
-            />
-          </div>
-          <Button onClick={handleAddCanonical} disabled={savingCanonical || !newCanonical.trim()}
-                  className="h-9 gap-1.5">
-            <Plus className="size-4" /> Tạo tên chuẩn
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Danh sách tên quốc gia "chính thức" — chọn trực tiếp khi thêm biến thể bên dưới (không gõ
-          tay) để không bao giờ gõ sai/lệch hoa-thường tạo nhầm nhóm trùng.
-        </p>
-        {canonicals.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {canonicals.map((c) => (
-              <span key={c.name}
-                    className="flex items-center gap-1.5 rounded-full bg-elev-2 px-2.5 py-1 text-xs">
-                {editingCanonical === c.name ? (
-                  <>
-                    <input
-                      autoFocus
-                      className="h-6 w-32 rounded border border-border bg-elev-1 px-1.5 text-xs outline-none focus:border-primary"
-                      value={editCanonicalValue}
-                      onChange={(e) => setEditCanonicalValue(e.target.value)}
-                      maxLength={100}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") saveEditCanonical();
-                        if (e.key === "Escape") setEditingCanonical(null);
-                      }}
-                    />
-                    <button type="button" onClick={saveEditCanonical}
-                            className="text-muted-foreground hover:text-green-500" title="Lưu">
-                      <Check className="size-3" />
-                    </button>
-                    <button type="button" onClick={() => setEditingCanonical(null)}
-                            className="text-muted-foreground hover:text-red-500" title="Huỷ">
-                      <X className="size-3" />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {c.name}
-                    <button type="button"
-                            onClick={() => { setEditingCanonical(c.name); setEditCanonicalValue(c.name); }}
-                            className="text-muted-foreground hover:text-primary-text" title="Đổi tên">
-                      <Pencil className="size-3" />
-                    </button>
-                    <button type="button" onClick={() => handleDeleteCanonical(c.name)}
-                            className="text-muted-foreground hover:text-red-500" title="Xoá tên chuẩn này">
-                      <Trash2 className="size-3" />
-                    </button>
-                  </>
-                )}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+    <div>
+      {error && <Notice tone="error" className="mb-6">{error}</Notice>}
 
-      <div className="rounded-xl border border-border bg-elev-1 p-4">
-        <h3 className="mb-3 text-sm font-semibold">Thêm biến thể mới</h3>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="w-48">
-            <label className="mb-1 block text-xs text-muted-foreground">Biến thể (Tool gõ ra)</label>
-            <input
-              type="text"
-              className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none focus:border-primary"
-              placeholder="VD: BR, brasil…"
-              value={alias}
-              onChange={(e) => setAlias(e.target.value)}
-              maxLength={100}
-            />
-          </div>
-          <div className="w-48">
-            <label className="mb-1 block text-xs text-muted-foreground">Tên chuẩn muốn gộp về</label>
-            <Select value={canonical} onValueChange={setCanonical}>
-              <SelectTrigger className="h-9 w-full">
-                <SelectValue placeholder={canonicals.length === 0 ? "Chưa có tên chuẩn" : "Chọn tên chuẩn…"} />
-              </SelectTrigger>
-              <SelectContent>
-                {canonicals.map((c) => (
-                  <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button onClick={handleAdd} disabled={saving || !alias.trim() || !canonical} className="h-9 gap-1.5">
-            <Plus className="size-4" /> Lưu
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">
+      <Section title="Tên quốc gia chuẩn" description="Danh sách tên chính thức. Khi gộp cách viết khác, bạn chọn từ danh sách này nên không gõ sai hay lệch hoa thường.">
+        <form className="flex max-w-xl flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); void handleAddCanonical(); }}>
+          <Field label="Tên chuẩn mới" className="min-w-0 flex-1 basis-56">
+            {(p) => <Input {...p} value={newCanonical} onChange={(e) => setNewCanonical(e.target.value)} maxLength={100} placeholder="Ví dụ: Brazil" />}
+          </Field>
+          <Button type="submit" disabled={savingCanonical || !newCanonical.trim()}><Plus aria-hidden /> Tạo tên chuẩn</Button>
+        </form>
+      </Section>
+
+      <Section title="Gộp cách viết khác về tên chuẩn" description="Công cụ ở các máy khác nhau có thể gõ cùng một nước theo nhiều cách (BR, brasil...). Gộp về một tên để biểu đồ không bị tách đôi.">
+        <form className="flex max-w-2xl flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); void handleAdd(); }}>
+          <Field label="Cách viết khác" hint="Công cụ gõ ra. Không phân biệt hoa thường." className="min-w-0 flex-1 basis-48">
+            {(p) => <Input {...p} value={alias} onChange={(e) => setAlias(e.target.value)} maxLength={100} placeholder="Ví dụ: BR, brasil" />}
+          </Field>
+          <Field label="Gộp về tên chuẩn" className="min-w-0 flex-1 basis-48">
+            {(p) => (
+              <Select value={canonical} onValueChange={setCanonical}>
+                <SelectTrigger {...p}><SelectValue placeholder={canonicals.length === 0 ? "Chưa có tên chuẩn" : "Chọn tên chuẩn"} /></SelectTrigger>
+                <SelectContent>
+                  {canonicals.map((c) => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+          </Field>
+          <Button type="submit" disabled={saving || !alias.trim() || !canonical}><Plus aria-hidden /> Lưu cách viết</Button>
+        </form>
+        <p className="mt-3 text-sm text-muted-foreground">
           {canonicals.length === 0
-            ? 'Chưa có tên chuẩn nào — tạo ở mục "Tên quốc gia chuẩn" phía trên trước.'
-            : "Tra biến thể không phân biệt hoa/thường, tự bỏ khoảng trắng thừa. Áp dụng ngay cho " +
-              "mọi biểu đồ theo quốc gia (cache tự xoá khi lưu) — không cần sửa gì bên Tool."}
+            ? "Chưa có tên chuẩn nào. Hãy tạo tên chuẩn ở phần trên trước."
+            : "Áp dụng ngay cho mọi biểu đồ theo quốc gia, không cần sửa gì bên công cụ."}
         </p>
-      </div>
+      </Section>
 
-      {loading ? (
-        <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground">
-          <RefreshCw className="size-4 animate-spin" /> Đang tải…
-        </div>
-      ) : items.length === 0 ? (
-        <p className="p-4 text-sm text-muted-foreground">Chưa có quy tắc chuẩn hoá nào.</p>
-      ) : (
-        <div className="space-y-3">
-          {Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)).map(([canon, rows]) => (
-            <div key={canon} className="rounded-xl border border-border bg-elev-1 p-3">
-              <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold">
-                <Globe className="size-4 text-primary-text" /> {canon}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {rows.map((r) => (
-                  <span key={r.alias}
-                        className="flex items-center gap-1.5 rounded-full bg-elev-2 px-2.5 py-1 text-xs">
-                    {r.alias}
-                    <button type="button" onClick={() => handleDelete(r.alias)}
-                            className="text-muted-foreground hover:text-red-500" title="Xoá biến thể này">
-                      <X className="size-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <Section title="Quy tắc đang áp dụng">
+        {loading ? <Loading /> : names.length === 0 ? (
+          <EmptyState icon={Globe} title="Chưa có quy tắc nào">Tạo tên chuẩn đầu tiên ở trên, rồi gộp các cách viết khác về tên đó.</EmptyState>
+        ) : (
+          <ul className="divide-y divide-border border-y border-border">
+            {names.map((name) => {
+              const rows = groups[name] ?? [];
+              const editing = editingCanonical === name;
+              return (
+                <li key={name} className="py-4">
+                  {editing ? (
+                    <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); void saveEditCanonical(); }}>
+                      <Field label={`Tên mới thay cho ${name}`} className="min-w-0 flex-1 basis-56">
+                        {(p) => <Input {...p} autoFocus value={editCanonicalValue} maxLength={100}
+                                       onChange={(e) => setEditCanonicalValue(e.target.value)}
+                                       onKeyDown={(e) => { if (e.key === "Escape") setEditingCanonical(null); }} />}
+                      </Field>
+                      <Button type="submit" disabled={!editCanonicalValue.trim()}><Check aria-hidden /> Lưu tên</Button>
+                      <Button type="button" variant="outline" onClick={() => setEditingCanonical(null)}>Hủy</Button>
+                    </form>
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+                      <h3 className="flex items-center gap-2 text-base font-semibold"><Globe className="size-4 text-primary-text" aria-hidden /> {name}</h3>
+                      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                        <Button variant="outline" aria-label={`Đổi tên ${name}`} onClick={() => { setEditingCanonical(name); setEditCanonicalValue(name); }}>
+                          <Pencil aria-hidden /> Đổi tên
+                        </Button>
+                        <Button variant="outline" className="border-destructive/60 text-destructive" aria-label={`Xóa tên chuẩn ${name}`}
+                                onClick={() => setDeleteCanonical(name)}>
+                          <Trash2 aria-hidden /> Xóa
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-3">
+                    {rows.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Chưa gộp cách viết khác nào về tên này.</p>
+                    ) : (
+                      <ul className="flex flex-wrap gap-2" aria-label={`Cách viết đã gộp về ${name}`}>
+                        {rows.map((r) => (
+                          <li key={r.alias} className="inline-flex items-center rounded-md border border-border-strong bg-surface-2 pl-3">
+                            {r.alias}
+                            <button type="button" onClick={() => void handleDelete(r.alias)} aria-label={`Bỏ cách viết ${r.alias}`}
+                                    className="grid size-11 place-items-center text-muted-foreground hover:text-destructive md:size-10">
+                              <X className="size-4" aria-hidden />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Section>
+
+      <ConfirmDialog
+        open={!!deleteCanonical}
+        title={`Xóa tên chuẩn ${deleteCanonical ?? ""}?`}
+        description="Tên này bị bỏ khỏi danh sách và áp dụng ngay cho mọi biểu đồ theo quốc gia. Việc này không hoàn tác được; muốn dùng lại bạn phải tạo lại."
+        confirmLabel="Xóa tên chuẩn"
+        busy={deleting}
+        onConfirm={() => void confirmDeleteCanonical()}
+        onCancel={() => setDeleteCanonical(null)}
+      />
     </div>
   );
 }

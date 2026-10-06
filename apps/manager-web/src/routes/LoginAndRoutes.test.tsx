@@ -62,10 +62,22 @@ describe("permission / điều hướng theo claim perms", () => {
     expect(screen.getByText("REWARD-PAGE")).toBeInTheDocument();
   });
 
-  it("route Reward: viewer KHÔNG có perm bị đá về trang chủ", () => {
+  it("route Reward: viewer KHÔNG có perm không vào được, thấy trang giải thích và nút về trang chính", async () => {
     renderRoutes(mk("viewer"), "/reward/jobs");
     expect(screen.queryByText("REWARD-PAGE")).not.toBeInTheDocument();
+    expect(screen.getByText(/Bạn đang đăng nhập với vai trò Người xem/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("link", { name: "Về trang chính" }));
     expect(screen.getByText("DASH-PAGE")).toBeInTheDocument();
+  });
+
+  it("route Dashboard: role discord không vào được, trang nêu đúng vai trò và lý do, nút dẫn về /reward/jobs", async () => {
+    renderRoutes(mk("discord"), "/dashboard");
+    expect(screen.queryByText("DASH-PAGE")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Bạn chưa có quyền vào trang này" })).toBeInTheDocument();
+    expect(screen.getByText(/vai trò Vận hành Discord/)).toBeInTheDocument();
+    expect(screen.getByText(/chỉ dành cho: Quản trị viên, Quản lý Dashboard, Người xem/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("link", { name: "Về trang chính" }));
+    expect(screen.getByText("REWARD-PAGE")).toBeInTheDocument();
   });
 
   it("route Reward: admin được vào; role discord legacy vẫn vào được (shim)", () => {
@@ -82,14 +94,14 @@ describe("LoginPage", () => {
     render(<MemoryRouter><AuthContext.Provider value={authValue(null)}><LoginPage /></AuthContext.Provider></MemoryRouter>);
     expect(screen.getByLabelText("Tên đăng nhập")).toBeInTheDocument();
     expect(screen.getByLabelText("Mật khẩu")).toBeInTheDocument();
-    expect(screen.queryByText("Đăng nhập với Manager SSO")).not.toBeInTheDocument();
+    expect(screen.queryByText("Đăng nhập bằng tài khoản Manager")).not.toBeInTheDocument();
   });
 
   it("chế độ oidc: chỉ có nút SSO, bấm => loginWithOidc", async () => {
     const loginWithOidc = vi.fn().mockResolvedValue(undefined);
     render(<MemoryRouter><AuthContext.Provider value={authValue(null, { mode: "oidc", loginWithOidc })}><LoginPage /></AuthContext.Provider></MemoryRouter>);
     expect(screen.queryByLabelText("Mật khẩu")).not.toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Đăng nhập với Manager SSO" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Đăng nhập bằng tài khoản Manager" }));
     expect(loginWithOidc).toHaveBeenCalledWith("/dashboard");
   });
 });

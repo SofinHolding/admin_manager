@@ -1,25 +1,25 @@
 /**
- * Modal hiển thị bí mật chỉ-một-lần (API key máy `mpk_...`) vừa được cấp/xoay.
+ * Hộp thoại hiển thị bí mật chỉ-một-lần (khóa kết nối máy `mpk_...`) vừa được tạo/xoay.
  *
  * Quy tắc bảo mật (docs/api/integration-api-v1.md §1, dev-agent prompt §6):
- *  - Chỉ hiển thị TRONG modal này; không toast, không log, không storage, không URL.
+ *  - Chỉ hiển thị TRONG hộp thoại này; không toast, không log, không storage, không URL.
  *  - Component KHÔNG sao chép giá trị vào state riêng: nó chỉ render prop `secret`. Cha giữ giá trị
  *    trong state và PHẢI đặt về `null` khi `onClose` -> giá trị biến mất khỏi bộ nhớ React.
- *  - Không đóng khi bấm ra ngoài / Esc (tránh mất key do lỡ tay): chỉ nút "Đã lưu, đóng" hoặc dấu X.
+ *  - Không đóng khi bấm ra ngoài / Esc (tránh mất khóa do lỡ tay).
+ *  - Chỉ đóng được sau khi người dùng tick "Tôi đã lưu khóa" (áp dụng cho cả nút đóng lẫn dấu X).
  */
 
-import { useState } from "react";
-import { toast } from "sonner";
-import { AlertTriangle, Check, Copy } from "lucide-react";
+import { useEffect, useId, useState } from "react";
+import { Check, Copy, TriangleAlert } from "lucide-react";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 
 export interface OneTimeSecret {
   title: string;
-  /** Nhãn của trường bí mật, vd "API key". */
+  /** Nhãn của trường bí mật, vd "Khóa kết nối". */
   label: string;
   value: string;
-  /** Thông tin không nhạy cảm đi kèm (key_id, scopes...). */
+  /** Thông tin không nhạy cảm đi kèm (mã khóa, quyền, hạn dùng...). */
   details?: { label: string; value: string }[];
 }
 
@@ -47,61 +47,101 @@ async function copyText(text: string): Promise<boolean> {
 
 export function SecretOnceDialog({ secret, onClose }: { secret: OneTimeSecret | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [needSaved, setNeedSaved] = useState(false);
+  const uid = useId();
+  const hintId = `${uid}-hint`;
+
+  // Khi cha đã xóa bí mật (secret = null) thì xóa luôn trạng thái của hộp thoại.
+  useEffect(() => {
+    if (!secret) { setCopied(false); setCopyFailed(false); setSaved(false); setNeedSaved(false); }
+  }, [secret]);
 
   const handleCopy = async () => {
     if (!secret) return;
     const ok = await copyText(secret.value);
     setCopied(ok);
-    if (ok) toast.success("Đã copy vào clipboard"); else toast.error("Không copy được — hãy chọn và copy thủ công");
+    setCopyFailed(!ok);
   };
 
-  const close = () => { setCopied(false); onClose(); };
+  const close = () => {
+    setCopied(false); setCopyFailed(false); setSaved(false); setNeedSaved(false);
+    onClose();
+  };
+
+  // Dấu X và mọi đường đóng khác cũng phải qua bước xác nhận đã lưu.
+  const requestClose = () => {
+    if (!saved) { setNeedSaved(true); return; }
+    close();
+  };
 
   return (
-    <Dialog open={!!secret} onOpenChange={(open) => { if (!open) close(); }}>
+    <Dialog open={!!secret} onOpenChange={(open) => { if (!open) requestClose(); }}>
       <DialogContent
         className="max-w-lg"
         onInteractOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
         <DialogTitle>{secret?.title}</DialogTitle>
-        <DialogDescription>
-          Chỉ hiển thị <strong>một lần</strong>. Hãy lưu vào nơi an toàn (trình quản lý bí mật) ngay bây giờ —
-          đóng cửa sổ này là không thể xem lại.
+        <DialogDescription className="reading mt-1 text-[0.9375rem]">
+          Hãy sao chép khóa ngay — đóng hộp này là không xem lại được. Khóa chỉ hiện <strong>một lần</strong>;
+          nếu mất, bạn phải tạo khóa mới.
         </DialogDescription>
 
-        <div className="mt-3 flex items-start gap-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-700">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <span>Không chia sẻ, không dán vào chat/ticket, không commit vào mã nguồn.</span>
+        <div className="mt-4">
+          <div className="mb-1 text-sm font-semibold">{secret?.label}</div>
+          <code
+            data-testid="secret-value"
+            className="block select-all break-all rounded-md border border-border-strong bg-surface-2 px-3 py-3 font-mono text-sm"
+          >
+            {secret?.value}
+          </code>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <Button variant="outline" onClick={handleCopy}>
+              {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+              {copied ? "Đã sao chép" : "Sao chép khóa"}
+            </Button>
+            <span role="status" className="text-sm">
+              {copied && <span className="text-success">Đã sao chép vào bộ nhớ tạm. Hãy dán vào công cụ của bạn.</span>}
+              {copyFailed && <span className="text-destructive">Không sao chép được. Hãy bấm vào khóa để chọn rồi sao chép thủ công.</span>}
+            </span>
+          </div>
         </div>
 
         {secret?.details?.length ? (
-          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+          <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 border-t border-border pt-3 text-sm">
             {secret.details.map((d) => (
               <div key={d.label} className="contents">
                 <dt className="text-muted-foreground">{d.label}</dt>
-                <dd className="font-mono break-all">{d.value}</dd>
+                <dd className="break-words">{d.value}</dd>
               </div>
             ))}
           </dl>
         ) : null}
 
-        <div className="mt-3">
-          <div className="mb-1 text-xs text-muted-foreground">{secret?.label}</div>
-          <code
-            data-testid="secret-value"
-            className="block select-all break-all rounded-md border border-border bg-elev-1 px-3 py-2 font-mono text-xs"
-          >
-            {secret?.value}
-          </code>
-        </div>
+        <p className="mt-4 flex items-start gap-2 text-sm text-muted-foreground">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <span>Không gửi khóa qua chat hoặc email, không đưa vào mã nguồn. Ai có khóa này đều đẩy được dữ liệu thay công cụ của bạn.</span>
+        </p>
 
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="outline" onClick={handleCopy}>
-            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-            {copied ? "Đã copy" : "Copy"}
-          </Button>
-          <Button onClick={close}>Đã lưu, đóng</Button>
+        <div className="mt-5 border-t border-border pt-4">
+          <label className="flex min-h-11 cursor-pointer items-start gap-3 text-[0.9375rem] font-medium">
+            <input
+              type="checkbox"
+              checked={saved}
+              onChange={(e) => { setSaved(e.target.checked); if (e.target.checked) setNeedSaved(false); }}
+              aria-describedby={hintId}
+              className="mt-1 size-5 shrink-0 accent-[var(--primary)]"
+            />
+            <span>Tôi đã lưu khóa này ở nơi an toàn</span>
+          </label>
+          <p id={hintId} className={needSaved ? "mt-1 text-sm font-medium text-destructive" : "mt-1 text-sm text-muted-foreground"}>
+            {needSaved ? "Hãy tick ô xác nhận trước khi đóng, vì khóa sẽ không hiện lại." : "Tick ô này để đóng được hộp thoại."}
+          </p>
+          <div className="mt-3 flex justify-end">
+            <Button onClick={requestClose} disabled={!saved}>Xong, đóng hộp này</Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

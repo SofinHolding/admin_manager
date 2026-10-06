@@ -1,26 +1,26 @@
 /**
- * Trang Nhóm kênh — viewer tự quản lý nhóm kênh của chính mình (tạo/đổi tên/xoá group,
- * thêm/xoá kênh vào group kèm nhãn nền tảng tự do).
+ * Nhóm kênh — người xem tự quản lý nhóm kênh của chính mình (tạo/đổi tên/xóa nhóm,
+ * thêm/gỡ kênh kèm nhãn nền tảng và quốc gia ghi đè).
  *
+ * Lợi ích nói bằng lời: gom nhiều kênh thành một nhóm để xem tổng riêng và so sánh trên Tổng quan.
  * Kênh khả dụng lấy từ analyticsApi.topChannels (cùng nguồn dữ liệu Dashboard đang dùng).
  */
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Save, Trash2, Users, X } from "lucide-react";
+import { Globe, Plus, Save, Trash2, Users, X } from "lucide-react";
 import { analyticsApi, groupsApi, type TopChannel, type ViewerGroup } from "../api";
 import { daysAgo, defaultFilter } from "../filters/filterState";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
+import { EmptyState, Field, PageHeader, Section } from "../components/kit";
 
 function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
-
-const inputCls =
-  "h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none transition-colors focus:border-primary";
 
 export default function GroupsPage() {
   const [groups, setGroups] = useState<ViewerGroup[]>([]);
@@ -35,7 +35,7 @@ export default function GroupsPage() {
       const { items } = await groupsApi.list();
       setGroups(items);
     } catch (e) {
-      toast.error(errMsg(e, "Không tải được danh sách nhóm kênh"));
+      toast.error(errMsg(e, "Không tải được danh sách nhóm kênh. Kiểm tra mạng rồi tải lại trang."));
     } finally {
       setLoading(false);
     }
@@ -57,22 +57,22 @@ export default function GroupsPage() {
       const group = await groupsApi.create(newName.trim());
       setGroups((prev) => [{ ...group, members: group.members ?? [] }, ...prev]);
       setNewName("");
-      toast.success("Đã tạo nhóm kênh");
+      toast.success("Đã tạo nhóm");
     } catch (e) {
-      toast.error(errMsg(e, "Tạo nhóm thất bại"));
+      toast.error(errMsg(e, "Không tạo được nhóm. Thử lại sau ít phút."));
     } finally {
       setCreating(false);
     }
   };
 
   const handleDelete = async (group: ViewerGroup) => {
-    if (!confirm(`Xoá nhóm "${group.name}"? Hành động này không thể hoàn tác.`)) return;
+    if (!confirm(`Xóa nhóm "${group.name}"? Các kênh trong nhóm vẫn còn, chỉ nhóm bị xóa. Không hoàn tác được.`)) return;
     try {
       await groupsApi.delete(group.id);
       setGroups((prev) => prev.filter((g) => g.id !== group.id));
-      toast.success("Đã xoá nhóm kênh");
+      toast.success("Đã xóa nhóm");
     } catch (e) {
-      toast.error(errMsg(e, "Xoá nhóm thất bại"));
+      toast.error(errMsg(e, "Không xóa được nhóm. Thử lại sau ít phút."));
     }
   };
 
@@ -83,7 +83,7 @@ export default function GroupsPage() {
       setGroups((prev) => prev.map((g) => (g.id === group.id ? { ...g, name: name.trim() } : g)));
       toast.success("Đã đổi tên nhóm");
     } catch (e) {
-      toast.error(errMsg(e, "Đổi tên thất bại"));
+      toast.error(errMsg(e, "Không đổi được tên nhóm"));
     }
   };
 
@@ -99,7 +99,7 @@ export default function GroupsPage() {
       setGroups(items);
       toast.success("Đã thêm kênh vào nhóm");
     } catch (e) {
-      toast.error(errMsg(e, "Thêm kênh thất bại"));
+      toast.error(errMsg(e, "Không thêm được kênh vào nhóm"));
     }
   };
 
@@ -113,63 +113,55 @@ export default function GroupsPage() {
       );
       toast.success("Đã gỡ kênh khỏi nhóm");
     } catch (e) {
-      toast.error(errMsg(e, "Gỡ kênh thất bại"));
+      toast.error(errMsg(e, "Không gỡ được kênh khỏi nhóm"));
     }
   };
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <h1 className="flex items-center gap-2 text-xl font-bold">
-        <Users className="size-5" /> Nhóm kênh
-      </h1>
+    <div>
+      <PageHeader
+        title="Nhóm kênh"
+        description="Gom nhiều kênh thành một nhóm để xem tổng riêng và so sánh với nhóm khác trên trang Tổng quan."
+      />
 
-      <div className="rounded-xl border border-border bg-elev-1 p-4">
-        <h3 className="mb-3 text-sm font-semibold">Tạo nhóm mới</h3>
-        <div className="flex items-end gap-3">
-          <div className="flex-1">
-            <label className="mb-1 block text-xs text-muted-foreground">Tên nhóm</label>
-            <input
-              type="text"
-              className={inputCls}
-              placeholder="VD: Kênh chính"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              maxLength={100}
-              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-            />
-          </div>
-          <Button onClick={handleCreate} disabled={creating || !newName.trim()} className="h-9 gap-1.5">
-            <Plus className="size-4" /> Tạo nhóm
+      <Section title="Tạo nhóm mới" description="Ví dụ: “Kênh chính”, “Kênh Nigeria”, “Kênh mới mở”.">
+        <form className="flex max-w-xl flex-wrap items-end gap-3" noValidate
+              onSubmit={(e) => { e.preventDefault(); void handleCreate(); }}>
+          <Field label="Tên nhóm" className="min-w-[14rem] flex-1">
+            {(p) => <Input {...p} value={newName} maxLength={100} onChange={(e) => setNewName(e.target.value)} placeholder="Ví dụ: Kênh chính" />}
+          </Field>
+          <Button type="submit" disabled={creating || !newName.trim()}>
+            <Plus aria-hidden /> Tạo nhóm
           </Button>
-        </div>
-      </div>
+        </form>
+      </Section>
 
       {loading ? (
-        <div className="p-6 text-center text-sm text-muted-foreground">Đang tải…</div>
+        <p className="py-6 text-muted-foreground">Đang tải…</p>
       ) : groups.length === 0 ? (
-        <div className="rounded-xl border border-border bg-elev-1 p-6 text-center text-sm text-muted-foreground">
-          Chưa có nhóm kênh nào. Tạo nhóm đầu tiên ở trên.
-        </div>
+        <Section>
+          <EmptyState icon={Users} title="Bạn chưa có nhóm kênh nào">
+            Đặt tên cho nhóm đầu tiên ở trên. Sau khi tạo, bạn chọn các kênh muốn đưa vào nhóm; trang Tổng quan sẽ cho xem tổng và so sánh riêng theo nhóm.
+          </EmptyState>
+        </Section>
       ) : (
-        <div className="space-y-4">
-          {groups.map((g) => (
-            <GroupCard
-              key={g.id}
-              group={g}
-              channels={channels}
-              onRename={(name) => handleRename(g, name)}
-              onDelete={() => handleDelete(g)}
-              onAddMember={(ref, tag, ctry) => handleAddMember(g, ref, tag, ctry)}
-              onRemoveMember={(ref) => handleRemoveMember(g, ref)}
-            />
-          ))}
-        </div>
+        groups.map((g) => (
+          <GroupSection
+            key={g.id}
+            group={g}
+            channels={channels}
+            onRename={(name) => handleRename(g, name)}
+            onDelete={() => handleDelete(g)}
+            onAddMember={(ref, tag, ctry) => handleAddMember(g, ref, tag, ctry)}
+            onRemoveMember={(ref) => handleRemoveMember(g, ref)}
+          />
+        ))
       )}
     </div>
   );
 }
 
-function GroupCard({ group, channels, onRename, onDelete, onAddMember, onRemoveMember }: {
+function GroupSection({ group, channels, onRename, onDelete, onAddMember, onRemoveMember }: {
   group: ViewerGroup;
   channels: TopChannel[];
   onRename: (name: string) => void;
@@ -183,117 +175,92 @@ function GroupCard({ group, channels, onRename, onDelete, onAddMember, onRemoveM
   const [countryOverride, setCountryOverride] = useState("");
   const memberRefs = new Set(group.members.map((m) => m.channel_ref));
   const available = channels.filter((c) => !memberRefs.has(c.id));
+  const nameOf = (ref: string) => channels.find((c) => c.id === ref)?.name ?? ref;
 
   return (
-    <div className="rounded-xl border border-border bg-elev-1 p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <input
-          type="text"
-          className={`${inputCls} flex-1 font-medium`}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={100}
-        />
+    <Section>
+      <div className="mb-4 flex flex-wrap items-end gap-2">
+        <Field label="Tên nhóm" className="min-w-[12rem] flex-1">
+          {(p) => <Input {...p} className="font-semibold" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />}
+        </Field>
         {name !== group.name && (
-          <Button variant="ghost" size="sm" onClick={() => onRename(name)} title="Lưu tên">
-            <Save className="size-4" />
+          <Button variant="outline" onClick={() => onRename(name)} disabled={!name.trim()}>
+            <Save aria-hidden /> Lưu tên
           </Button>
         )}
-        <Button variant="ghost" size="sm" onClick={onDelete} className="text-red-500 hover:text-red-600" title="Xoá nhóm">
-          <Trash2 className="size-4" />
+        <Button variant="ghost" onClick={onDelete} className="text-destructive" aria-label={`Xóa nhóm ${group.name}`}>
+          <Trash2 aria-hidden /> Xóa nhóm
         </Button>
       </div>
 
-      <div className="mb-3 space-y-2">
-        {group.members.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Chưa có kênh nào trong nhóm.</p>
-        ) : (
-          group.members.map((m) => (
-            <div
-              key={m.channel_ref}
-              className="flex items-center justify-between rounded-md border border-border/60 px-3 py-2 text-sm"
-            >
-              <div>
-                <span className="font-medium">{m.channel_ref}</span>
-                {m.platform_tag && (
-                  <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary-text">
-                    {m.platform_tag}
-                  </span>
-                )}
-                {m.country_override && (
-                  <span className="ml-2 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600"
-                        title="Quốc gia đã ghi đè — áp dụng cho mọi biểu đồ tính theo quốc gia">
-                    🌐 {m.country_override}
-                  </span>
+      <h3 className="mb-2">Kênh trong nhóm ({group.members.length})</h3>
+      {group.members.length === 0 ? (
+        <p className="mb-4 text-muted-foreground">Nhóm này chưa có kênh nào. Chọn kênh ở bên dưới để thêm vào.</p>
+      ) : (
+        <ul className="mb-4 divide-y divide-border border-y border-border">
+          {group.members.map((m) => (
+            <li key={m.channel_ref} className="flex items-start gap-3 py-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="break-words font-semibold">{nameOf(m.channel_ref)}</p>
+                {(m.platform_tag || m.country_override) && (
+                  <p className="mt-0.5 flex flex-wrap items-center gap-x-4 gap-y-0.5 text-sm text-muted-foreground">
+                    {m.platform_tag && <span>Nhãn nền tảng: {m.platform_tag}</span>}
+                    {m.country_override && (
+                      <span className="inline-flex items-center gap-1 text-foreground">
+                        <Globe className="size-3.5" aria-hidden />
+                        Tính vào quốc gia: {m.country_override}
+                      </span>
+                    )}
+                  </p>
                 )}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onRemoveMember(m.channel_ref)}
-                className="text-red-500 hover:text-red-600"
-                title="Gỡ khỏi nhóm"
-              >
-                <X className="size-4" />
+              <Button variant="ghost" onClick={() => onRemoveMember(m.channel_ref)} className="shrink-0"
+                      aria-label={`Gỡ ${nameOf(m.channel_ref)} khỏi nhóm ${group.name}`}>
+                <X aria-hidden /> Gỡ
               </Button>
-            </div>
-          ))
-        )}
-      </div>
+            </li>
+          ))}
+        </ul>
+      )}
 
-      <div className="flex flex-wrap items-end gap-2 border-t border-border pt-3">
-        <div className="min-w-[220px] flex-1">
-          <label className="mb-1 block text-xs text-muted-foreground">Chọn kênh</label>
-          <Select value={selectedChannel} onValueChange={setSelectedChannel}>
-            <SelectTrigger className="h-9">
-              <SelectValue placeholder="Chọn kênh để thêm" />
-            </SelectTrigger>
-            <SelectContent>
-              {available.length === 0 ? (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">Không còn kênh nào để thêm</div>
-              ) : (
-                available.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.name} ({c.platform})</SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
+      <form className="max-w-xl space-y-4" noValidate
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!selectedChannel) return;
+              onAddMember(selectedChannel, platformTag, countryOverride);
+              setSelectedChannel(""); setPlatformTag(""); setCountryOverride("");
+            }}>
+        <Field label="Thêm kênh vào nhóm">
+          {(p) => (
+            <Select value={selectedChannel} onValueChange={setSelectedChannel}>
+              <SelectTrigger id={p.id} aria-describedby={p["aria-describedby"]}>
+                <SelectValue placeholder="Chọn kênh để thêm" />
+              </SelectTrigger>
+              <SelectContent>
+                {available.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">Không còn kênh nào để thêm</div>
+                ) : (
+                  available.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name} ({c.platform})</SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          )}
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Nhãn nền tảng" optional hint="Chỉ để bạn dễ phân biệt, ví dụ: tiktok, instagram.">
+            {(p) => <Input {...p} value={platformTag} maxLength={30} onChange={(e) => setPlatformTag(e.target.value)} />}
+          </Field>
+          <Field label="Quốc gia (ghi đè)" optional
+                 hint="Điền nếu muốn tính kênh này vào một quốc gia khác với dữ liệu gốc. Áp dụng ngay cho mọi biểu đồ theo quốc gia.">
+            {(p) => <Input {...p} value={countryOverride} maxLength={50} onChange={(e) => setCountryOverride(e.target.value)} placeholder="Ví dụ: Nigeria" />}
+          </Field>
         </div>
-        <div className="w-40">
-          <label className="mb-1 block text-xs text-muted-foreground">Nhãn nền tảng</label>
-          <input
-            type="text"
-            className={inputCls}
-            placeholder="tiktok, instagram…"
-            value={platformTag}
-            onChange={(e) => setPlatformTag(e.target.value)}
-            maxLength={30}
-          />
-        </div>
-        <div className="w-40">
-          <label className="mb-1 block text-xs text-muted-foreground">Quốc gia (ghi đè)</label>
-          <input
-            type="text"
-            className={inputCls}
-            placeholder="VD: Nigeria"
-            value={countryOverride}
-            onChange={(e) => setCountryOverride(e.target.value)}
-            maxLength={50}
-            title="Sửa quốc gia của kênh này — áp dụng ngay cho mọi biểu đồ theo quốc gia, đồng bộ với nhãn nền tảng"
-          />
-        </div>
-        <Button
-          size="sm"
-          onClick={() => {
-            onAddMember(selectedChannel, platformTag, countryOverride);
-            setSelectedChannel(""); setPlatformTag(""); setCountryOverride("");
-          }}
-          disabled={!selectedChannel}
-          className="h-9 gap-1.5"
-        >
-          <Plus className="size-4" /> Thêm kênh
+        <Button type="submit" variant="outline" disabled={!selectedChannel}>
+          <Plus aria-hidden /> Thêm kênh vào nhóm
         </Button>
-      </div>
-    </div>
+      </form>
+    </Section>
   );
 }

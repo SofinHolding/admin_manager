@@ -44,8 +44,9 @@ export function applyTheme(pref: ThemePref): void {
   document.documentElement.classList.toggle("dark", dark);
 }
 
+/** 100 = cỡ chuẩn (gốc 15px = 93,75%); 112/125 phóng thêm 12%/25% cho người cần chữ lớn. */
 export function applyTextSize(size: TextSize): void {
-  document.documentElement.style.fontSize = `${size}%`;
+  document.documentElement.style.fontSize = `${(size * 0.9375).toFixed(2)}%`;
 }
 
 export function setThemePref(pref: ThemePref): void {

@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { toast } from "sonner";
-import { Eye, EyeOff, Loader2, BarChart3 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
+import { Field, Notice } from "../components/kit";
+import { AuthShell, PasswordField, Spinner, TextLink, loginError, type FriendlyError } from "../components/authKit";
 
 export default function LoginPage() {
   const { login, user, mode, loginWithOidc } = useAuth();
@@ -14,24 +13,14 @@ export default function LoginPage() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [showPw, setShowPw] = useState(false);
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<FriendlyError | null>(null);
+  const [missing, setMissing] = useState<{ username?: string; password?: string }>({});
 
-  // Toast thông báo từ redirect — phải nằm trong useEffect, không được gọi trong render
-  // body vì React 19 sẽ lỗi "Cannot update a component while rendering a different component".
-  // Và phải nằm TRƯỚC mọi early return — React yêu cầu hooks gọi cùng thứ tự mọi lần render.
-  const toastShown = useRef(false);
-  useEffect(() => {
-    if (toastShown.current) return;
-    if (params.get("verified") === "true") {
-      toastShown.current = true;
-      toast.success("Xác thực email thành công! Đăng nhập ngay.");
-    } else if (params.get("reset") === "true") {
-      toastShown.current = true;
-      toast.success("Mật khẩu đã đặt lại. Đăng nhập với mật khẩu mới.");
-    }
-  }, [params]);
+  // Thông báo từ trang khác chuyển tới (?verified, ?reset): hiện ngay trong trang, không biến mất sau vài giây.
+  const justVerified = params.get("verified") === "true";
+  const justReset = params.get("reset") === "true";
 
   // Đã đăng nhập → về dashboard. Dùng useEffect thay vì gọi navigate() trong render body
   // vì navigate() setState bên trong → "Cannot update while rendering another component".
@@ -41,136 +30,117 @@ export default function LoginPage() {
 
   if (user) return null;
 
+  const footer = (
+    <p>
+      Chưa có tài khoản? <TextLink to="/register">Đăng ký bằng mã mời</TextLink>
+    </p>
+  );
+
   // Chế độ OIDC (VITE_AUTH_MODE=oidc): đăng nhập qua Identity bằng Authorization Code + PKCE.
   if (mode === "oidc") {
     const startSso = async () => {
       setLoading(true);
+      setError(null);
       try {
         await loginWithOidc("/dashboard");
       } catch (err) {
-        toast.error((err as Error).message);
+        setError({
+          title: "Chưa mở được trang đăng nhập",
+          body: (err as Error).message || "Thử lại sau ít phút. Nếu vẫn lỗi, hãy báo quản trị viên.",
+        });
         setLoading(false);
       }
     };
     return (
-      <div className="flex min-h-screen items-center justify-center p-4">
-        <div className="w-full max-w-[400px]">
-          <div className="mb-8 text-center">
-            <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-xl bg-primary/15">
-              <BarChart3 className="size-6 text-primary-text" />
-            </div>
-            <h1 className="text-xl font-semibold">Đăng nhập</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Xem thống kê và biểu đồ dữ liệu</p>
-          </div>
-          <div className="glass rounded-xl p-6">
-            <Button size="lg" className="w-full" onClick={startSso} disabled={loading}>
-              {loading && <Loader2 className="size-4 animate-spin" />}
-              Đăng nhập với Manager SSO
-            </Button>
-          </div>
-          <div className="mt-4 text-center text-sm text-muted-foreground">
-            Chưa có tài khoản?{" "}
-            <Link to="/register" className="font-medium text-primary-text hover:underline">
-              Đăng ký bằng mã mời
-            </Link>
-          </div>
+      <AuthShell title="Đăng nhập" description="Đăng nhập để xem thống kê kênh và quản lý nguồn dữ liệu của bạn." footer={footer}>
+        <div className="flex flex-col gap-4">
+          {error && <Notice tone="error" title={error.title}>{error.body}</Notice>}
+          <p className="text-[0.9375rem] text-muted-foreground">
+            Bạn sẽ được chuyển sang trang đăng nhập chung của Manager, rồi quay lại đây.
+          </p>
+          <Button size="lg" className="w-full" onClick={startSso} disabled={loading}>
+            {loading && <Spinner />}
+            Đăng nhập bằng tài khoản Manager
+          </Button>
         </div>
-      </div>
+      </AuthShell>
     );
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim() || !password) return;
+    const miss: { username?: string; password?: string } = {};
+    if (!username.trim()) miss.username = "Nhập tên đăng nhập của bạn.";
+    if (!password) miss.password = "Nhập mật khẩu.";
+    setMissing(miss);
+    if (miss.username || miss.password) return;
     setLoading(true);
+    setError(null);
     try {
       await login(username.trim(), password, remember);
       navigate("/dashboard", { replace: true });
     } catch (err) {
-      toast.error((err as Error).message);
+      setError(loginError(err));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <div className="w-full max-w-[400px]">
-        {/* Logo */}
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-xl bg-primary/15">
-            <BarChart3 className="size-6 text-primary-text" />
-          </div>
-          <h1 className="text-xl font-semibold">Đăng nhập</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Xem thống kê và biểu đồ dữ liệu</p>
+    <AuthShell title="Đăng nhập" description="Đăng nhập để xem thống kê kênh và quản lý nguồn dữ liệu của bạn." footer={footer}>
+      <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
+        {justVerified && <Notice tone="success" title="Đã xác thực email">Đăng nhập để bắt đầu sử dụng.</Notice>}
+        {justReset && <Notice tone="success" title="Đã đặt lại mật khẩu">Đăng nhập bằng mật khẩu mới.</Notice>}
+        {error && <Notice tone="error" title={error.title}>{error.body}</Notice>}
+
+        <Field label="Tên đăng nhập" error={missing.username}>
+          {(p) => (
+            <Input
+              {...p}
+              name="username"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoFocus
+            />
+          )}
+        </Field>
+
+        <div>
+          <PasswordField
+            label="Mật khẩu"
+            name="password"
+            value={password}
+            onChange={setPassword}
+            autoComplete="current-password"
+            error={missing.password}
+          />
+          <TextLink to="/reset-password" className="mt-1">Quên mật khẩu?</TextLink>
         </div>
 
-        <form onSubmit={handleSubmit} className="glass rounded-xl p-6">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="username">Tên đăng nhập</Label>
-              <Input
-                id="username"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Nhập tên đăng nhập"
-                autoFocus
-              />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="password">Mật khẩu</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPw ? "text" : "password"}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Nhập mật khẩu"
-                  className="pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw(!showPw)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  tabIndex={-1}
-                >
-                  {showPw ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={remember}
-                  onChange={(e) => setRemember(e.target.checked)}
-                  className="rounded accent-primary"
-                />
-                <span title="Giữ phiên khi tải lại trang (chỉ trong tab này, xoá khi đóng tab)">Ghi nhớ đăng nhập</span>
-              </label>
-              <Link to="/reset-password" className="text-sm text-primary-text hover:underline">
-                Quên mật khẩu?
-              </Link>
-            </div>
-
-            <Button type="submit" size="lg" className="w-full" disabled={loading || !username.trim() || !password}>
-              {loading && <Loader2 className="size-4 animate-spin" />}
-              Đăng nhập
-            </Button>
-          </div>
-        </form>
-
-        <div className="mt-4 text-center text-sm text-muted-foreground">
-          Chưa có tài khoản?{" "}
-          <Link to="/register" className="font-medium text-primary-text hover:underline">
-            Đăng ký bằng mã mời
-          </Link>
+        <div>
+          <label className="flex min-h-11 cursor-pointer items-center gap-3 text-[0.9375rem] font-medium">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              aria-describedby="remember-hint"
+              className="size-5 accent-primary"
+            />
+            Ghi nhớ đăng nhập
+          </label>
+          <p id="remember-hint" className="ml-8 text-sm text-muted-foreground">
+            Chỉ giữ trong tab này. Đóng tab là bạn cần đăng nhập lại. Không nên chọn trên máy dùng chung.
+          </p>
         </div>
-      </div>
-    </div>
+
+        <Button type="submit" size="lg" className="w-full" disabled={loading}>
+          {loading && <Spinner />}
+          {loading ? "Đang đăng nhập" : "Đăng nhập"}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }

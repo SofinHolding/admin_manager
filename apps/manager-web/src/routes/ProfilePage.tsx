@@ -1,106 +1,237 @@
 /**
- * Trang hồ sơ cá nhân — user tự đổi mật khẩu và cập nhật thông tin.
+ * Trang hồ sơ cá nhân — xem thông tin, đổi mật khẩu, liên kết công cụ đẩy dữ liệu.
  *
  * Đổi mật khẩu cần xác thực mã 6 số gửi qua email TRƯỚC khi cho nhập mật khẩu mới.
  * Luồng: Gửi mã → Nhập mã + mật khẩu mới → Đổi thành công → Đăng nhập lại.
+ * Đổi email: email mới ở trạng thái CHƯA xác thực và server gửi lại thư xác thực tới email mới.
  */
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Copy, KeyRound, Link2, Mail, RefreshCw, Save, Send, Trash2, User } from "lucide-react";
+import { Copy, Link2, Send, Trash2 } from "lucide-react";
 import { useAuth } from "../auth";
 import { linksApi, profileApi, type ViewerLink } from "../api";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { EmptyState, Field, Notice, PageHeader, Section } from "../components/kit";
+import {
+  PASSWORD_RULE, PasswordField, Spinner, formError, passwordLengthError, roleAbout, roleLabel,
+  type FriendlyError,
+} from "../components/authKit";
 
 export default function ProfilePage() {
   const { user } = useAuth();
 
   return (
-    <div className="mx-auto max-w-xl space-y-6">
-      <h1 className="text-xl font-bold">Hồ sơ cá nhân</h1>
+    <div className="mx-auto max-w-2xl">
+      <PageHeader title="Hồ sơ" description="Xem thông tin tài khoản, đổi mật khẩu và liên kết công cụ đẩy dữ liệu của bạn." />
       {user && <ProfileForm user={user} />}
-      <ToolLinksCard />
       <ChangePasswordForm />
+      <ToolLinksCard />
     </div>
   );
 }
 
-// ── Cập nhật hồ sơ ──────────────────────────────────────────────────────────
+// ── Thông tin tài khoản ─────────────────────────────────────────────────────
 
 function ProfileForm({ user }: { user: { username: string; email: string; role: string } }) {
   const [username, setUsername] = useState(user.username);
   const [email, setEmail] = useState(user.email);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<FriendlyError | null>(null);
+  const [saved, setSaved] = useState<{ usernameChanged: boolean; emailChanged: boolean; email: string } | null>(null);
 
   const hasChanges = username !== user.username || email !== user.email;
 
-  const handleSave = async () => {
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!hasChanges) return;
     setSaving(true);
+    setError(null);
+    setSaved(null);
     try {
       const data: Record<string, string> = {};
       if (username !== user.username) data.username = username;
       if (email !== user.email) data.email = email;
       await profileApi.updateProfile(data);
-      toast.success("Đã cập nhật hồ sơ. Tải lại trang để thấy thay đổi.");
-    } catch (e: any) {
-      toast.error(e.message || "Cập nhật thất bại");
+      setSaved({ usernameChanged: "username" in data, emailChanged: "email" in data, email });
+    } catch (err) {
+      setError(formError(err, "Chưa lưu được thay đổi"));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="rounded-xl border border-border bg-elev-1 p-5">
-      <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
-        <User className="size-4" /> Thông tin tài khoản
-      </h3>
+    <Section title="Thông tin tài khoản" description="Tên đăng nhập và email dùng để đăng nhập và nhận thư từ hệ thống.">
+      <form onSubmit={handleSave} noValidate className="flex flex-col gap-5">
+        {error && <Notice tone="error" title={error.title}>{error.body}</Notice>}
+        {saved?.emailChanged && (
+          <Notice tone="warning" title="Email mới chưa được xác thực">
+            Chúng tôi đã gửi thư xác thực tới <strong className="break-all">{saved.email}</strong>. Mở thư và bấm vào
+            liên kết trong thư để xác thực. Kiểm tra cả mục thư rác nếu chưa thấy.
+          </Notice>
+        )}
+        {saved && !saved.emailChanged && (
+          <Notice tone="success" title="Đã lưu thay đổi">Tải lại trang để thấy tên mới ở mọi nơi.</Notice>
+        )}
+        {saved?.emailChanged && saved.usernameChanged && (
+          <Notice tone="success" title="Đã lưu tên đăng nhập">Tải lại trang để thấy tên mới ở mọi nơi.</Notice>
+        )}
 
-      <div className="space-y-3">
+        <Field label="Tên đăng nhập" hint="3 đến 30 ký tự.">
+          {(p) => (
+            <Input {...p} name="username" autoComplete="username" autoCapitalize="none" spellCheck={false}
+                   value={username} onChange={(e) => setUsername(e.target.value)} minLength={3} maxLength={30} />
+          )}
+        </Field>
+
+        <Field label="Email" hint="Nếu đổi email, email mới sẽ ở trạng thái chưa xác thực cho tới khi bạn bấm liên kết trong thư chúng tôi gửi tới địa chỉ đó.">
+          {(p) => (
+            <Input {...p} name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false}
+                   value={email} onChange={(e) => setEmail(e.target.value)} />
+          )}
+        </Field>
+
+        <dl>
+          <dt className="text-sm font-semibold">Vai trò</dt>
+          <dd className="mt-1">
+            <span className="font-medium">{roleLabel(user.role)}</span>
+            <span className="reading mt-0.5 block text-sm text-muted-foreground">{roleAbout(user.role)}</span>
+            <span className="mt-0.5 block text-sm text-muted-foreground">Vai trò do quản trị viên cấp; bạn không tự đổi được.</span>
+          </dd>
+        </dl>
+
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Tên đăng nhập</label>
-          <input
-            type="text"
-            className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none transition-colors focus:border-primary"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            minLength={3}
-            maxLength={30}
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Email</label>
-          <div className="flex items-center gap-2">
-            <Mail className="size-4 text-muted-foreground" />
-            <input
-              type="email"
-              className="h-9 flex-1 rounded-md border border-border bg-elev-1 px-3 text-sm outline-none transition-colors focus:border-primary"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Vai trò</label>
-          <span className="inline-block rounded-full bg-primary/10 px-3 py-1 text-xs font-medium capitalize text-primary-text">
-            {user.role}
-          </span>
-        </div>
-
-        {hasChanges && (
-          <Button onClick={handleSave} disabled={saving} className="mt-2 gap-1.5">
-            {saving ? <RefreshCw className="size-4 animate-spin" /> : <Save className="size-4" />}
+          <Button type="submit" size="lg" disabled={saving || !hasChanges}>
+            {saving && <Spinner />}
             Lưu thay đổi
           </Button>
-        )}
-      </div>
-    </div>
+        </div>
+      </form>
+    </Section>
   );
 }
 
-// ── Liên kết Tool ───────────────────────────────────────────────────────────
+// ── Đổi mật khẩu ────────────────────────────────────────────────────────────
+
+function ChangePasswordForm() {
+  const { logout } = useAuth();
+  const [step, setStep] = useState<"idle" | "code_sent" | "done">("idle");
+  const [sending, setSending] = useState(false);
+  const [changing, setChanging] = useState(false);
+  const [code, setCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState<FriendlyError | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [tried, setTried] = useState(false);
+
+  const handleSendCode = async () => {
+    setSending(true);
+    setError(null);
+    setInfo(null);
+    try {
+      await profileApi.sendChangeCode();
+      setStep("code_sent");
+      setInfo("Đã gửi mã 6 số về email của bạn. Mã hết hạn sau 10 phút.");
+    } catch (e) {
+      setError(formError(e, "Chưa gửi được mã"));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const lengthError = passwordLengthError(newPassword, tried);
+  const mismatch = confirmPassword.length > 0 && confirmPassword !== newPassword;
+
+  const handleChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTried(true);
+    if (code.length !== 6 || passwordLengthError(newPassword, true) || newPassword !== confirmPassword) return;
+    setChanging(true);
+    setError(null);
+    try {
+      await profileApi.changePassword(code, newPassword);
+      setStep("done");
+    } catch (err) {
+      setError(formError(err, "Chưa đổi được mật khẩu"));
+    } finally {
+      setChanging(false);
+    }
+  };
+
+  return (
+    <Section title="Đổi mật khẩu" description="Để bảo vệ tài khoản, chúng tôi xác nhận bằng mã gửi qua email trước khi bạn đặt mật khẩu mới.">
+      {step === "idle" && (
+        <div className="flex flex-col gap-4">
+          {error && <Notice tone="error" title={error.title}>{error.body}</Notice>}
+          <ol className="list-decimal space-y-1 pl-6 text-[0.9375rem]">
+            <li>Chúng tôi gửi mã 6 số về email của bạn.</li>
+            <li>Bạn nhập mã đó và mật khẩu mới.</li>
+            <li>Bạn đăng nhập lại bằng mật khẩu mới.</li>
+          </ol>
+          <div>
+            <Button variant="outline" size="lg" onClick={handleSendCode} disabled={sending}>
+              {sending ? <Spinner /> : <Send aria-hidden />}
+              Gửi mã về email
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === "code_sent" && (
+        <form onSubmit={handleChange} noValidate className="flex flex-col gap-5">
+          {info && <Notice tone="info">{info}</Notice>}
+          {error && <Notice tone="error" title={error.title}>{error.body}</Notice>}
+
+          <Field label="Mã xác thực" hint="Mã 6 số trong thư. Chưa thấy thư thì xem mục thư rác hoặc bấm Gửi lại mã."
+                 error={tried && code.length !== 6 ? "Nhập đủ 6 số." : null}>
+            {(p) => (
+              <Input {...p} name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+                     className="w-40 text-center font-mono text-lg tracking-widest"
+                     value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} autoFocus />
+            )}
+          </Field>
+
+          <PasswordField label="Mật khẩu mới" noun="mật khẩu mới" name="new-password" autoComplete="new-password"
+                         value={newPassword} onChange={setNewPassword} hint={PASSWORD_RULE} error={lengthError} />
+
+          <Field label="Nhập lại mật khẩu mới" error={mismatch ? "Hai mật khẩu chưa khớp. Nhập lại cho giống ô trên." : null}>
+            {(p) => (
+              <Input {...p} name="confirm-password" type="password" autoComplete="new-password"
+                     value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+            )}
+          </Field>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" size="lg" disabled={changing}>
+              {changing && <Spinner />}
+              Đổi mật khẩu
+            </Button>
+            <Button type="button" variant="ghost" size="lg" onClick={handleSendCode} disabled={sending}>
+              Gửi lại mã
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {step === "done" && (
+        <div className="flex flex-col gap-4">
+          <Notice tone="success" title="Đã đổi mật khẩu">
+            Các phiên đăng nhập cũ sẽ hết hiệu lực, nên bạn cần đăng nhập lại bằng mật khẩu mới.
+          </Notice>
+          <div>
+            <Button size="lg" onClick={logout}>Đăng nhập lại</Button>
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ── Công cụ của tôi ─────────────────────────────────────────────────────────
+
 function fmtCountdown(ms: number): string {
   if (ms <= 0) return "Đã hết hạn";
   const totalSec = Math.floor(ms / 1000);
@@ -121,6 +252,7 @@ function ToolLinksCard() {
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -128,7 +260,7 @@ function ToolLinksCard() {
       const { items } = await linksApi.list();
       setLinks(items);
     } catch (e) {
-      toast.error(errMsg(e, "Không tải được danh sách liên kết"));
+      setError(errMsg(e, "Không tải được danh sách công cụ đã liên kết. Tải lại trang để thử lại."));
     } finally {
       setLoading(false);
     }
@@ -146,14 +278,14 @@ function ToolLinksCard() {
 
   const handleCreate = async () => {
     setCreating(true);
+    setError(null);
     try {
       const res = await linksApi.createCode();
       setCode(res.code);
       setExpiresAt(res.expires_at);
       setNow(Date.now());
-      toast.success("Đã tạo mã liên kết. Mã hết hạn sau 15 phút.");
     } catch (e) {
-      toast.error(errMsg(e, "Tạo mã thất bại"));
+      setError(errMsg(e, "Chưa tạo được mã liên kết. Thử lại sau ít phút."));
     } finally {
       setCreating(false);
     }
@@ -162,81 +294,87 @@ function ToolLinksCard() {
   const handleCopy = () => {
     if (!code) return;
     if (navigator.clipboard) {
-      navigator.clipboard.writeText(code).then(() => toast.success("Đã copy mã")).catch(() => {});
+      navigator.clipboard.writeText(code).then(() => toast.success("Đã sao chép mã")).catch(() => {});
     }
   };
 
   const handleRevoke = async (link: ViewerLink) => {
-    if (!confirm(`Gỡ liên kết Tool "${link.label || link.tool_user_id}"?`)) return;
+    if (!confirm(`Gỡ liên kết công cụ "${link.label || link.tool_user_id}"? Công cụ này sẽ không còn gắn với tài khoản của bạn.`)) return;
     setRevokingId(link.tool_user_id);
+    setError(null);
     try {
       await linksApi.revoke(link.tool_user_id);
       setLinks((prev) => prev.filter((l) => l.tool_user_id !== link.tool_user_id));
       toast.success("Đã gỡ liên kết");
     } catch (e) {
-      toast.error(errMsg(e, "Gỡ liên kết thất bại"));
+      setError(errMsg(e, "Chưa gỡ được liên kết. Thử lại sau ít phút."));
     } finally {
       setRevokingId(null);
     }
   };
 
+  const codeActive = !!code && remainingMs > 0;
+
   return (
-    <div className="rounded-xl border border-border bg-elev-1 p-5">
-      <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
-        <Link2 className="size-4" /> Liên kết Tool
-      </h3>
+    <Section title="Công cụ của tôi" description="Liên kết công cụ đẩy dữ liệu với tài khoản của bạn bằng một mã dùng một lần.">
+      <div className="flex flex-col gap-5">
+        {error && <Notice tone="error">{error}</Notice>}
 
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">
-          Tạo mã và dán vào Tool để liên kết tài khoản của bạn với dữ liệu thu thập.
-        </p>
-
-        {code && remainingMs > 0 ? (
-          <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
-            <span className="flex-1 font-mono text-2xl font-bold tracking-widest text-primary-text">{code}</span>
-            <Button variant="ghost" size="sm" onClick={handleCopy} title="Copy mã">
-              <Copy className="size-4" />
-            </Button>
-            <span className="text-xs text-muted-foreground">{fmtCountdown(remainingMs)}</span>
-          </div>
-        ) : (
-          <Button onClick={handleCreate} disabled={creating} className="gap-1.5">
-            {creating ? <RefreshCw className="size-4 animate-spin" /> : <Link2 className="size-4" />}
-            Tạo mã liên kết Tool
-          </Button>
-        )}
-        {code && remainingMs <= 0 && (
-          <p className="text-xs text-red-500">Mã đã hết hạn — tạo mã mới ở trên.</p>
-        )}
-
-        <div className="pt-2">
-          <h4 className="mb-2 text-xs font-semibold text-muted-foreground">Tool đã liên kết</h4>
-          {loading ? (
-            <p className="text-sm text-muted-foreground">Đang tải…</p>
-          ) : links.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Chưa liên kết Tool nào.</p>
+        <div className="flex flex-col gap-3">
+          {codeActive ? (
+            <>
+              <div className="flex flex-wrap items-center gap-3 border border-border-strong px-4 py-3">
+                <span className="flex-1 font-mono text-2xl font-bold tracking-widest">{code}</span>
+                <Button variant="outline" onClick={handleCopy}>
+                  <Copy aria-hidden /> Sao chép mã
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Mã còn dùng được trong <span className="figure text-base">{fmtCountdown(remainingMs)}</span>. Dán mã vào công cụ để hoàn tất liên kết.
+              </p>
+            </>
           ) : (
-            <ul className="space-y-2">
+            <>
+              {code && <Notice tone="warning">Mã đã hết hạn. Tạo mã mới để liên kết.</Notice>}
+              <p className="reading text-[0.9375rem] text-muted-foreground">
+                Tạo mã, rồi dán vào công cụ để gắn dữ liệu nó thu thập với tài khoản của bạn. Mã hết hạn sau 15 phút.
+              </p>
+              <div>
+                <Button variant="outline" size="lg" onClick={handleCreate} disabled={creating}>
+                  {creating ? <Spinner /> : <Link2 aria-hidden />}
+                  Tạo mã liên kết
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div>
+          <h3 className="mb-2">Công cụ đã liên kết</h3>
+          {loading ? (
+            <p className="text-muted-foreground" role="status">Đang tải danh sách</p>
+          ) : links.length === 0 ? (
+            <EmptyState title="Chưa liên kết công cụ nào">
+              Bấm &ldquo;Tạo mã liên kết&rdquo; ở trên, rồi dán mã vào công cụ của bạn.
+            </EmptyState>
+          ) : (
+            <ul className="divide-y divide-border border-y border-border">
               {links.map((l) => (
-                <li
-                  key={l.tool_user_id}
-                  className="flex items-center justify-between rounded-md border border-border/60 px-3 py-2 text-sm"
-                >
-                  <div>
-                    <div className="font-medium">{l.label || l.tool_user_id}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {l.status} · liên kết lúc {l.linked_at ? new Date(l.linked_at).toLocaleString("vi-VN") : "—"}
-                    </div>
+                <li key={l.tool_user_id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <p className="break-words font-medium">{l.label || l.tool_user_id}</p>
+                    <p className="text-sm text-muted-foreground">
+                      Trạng thái: {l.status} · liên kết lúc {l.linked_at ? new Date(l.linked_at).toLocaleString("vi-VN") : "chưa rõ"}
+                    </p>
                   </div>
                   <Button
-                    variant="ghost"
-                    size="sm"
+                    variant="outline"
                     onClick={() => handleRevoke(l)}
                     disabled={revokingId === l.tool_user_id}
-                    className="text-red-500 hover:text-red-600"
-                    title="Gỡ liên kết"
+                    className="text-destructive"
+                    aria-label={`Gỡ liên kết ${l.label || l.tool_user_id}`}
                   >
-                    <Trash2 className="size-4" />
+                    <Trash2 aria-hidden /> Gỡ liên kết
                   </Button>
                 </li>
               ))}
@@ -244,142 +382,6 @@ function ToolLinksCard() {
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ── Đổi mật khẩu ────────────────────────────────────────────────────────────
-
-function ChangePasswordForm() {
-  const [step, setStep] = useState<"idle" | "code_sent" | "done">("idle");
-  const [sending, setSending] = useState(false);
-  const [changing, setChanging] = useState(false);
-  const [code, setCode] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-
-  const handleSendCode = async () => {
-    setSending(true);
-    try {
-      await profileApi.sendChangeCode();
-      setStep("code_sent");
-      toast.success("Đã gửi mã xác thực về email của bạn.");
-    } catch (e: any) {
-      toast.error(e.message || "Gửi mã thất bại");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleChange = async () => {
-    if (newPassword !== confirmPassword) {
-      toast.error("Mật khẩu xác nhận không khớp");
-      return;
-    }
-    if (newPassword.length < 8) {
-      toast.error("Mật khẩu phải có ít nhất 8 ký tự");
-      return;
-    }
-
-    setChanging(true);
-    try {
-      await profileApi.changePassword(code, newPassword);
-      setStep("done");
-      toast.success("Mật khẩu đã thay đổi. Bạn sẽ cần đăng nhập lại.");
-    } catch (e: any) {
-      toast.error(e.message || "Đổi mật khẩu thất bại");
-    } finally {
-      setChanging(false);
-    }
-  };
-
-  return (
-    <div className="rounded-xl border border-border bg-elev-1 p-5">
-      <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold">
-        <KeyRound className="size-4" /> Đổi mật khẩu
-      </h3>
-
-      {step === "idle" && (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Để bảo mật, hệ thống sẽ gửi mã xác thực 6 số về email của bạn trước khi cho phép đổi mật khẩu.
-          </p>
-          <Button onClick={handleSendCode} disabled={sending} className="gap-1.5">
-            {sending ? <RefreshCw className="size-4 animate-spin" /> : <Send className="size-4" />}
-            Gửi mã xác thực
-          </Button>
-        </div>
-      )}
-
-      {step === "code_sent" && (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Nhập mã 6 số đã gửi về email (mã hết hạn sau 10 phút).
-          </p>
-
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Mã xác thực</label>
-            <input
-              type="text"
-              inputMode="numeric"
-              className="h-10 w-40 rounded-md border border-border bg-elev-1 px-3 text-center font-mono text-lg tracking-widest outline-none transition-colors focus:border-primary"
-              maxLength={6}
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              placeholder="000000"
-              autoFocus
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Mật khẩu mới</label>
-            <input
-              type="password"
-              className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none transition-colors focus:border-primary"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="Tối thiểu 8 ký tự"
-              minLength={8}
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Xác nhận mật khẩu mới</label>
-            <input
-              type="password"
-              className="h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none transition-colors focus:border-primary"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Nhập lại mật khẩu mới"
-            />
-            {confirmPassword && confirmPassword !== newPassword && (
-              <p className="mt-1 text-xs text-red-500">Mật khẩu xác nhận không khớp</p>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={handleChange}
-              disabled={changing || code.length !== 6 || newPassword.length < 8 || newPassword !== confirmPassword}
-              className="gap-1.5"
-            >
-              {changing ? <RefreshCw className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
-              Đổi mật khẩu
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleSendCode} disabled={sending}>
-              Gửi lại mã
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {step === "done" && (
-        <div className="space-y-2">
-          <p className="text-sm text-green-600">
-            ✅ Mật khẩu đã thay đổi thành công. Phiên đăng nhập sẽ hết hạn, bạn cần đăng nhập lại bằng mật khẩu mới.
-          </p>
-        </div>
-      )}
-    </div>
+    </Section>
   );
 }

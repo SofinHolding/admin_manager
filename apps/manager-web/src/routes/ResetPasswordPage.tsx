@@ -1,16 +1,18 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { toast } from "sonner";
-import { Eye, EyeOff, Loader2, BarChart3 } from "lucide-react";
+import { Mail } from "lucide-react";
 import { authApi } from "../api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
+import { Field, Notice } from "../components/kit";
+import {
+  AuthShell, PASSWORD_RULE, PasswordField, Spinner, TextLink, formError, passwordLengthError,
+  type FriendlyError,
+} from "../components/authKit";
 
 export default function ResetPasswordPage() {
   const [params] = useSearchParams();
   const token = params.get("token") || "";
-  const navigate = useNavigate();
 
   // Nếu KHÔNG có token → hiện form "Quên mật khẩu" (nhập email)
   // Nếu CÓ token → hiện form "Đặt lại mật khẩu" (nhập password mới)
@@ -21,71 +23,78 @@ export default function ResetPasswordPage() {
 
 function ForgotPasswordForm() {
   const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<FriendlyError | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email.includes("@")) {
+      setEmailError("Nhập địa chỉ email đầy đủ, ví dụ ten@congty.vn.");
+      return;
+    }
+    setEmailError(null);
+    setError(null);
     setLoading(true);
     try {
       await authApi.forgotPassword(email.trim());
       setSent(true);
     } catch (err) {
-      toast.error((err as Error).message);
+      setError(formError(err, "Chưa gửi được liên kết"));
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <div className="w-full max-w-[400px]">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-xl bg-primary/15">
-            <BarChart3 className="size-6 text-primary-text" />
-          </div>
-          <h1 className="text-xl font-semibold">Quên mật khẩu</h1>
+  if (sent) {
+    return (
+      <AuthShell title="Kiểm tra email" description="Chúng tôi đã xử lý yêu cầu của bạn.">
+        <div className="flex flex-col gap-5">
+          <p className="flex items-start gap-3">
+            <Mail className="mt-0.5 size-5 shrink-0 text-primary-text" aria-hidden />
+            <span>
+              Nếu email này có tài khoản, một liên kết đặt lại mật khẩu đã được gửi tới đó. Thư có thể mất vài phút
+              để tới; nếu chưa thấy, hãy xem cả mục thư rác.
+            </span>
+          </p>
+          <Button asChild variant="outline" size="lg" className="w-full">
+            <Link to="/login">Về trang đăng nhập</Link>
+          </Button>
         </div>
+      </AuthShell>
+    );
+  }
 
-        {sent ? (
-          <div className="glass rounded-xl p-6 text-center">
-            <div className="mb-4 text-4xl">✉️</div>
-            <p className="mb-4 text-sm text-muted-foreground">
-              Nếu email tồn tại, đã gửi link đặt lại mật khẩu. Kiểm tra hộp thư.
-            </p>
-            <Link to="/login">
-              <Button variant="outline" className="w-full">Về đăng nhập</Button>
-            </Link>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="glass rounded-xl p-6">
-            <p className="mb-4 text-sm text-muted-foreground">
-              Nhập email đã đăng ký để nhận link đặt lại mật khẩu.
-            </p>
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="forgot-email">Email</Label>
-                <Input
-                  id="forgot-email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Nhập email đã đăng ký"
-                  autoFocus
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={loading || !email.includes("@")}>
-                {loading && <Loader2 className="size-4 animate-spin" />}
-                Gửi link đặt lại
-              </Button>
-              <Link to="/login" className="text-center text-sm text-primary-text hover:underline">
-                Quay lại đăng nhập
-              </Link>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
+  return (
+    <AuthShell
+      title="Quên mật khẩu"
+      description="Nhập email đã đăng ký, chúng tôi sẽ gửi liên kết để bạn đặt mật khẩu mới."
+      footer={<p>Nhớ ra rồi? <TextLink to="/login">Quay lại đăng nhập</TextLink></p>}
+    >
+      <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
+        {error && <Notice tone="error" title={error.title}>{error.body}</Notice>}
+        <Field label="Email" error={emailError}>
+          {(p) => (
+            <Input
+              {...p}
+              name="email"
+              type="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoFocus
+            />
+          )}
+        </Field>
+        <Button type="submit" size="lg" className="w-full" disabled={loading}>
+          {loading && <Spinner />}
+          Gửi liên kết đặt lại
+        </Button>
+      </form>
+    </AuthShell>
   );
 }
 
@@ -93,83 +102,66 @@ function NewPasswordForm({ token }: { token: string }) {
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<FriendlyError | null>(null);
+  const [tried, setTried] = useState(false);
 
-  const pwOk = password.length >= 8;
+  const lengthError = passwordLengthError(password, tried);
   const match = confirm === password && confirm.length > 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pwOk || !match) return;
+    setTried(true);
+    if (passwordLengthError(password, true) || !match) return;
     setLoading(true);
+    setError(null);
     try {
       await authApi.resetPassword(token, password);
-      toast.success("Mật khẩu đã đặt lại thành công!");
       navigate("/login?reset=true", { replace: true });
     } catch (err) {
-      toast.error((err as Error).message);
+      setError(formError(err, "Chưa đặt lại được mật khẩu"));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <div className="w-full max-w-[400px]">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-xl bg-primary/15">
-            <BarChart3 className="size-6 text-primary-text" />
-          </div>
-          <h1 className="text-xl font-semibold">Đặt lại mật khẩu</h1>
-        </div>
-
-        <form onSubmit={handleSubmit} className="glass rounded-xl p-6">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="new-pw">Mật khẩu mới</Label>
-              <div className="relative">
-                <Input
-                  id="new-pw"
-                  type={showPw ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Tối thiểu 8 ký tự"
-                  className="pr-10"
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw(!showPw)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  tabIndex={-1}
-                >
-                  {showPw ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="confirm-pw">Xác nhận mật khẩu mới</Label>
-              <Input
-                id="confirm-pw"
-                type="password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                placeholder="Nhập lại mật khẩu mới"
-              />
-              {confirm && !match && (
-                <p className="text-xs text-destructive">Mật khẩu không khớp</p>
-              )}
-            </div>
-
-            <Button type="submit" className="w-full" disabled={loading || !pwOk || !match}>
-              {loading && <Loader2 className="size-4 animate-spin" />}
-              Đặt lại mật khẩu
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <AuthShell title="Đặt mật khẩu mới" description="Chọn mật khẩu mới cho tài khoản của bạn. Sau đó bạn đăng nhập lại.">
+      <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
+        {error && (
+          <Notice tone="error" title={error.title}>
+            {error.body}
+            {" "}Nếu liên kết đã hết hạn, hãy <Link to="/reset-password" className="font-semibold underline">yêu cầu liên kết mới</Link>.
+          </Notice>
+        )}
+        <PasswordField
+          label="Mật khẩu mới"
+          noun="mật khẩu mới"
+          name="new-password"
+          autoComplete="new-password"
+          value={password}
+          onChange={setPassword}
+          hint={PASSWORD_RULE}
+          error={lengthError}
+          autoFocus
+        />
+        <Field label="Nhập lại mật khẩu mới" error={confirm && !match ? "Hai mật khẩu chưa khớp. Nhập lại cho giống ô trên." : null}>
+          {(p) => (
+            <Input
+              {...p}
+              name="confirm-password"
+              type="password"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+            />
+          )}
+        </Field>
+        <Button type="submit" size="lg" className="w-full" disabled={loading}>
+          {loading && <Spinner />}
+          Đặt mật khẩu mới
+        </Button>
+      </form>
+    </AuthShell>
   );
 }

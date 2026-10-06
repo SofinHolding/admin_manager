@@ -1,51 +1,141 @@
 /**
- * Tích hợp Tool — quản lý Integration Client & Credential (mặt phẳng USER, token user RS256).
- * Hợp đồng: docs/api/integration-api-v1.md §1–§2.
+ * Công cụ đẩy dữ liệu — quản lý Integration Client & Credential (mặt phẳng USER, token user RS256).
+ * Hợp đồng: docs/api/integration-api-v1.md §1–§2. Thiết kế: docs/architecture/ui-design-v1.md.
  *
- *  - Người dùng thường: client của MÌNH; admin: tất cả (lọc theo owner) + đổi trạng thái client.
- *  - Credential: cấp / xoay (grace_seconds) / thu hồi. `api_key` chỉ hiện MỘT lần trong SecretOnceDialog,
- *    không lưu ở state nào khác, xoá khi đóng modal.
- *  - Trạng thái provisioning của Tool đăng ký kèm: GET /v1/accounts/me/integration (pending|active|failed).
+ * Từ ngữ trên giao diện: client = "công cụ", credential = "khóa kết nối", scope = "quyền của khóa".
+ * Thuật ngữ gốc (client_id, key_id, scope) chỉ nằm trong "Chi tiết kỹ thuật".
+ *
+ *  - Người dùng thường: công cụ của MÌNH; admin: tất cả (lọc theo chủ) + đổi trạng thái công cụ.
+ *  - Khóa: tạo / xoay (grace_seconds) / thu hồi. Server chỉ cho CHỦ công cụ hoặc admin xoay/thu hồi;
+ *    dash_admin chỉ xem -> nút bị vô hiệu kèm lời giải thích.
+ *  - `api_key` chỉ hiện MỘT lần trong SecretOnceDialog, không lưu ở state nào khác, xóa khi đóng hộp thoại.
+ *  - Trạng thái provisioning của công cụ đăng ký kèm: GET /v1/accounts/me/integration (pending|active|failed).
  *  - Máy dùng API key `mpk_...` (machine plane) — trang này KHÔNG bao giờ dùng API key để gọi API.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, KeyRound, Plus, RefreshCw, RotateCw, Trash2 } from "lucide-react";
+import {
+  CheckCircle2, ChevronDown, ChevronRight, CircleSlash, Clock, KeyRound, PauseCircle, Plus, RefreshCw, RotateCw, Trash2, XCircle,
+} from "lucide-react";
 import {
   accountsApi, adminApi, integrationApi,
-  type Account, type ClientKind, type IntegrationClient, type MyIntegrationStatus,
+  type Account, type ClientKind, type IntegrationClient, type IntegrationCredential, type MyIntegrationStatus,
 } from "../api";
-import { errorMessage, isAbortError } from "../lib/errors";
+import { ApiError, errorMessage, isAbortError } from "../lib/errors";
 import { useAuth } from "../auth";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog";
+import { EmptyState, Field, Notice, PageHeader, Section, TechDetails } from "../components/kit";
 import { SecretOnceDialog, type OneTimeSecret } from "../components/SecretOnceDialog";
+import { cn } from "../lib/utils";
 import { parseList } from "./adminKeyForm";
 
+/* ── Nhãn tiếng Việt ─────────────────────────────────────────────────────────── */
+
 const KIND_LABEL: Record<string, string> = {
-  primary_tool: "Tool chính", fallback_tool: "Tool dự phòng", service: "Service",
+  primary_tool: "Công cụ chính", fallback_tool: "Công cụ dự phòng", service: "Dịch vụ",
 };
 
-function fmt(iso?: string | null) {
-  if (!iso) return "—";
+const KIND_HINT: Record<string, string> = {
+  primary_tool: "Công cụ bạn dùng hằng ngày để đẩy số liệu về Manager.",
+  fallback_tool: "Chạy thay khi công cụ chính không chạy được. Quản trị viên sẽ duyệt quyền nhận việc.",
+  service: "Dịch vụ chạy tự động, không có người thao tác.",
+};
+
+/** Gợi ý nhanh; API không có danh sách cố định nên người dùng vẫn gõ được nền tảng khác. */
+const PLATFORM_SUGGESTIONS: { value: string; label: string }[] = [
+  { value: "facebook", label: "Facebook" },
+  { value: "youtube", label: "YouTube" },
+];
+
+const PLATFORM_LABEL: Record<string, string> = { facebook: "Facebook", youtube: "YouTube" };
+const platformLabel = (p: string) => PLATFORM_LABEL[p] ?? p;
+
+/** Quyền của khóa nói bằng lời; scope lạ giữ nguyên chữ gốc. */
+const SCOPE_LABEL: Record<string, string> = {
+  "integration:handshake": "Kết nối thử",
+  "resources:write": "Gửi danh sách kênh",
+  "snapshots:write": "Gửi bản chụp số liệu",
+  "metrics:write": "Gửi số liệu",
+  "jobs:claim": "Nhận việc",
+  "jobs:complete": "Báo hoàn thành việc",
+};
+const scopeText = (scopes?: string[]) => (scopes?.length ? scopes.map((s) => SCOPE_LABEL[s] ?? s).join(", ") : "Chưa có quyền nào");
+
+function fmt(iso?: string | null, empty = "—") {
+  if (!iso) return empty;
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("vi-VN");
+  return Number.isNaN(d.getTime()) ? empty : d.toLocaleString("vi-VN");
 }
 
-function statusCls(s: string) {
+/* ── Trạng thái: luôn có biểu tượng + chữ ────────────────────────────────────── */
+
+type Tone = "good" | "warn" | "bad" | "neutral";
+
+const TONE_CLS: Record<Tone, string> = {
+  good: "bg-success/12 text-success",
+  warn: "bg-warning/15 text-warning",
+  bad: "bg-destructive/15 text-destructive",
+  neutral: "bg-surface-2 text-muted-foreground",
+};
+
+interface StatusInfo { label: string; tone: Tone; icon: typeof CheckCircle2 }
+
+function clientStatus(s: string): StatusInfo {
   switch (s) {
-    case "active": return "bg-green-500/15 text-green-700";
-    case "pending_email_verification": return "bg-yellow-500/15 text-yellow-700";
-    case "revoked": case "suspended": case "deleted": case "failed": return "bg-red-500/15 text-red-600";
-    default: return "bg-muted text-muted-foreground";
+    case "active": return { label: "Đang hoạt động", tone: "good", icon: CheckCircle2 };
+    case "pending_email_verification": return { label: "Chờ xác thực email", tone: "warn", icon: Clock };
+    case "suspended": return { label: "Đã tạm khóa", tone: "bad", icon: PauseCircle };
+    case "deleted": return { label: "Đã xóa", tone: "bad", icon: CircleSlash };
+    case "failed": return { label: "Khởi tạo lỗi", tone: "bad", icon: XCircle };
+    default: return { label: s, tone: "neutral", icon: Clock };
   }
 }
 
-const inputCls = "h-9 w-full rounded-md border border-border bg-elev-1 px-3 text-sm outline-none transition-colors focus:border-primary";
+function credentialStatus(k: IntegrationCredential): StatusInfo {
+  const expired = k.status === "active" && !!k.expires_at && new Date(k.expires_at).getTime() < Date.now();
+  if (expired || k.status === "expired") return { label: "Đã hết hạn", tone: "warn", icon: Clock };
+  switch (k.status) {
+    case "active": return { label: "Đang hoạt động", tone: "good", icon: CheckCircle2 };
+    case "revoked": return { label: "Đã thu hồi", tone: "bad", icon: XCircle };
+    default: return { label: k.status, tone: "neutral", icon: Clock };
+  }
+}
+
+function StatusBadge({ info }: { info: StatusInfo }) {
+  const Icon = info.icon;
+  return (
+    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-0.5 text-[0.8125rem] font-medium", TONE_CLS[info.tone])}>
+      <Icon className="size-3.5" aria-hidden />
+      {info.label}
+    </span>
+  );
+}
+
+const selectCls =
+  "h-11 w-full rounded-md border border-border-strong bg-surface-1 px-3 text-base transition-colors hover:border-primary/50 md:h-10 md:text-[0.9375rem]";
+
+const NO_RIGHT_TEXT = "Chỉ chủ công cụ hoặc quản trị viên mới tạo, xoay hay thu hồi được khóa. Bạn đang ở chế độ chỉ xem.";
+
+/** 403 của thao tác quản lý khóa: nói bằng lời dễ hiểu, không phản chiếu mã lỗi. */
+function manageError(e: unknown, fallback: string) {
+  if (e instanceof ApiError && e.status === 403) return NO_RIGHT_TEXT;
+  return errorMessage(e, fallback);
+}
+
+interface PendingConfirm {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  run: () => void;
+}
 
 export default function IntegrationClientsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const isDashAdmin = user?.role === "dash_admin";
 
   const [clients, setClients] = useState<IntegrationClient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,15 +147,20 @@ export default function IntegrationClientsPage() {
   const [kind, setKind] = useState<ClientKind>("primary_tool");
   const [platforms, setPlatforms] = useState("");
   const [creating, setCreating] = useState(false);
+  const [formErr, setFormErr] = useState<{ name?: string; platforms?: string }>({});
 
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<IntegrationClient | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [grace, setGrace] = useState("0");
+  const [confirmAct, setConfirmAct] = useState<PendingConfirm | null>(null);
 
-  // API key vừa cấp: CHỈ nằm ở state này cho tới khi đóng modal.
+  // Khóa vừa tạo: CHỈ nằm ở state này cho tới khi đóng hộp thoại.
   const [issued, setIssued] = useState<OneTimeSecret | null>(null);
+
+  const canManage = (c: IntegrationClient) =>
+    isAdmin || (c.owner_account_id ? c.owner_account_id === user?.id : !isDashAdmin);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -73,7 +168,7 @@ export default function IntegrationClientsPage() {
       const d = await integrationApi.listClients(isAdmin ? owner : "", { signal });
       setClients(d.items ?? []);
     } catch (e) {
-      if (!isAbortError(e)) toast.error(errorMessage(e, "Không tải được danh sách client"));
+      if (!isAbortError(e)) toast.error(errorMessage(e, "Không tải được danh sách công cụ. Kiểm tra kết nối mạng rồi bấm Tải lại."));
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
@@ -89,7 +184,7 @@ export default function IntegrationClientsPage() {
     const ctl = new AbortController();
     accountsApi.myIntegration({ signal: ctl.signal })
       .then(setProv)
-      .catch(() => setProv(null)); // 404: tài khoản không đăng ký kèm Tool
+      .catch(() => setProv(null)); // 404: tài khoản không đăng ký kèm công cụ
     if (isAdmin) {
       adminApi.listUsers({ signal: ctl.signal }).then((d) => setAccounts(d.users)).catch(() => setAccounts([]));
     }
@@ -101,7 +196,7 @@ export default function IntegrationClientsPage() {
     try {
       setDetail(await integrationApi.getClient(id));
     } catch (e) {
-      toast.error(errorMessage(e, "Không tải được chi tiết client"));
+      toast.error(errorMessage(e, "Không tải được chi tiết công cụ"));
     } finally {
       setDetailLoading(false);
     }
@@ -114,20 +209,31 @@ export default function IntegrationClientsPage() {
     void loadDetail(id);
   };
 
-  const handleCreate = async () => {
+  /* Nền tảng: ô văn bản + nút gợi ý bật/tắt */
+  const platformList = parseList(platforms);
+  const togglePlatform = (value: string) => {
+    const next = platformList.includes(value) ? platformList.filter((p) => p !== value) : [...platformList, value];
+    setPlatforms(next.join(", "));
+  };
+
+  const handleCreate = async (ev?: FormEvent) => {
+    ev?.preventDefault();
     const plats = parseList(platforms);
-    if (!toolName.trim()) { toast.error("Nhập tên Tool"); return; }
-    if (!plats.length) { toast.error("Nhập ít nhất một nền tảng"); return; }
+    const err: { name?: string; platforms?: string } = {};
+    if (!toolName.trim()) err.name = "Hãy nhập tên công cụ để bạn nhận ra nó sau này.";
+    if (!plats.length) err.platforms = "Chọn hoặc nhập ít nhất một nền tảng.";
+    setFormErr(err);
+    if (err.name || err.platforms) return;
     setCreating(true);
     try {
       const c = await integrationApi.createClient({ tool_name: toolName.trim(), client_kind: kind, platforms: plats });
-      toast.success("Đã tạo client");
+      toast.success("Đã tạo công cụ");
       setToolName(""); setPlatforms("");
       await load();
       setOpenId(c.client_id);
       void loadDetail(c.client_id);
     } catch (e) {
-      toast.error(errorMessage(e, "Tạo client thất bại"));
+      toast.error(errorMessage(e, "Không tạo được công cụ. Kiểm tra thông tin rồi thử lại."));
     } finally {
       setCreating(false);
     }
@@ -136,12 +242,12 @@ export default function IntegrationClientsPage() {
   const showIssued = (title: string, res: { api_key: string; key_id: string; scopes: string[]; expires_at?: string | null }) => {
     setIssued({
       title,
-      label: "API key (chỉ hiển thị một lần)",
+      label: "Khóa kết nối (chỉ hiện một lần)",
       value: res.api_key,
       details: [
-        { label: "key_id", value: res.key_id },
-        { label: "scopes", value: res.scopes.join(", ") || "—" },
-        ...(res.expires_at ? [{ label: "hết hạn", value: fmt(res.expires_at) }] : []),
+        { label: "Mã khóa", value: res.key_id },
+        { label: "Quyền của khóa", value: scopeText(res.scopes) },
+        ...(res.expires_at ? [{ label: "Hết hạn", value: fmt(res.expires_at) }] : []),
       ],
     });
   };
@@ -150,53 +256,87 @@ export default function IntegrationClientsPage() {
     setBusy("issue");
     try {
       const res = await integrationApi.issueCredential(clientId);
-      showIssued("Đã cấp credential mới", res);
+      showIssued("Đã tạo khóa kết nối", res);
       await loadDetail(clientId);
     } catch (e) {
-      toast.error(errorMessage(e, "Cấp credential thất bại"));
+      toast.error(manageError(e, "Không tạo được khóa kết nối. Thử lại sau ít phút."));
     } finally {
       setBusy(null);
     }
   };
 
-  const rotate = async (clientId: string, keyId: string) => {
+  const askRotate = (clientId: string, keyId: string) => {
     const g = Number(grace);
-    if (!Number.isInteger(g) || g < 0 || g > 86400) { toast.error("Thời gian ân hạn phải từ 0 đến 86400 giây"); return; }
+    if (!Number.isInteger(g) || g < 0 || g > 86400) {
+      toast.error("Thời gian giữ khóa cũ phải là số nguyên từ 0 đến 86400 giây");
+      return;
+    }
+    setConfirmAct({
+      title: `Xoay khóa ${keyId}?`,
+      body: `Hệ thống sẽ tạo khóa mới và chỉ hiện một lần. Công cụ đang dùng khóa cũ sẽ ngừng gửi được dữ liệu ${
+        g === 0 ? "ngay lập tức" : `sau ${g} giây`
+      }. Hãy dán khóa mới vào công cụ trước thời điểm đó.`,
+      confirmLabel: "Xoay khóa",
+      run: () => void rotate(clientId, keyId, g),
+    });
+  };
+
+  const rotate = async (clientId: string, keyId: string, g: number) => {
     setBusy(`rot:${keyId}`);
     try {
       const res = await integrationApi.rotateCredential(clientId, keyId, g);
-      showIssued("Đã xoay credential", res);
+      showIssued("Đã xoay khóa kết nối", res);
       await loadDetail(clientId);
     } catch (e) {
-      toast.error(errorMessage(e, "Xoay credential thất bại"));
+      toast.error(manageError(e, "Không xoay được khóa. Thử lại sau ít phút."));
     } finally {
       setBusy(null);
     }
   };
 
+  const askRevoke = (clientId: string, keyId: string) => {
+    setConfirmAct({
+      title: `Thu hồi khóa ${keyId}?`,
+      body: "Công cụ đang dùng khóa này sẽ ngừng gửi được dữ liệu ngay lập tức. Không hoàn tác được; muốn kết nối lại bạn phải tạo khóa mới.",
+      confirmLabel: "Thu hồi khóa",
+      run: () => void revoke(clientId, keyId),
+    });
+  };
+
   const revoke = async (clientId: string, keyId: string) => {
-    if (!confirm(`Thu hồi credential ${keyId}? Tool đang dùng key này sẽ bị từ chối ngay (AUTH_REVOKED).`)) return;
     setBusy(`rev:${keyId}`);
     try {
       await integrationApi.revokeCredential(clientId, keyId);
-      toast.success("Đã thu hồi credential");
+      toast.success("Đã thu hồi khóa");
       await loadDetail(clientId);
     } catch (e) {
-      toast.error(errorMessage(e, "Thu hồi thất bại"));
+      toast.error(manageError(e, "Không thu hồi được khóa. Thử lại sau ít phút."));
     } finally {
       setBusy(null);
     }
+  };
+
+  const askSetStatus = (c: IntegrationClient, status: "active" | "suspended") => {
+    const suspend = status === "suspended";
+    setConfirmAct({
+      title: suspend ? `Tạm khóa công cụ ${c.tool_name}?` : `Kích hoạt lại công cụ ${c.tool_name}?`,
+      body: suspend
+        ? "Mọi khóa kết nối của công cụ này sẽ ngừng dùng được cho tới khi bạn kích hoạt lại."
+        : "Công cụ có thể gửi dữ liệu trở lại bằng các khóa còn hiệu lực.",
+      confirmLabel: suspend ? "Tạm khóa công cụ" : "Kích hoạt lại",
+      run: () => void setClientStatus(c, status),
+    });
   };
 
   const setClientStatus = async (c: IntegrationClient, status: string) => {
     setBusy(`st:${c.client_id}`);
     try {
       await integrationApi.patchClient(c.client_id, { status });
-      toast.success("Đã cập nhật trạng thái client");
+      toast.success(status === "suspended" ? "Đã tạm khóa công cụ" : "Đã kích hoạt lại công cụ");
       await load();
       if (openId === c.client_id) await loadDetail(c.client_id);
     } catch (e) {
-      toast.error(errorMessage(e, "Cập nhật thất bại"));
+      toast.error(manageError(e, "Không cập nhật được trạng thái công cụ"));
     } finally {
       setBusy(null);
     }
@@ -205,243 +345,311 @@ export default function IntegrationClientsPage() {
   const provState = prov?.provisioning ?? prov?.status;
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold">Tích hợp Tool</h1>
-        <p className="text-sm text-muted-foreground">
-          Client và credential để Tool đẩy dữ liệu lên Manager. Mỗi Tool dùng <code>client_id</code> + API key riêng
-          (không dùng mật khẩu hay token đăng nhập).
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        title="Công cụ đẩy dữ liệu"
+        description="Công cụ là phần mềm ngoài (ví dụ công cụ đăng bài) gửi số liệu về Manager. Mỗi công cụ có một khóa kết nối riêng."
+      />
 
       {provState && (
-        <div data-testid="provisioning-status" role="status"
-             className={`flex items-start gap-2 rounded-xl border px-4 py-3 text-sm ${
-               provState === "failed" ? "border-destructive/30 bg-destructive/10 text-destructive"
-               : provState === "active" ? "border-green-500/30 bg-green-500/10 text-green-700"
-               : "border-yellow-500/30 bg-yellow-500/10 text-yellow-700"}`}>
-          {provState === "failed" ? <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            : provState === "active" ? <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
-            : <Clock className="mt-0.5 size-4 shrink-0" />}
-          <div>
-            {provState === "pending" && "Tool đăng ký kèm tài khoản đang được khởi tạo (cần xác thực email)."}
-            {provState === "active" && "Tool đăng ký kèm tài khoản đã sẵn sàng — có thể cấp credential."}
-            {provState === "failed" && (
-              <>Khởi tạo Tool đăng ký kèm thất bại{prov?.error?.code ? ` (${prov.error.code})` : ""}. Liên hệ quản trị viên.</>
-            )}
-            {provState !== "pending" && provState !== "active" && provState !== "failed" && `Trạng thái khởi tạo Tool: ${provState}`}
-            {prov?.client_id && <span className="ml-1 font-mono text-xs opacity-70">{prov.client_id}</span>}
-          </div>
+        <div data-testid="provisioning-status" className="mb-6">
+          {provState === "pending" && (
+            <Notice tone="warning" title="Công cụ đi kèm tài khoản của bạn đang được khởi tạo">
+              Bạn cần xác thực email trước. Mở thư Manager đã gửi và bấm vào liên kết trong thư; công cụ sẽ tự sẵn sàng sau đó.
+              Chưa thấy thư thì kiểm tra mục thư rác, hoặc nhờ quản trị viên hỗ trợ.
+            </Notice>
+          )}
+          {provState === "active" && (
+            <Notice tone="success" title="Công cụ đi kèm tài khoản của bạn đã sẵn sàng">
+              Bạn có thể tạo khóa kết nối cho công cụ này ở danh sách bên dưới.
+            </Notice>
+          )}
+          {provState === "failed" && (
+            <Notice tone="error" title="Không khởi tạo được công cụ đi kèm tài khoản">
+              Hãy liên hệ quản trị viên để được tạo lại.
+              {prov?.error?.code && (
+                <TechDetails className="mt-2">Mã lỗi: <code>{prov.error.code}</code></TechDetails>
+              )}
+            </Notice>
+          )}
+          {provState !== "pending" && provState !== "active" && provState !== "failed" && (
+            <Notice tone="info" title="Trạng thái khởi tạo công cụ">{provState}</Notice>
+          )}
+          {prov?.client_id && (
+            <TechDetails className="mt-2">Mã công cụ (client_id): <code className="break-all">{prov.client_id}</code></TechDetails>
+          )}
         </div>
       )}
 
-      {/* Tạo client */}
-      <div className="rounded-xl border border-border bg-elev-1 p-4">
-        <h3 className="mb-3 text-sm font-semibold">Tạo client mới</h3>
-        <div className="grid gap-3 sm:grid-cols-4">
-          <div className="sm:col-span-1">
-            <label htmlFor="ic-name" className="mb-1 block text-xs text-muted-foreground">Tên Tool</label>
-            <input id="ic-name" className={inputCls} value={toolName} maxLength={100}
-                   onChange={(e) => setToolName(e.target.value)} placeholder="vd: Tool đăng bài" />
-          </div>
-          <div>
-            <label htmlFor="ic-kind" className="mb-1 block text-xs text-muted-foreground">Loại</label>
-            <select id="ic-kind" className={inputCls} value={kind} onChange={(e) => setKind(e.target.value as ClientKind)}>
-              <option value="primary_tool">Tool chính</option>
-              <option value="fallback_tool">Tool dự phòng</option>
-              <option value="service">Service</option>
-            </select>
-          </div>
-          <div className="sm:col-span-1">
-            <label htmlFor="ic-plat" className="mb-1 block text-xs text-muted-foreground">Nền tảng (cách nhau bằng dấu phẩy)</label>
-            <input id="ic-plat" className={inputCls} value={platforms}
-                   onChange={(e) => setPlatforms(e.target.value)} placeholder="facebook, youtube" />
-          </div>
-          <div className="flex items-end">
-            <Button onClick={handleCreate} disabled={creating} className="h-9 gap-1.5">
-              {creating ? <RefreshCw className="size-4 animate-spin" /> : <Plus className="size-4" />}
-              Tạo client
-            </Button>
-          </div>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Nền tảng/scope được cắt theo chính sách của bạn; credential chỉ cấp được khi email đã xác thực.
-        </p>
-      </div>
+      {isDashAdmin && (
+        <Notice tone="info" title="Bạn đang ở chế độ chỉ xem" className="mb-6">
+          Quản lý Dashboard xem được công cụ nhưng không xoay hay thu hồi được khóa của người khác. Việc này thuộc về chủ công cụ hoặc quản trị viên.
+        </Notice>
+      )}
 
-      {/* Danh sách */}
-      <div className="rounded-xl border border-border bg-elev-1">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-          <h3 className="text-sm font-semibold">{isAdmin ? "Client (tất cả)" : "Client của bạn"} ({clients.length})</h3>
-          <div className="flex items-center gap-2">
+      <Section
+        title={isAdmin ? "Tất cả công cụ" : "Công cụ của bạn"}
+        description={clients.length ? `${clients.length} công cụ. Bấm vào một công cụ để xem và quản lý khóa kết nối.` : undefined}
+        actions={
+          <>
             {isAdmin && (
-              <select aria-label="Lọc theo chủ sở hữu" className="h-8 rounded-md border border-border bg-elev-1 px-2 text-xs"
+              <select aria-label="Lọc theo chủ sở hữu" className={cn(selectCls, "w-auto")}
                       value={owner} onChange={(e) => setOwner(e.target.value)}>
                 <option value="">Mọi chủ sở hữu</option>
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.username}</option>)}
               </select>
             )}
-            <Button variant="ghost" size="sm" onClick={() => load()} disabled={loading} aria-label="Tải lại">
-              <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+            <Button variant="outline" onClick={() => load()} disabled={loading}>
+              <RefreshCw aria-hidden /> {loading ? "Đang tải…" : "Tải lại"}
             </Button>
-          </div>
-        </div>
-
+          </>
+        }
+      >
         {loading && clients.length === 0 ? (
-          <div className="p-6 text-center text-sm text-muted-foreground">Đang tải…</div>
+          <p className="text-muted-foreground">Đang tải…</p>
         ) : clients.length === 0 ? (
-          <div className="p-6 text-center text-sm text-muted-foreground">Chưa có client nào. Tạo client đầu tiên ở trên.</div>
+          <EmptyState icon={KeyRound} title="Bạn chưa có công cụ nào">
+            Để một công cụ gửi được số liệu về Manager, hãy làm ba bước sau.
+            <ol className="mt-3 space-y-2 text-foreground">
+              <li><strong>Bước 1. Tạo công cụ.</strong> Điền biểu mẫu “Tạo công cụ mới” bên dưới.</li>
+              <li><strong>Bước 2. Tạo khóa kết nối.</strong> Mở công cụ vừa tạo rồi bấm “Tạo khóa kết nối”.</li>
+              <li><strong>Bước 3. Dán khóa vào công cụ.</strong> Sao chép khóa và dán vào phần cài đặt của công cụ ngoài.</li>
+            </ol>
+          </EmptyState>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="w-8 px-2 py-2" />
-                  <th className="px-4 py-2 font-medium">Tool</th>
-                  <th className="px-4 py-2 font-medium">Loại</th>
-                  <th className="px-4 py-2 font-medium">Nền tảng</th>
-                  {isAdmin && <th className="px-4 py-2 font-medium">Chủ sở hữu</th>}
-                  <th className="px-4 py-2 font-medium">Trạng thái</th>
-                  <th className="px-4 py-2 font-medium">Tạo lúc</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clients.map((c) => {
-                  const open = openId === c.client_id;
-                  return (
-                    <ClientRows key={c.client_id} open={open} colSpan={isAdmin ? 7 : 6}
-                      head={
-                        <tr className="border-b border-border/50 hover:bg-elev-2/50">
-                          <td className="px-2 py-2.5">
-                            <button type="button" onClick={() => toggleOpen(c.client_id)}
-                                    aria-expanded={open} aria-label={`Chi tiết ${c.tool_name}`}
-                                    className="rounded p-1 text-muted-foreground hover:bg-elev-2">
-                              {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-                            </button>
-                          </td>
-                          <td className="px-4 py-2.5 font-medium">
-                            {c.tool_name}
-                            <div className="font-mono text-[10px] text-muted-foreground">{c.client_id}</div>
-                          </td>
-                          <td className="px-4 py-2.5">{KIND_LABEL[c.client_kind] ?? c.client_kind}</td>
-                          <td className="px-4 py-2.5 text-xs">{c.platforms?.join(", ") || "—"}</td>
-                          {isAdmin && <td className="px-4 py-2.5 text-xs">{c.owner_username ?? c.owner_account_id ?? "—"}</td>}
-                          <td className="px-4 py-2.5">
-                            <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusCls(c.status)}`}>{c.status}</span>
-                          </td>
-                          <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmt(c.created_at)}</td>
-                        </tr>
-                      }
-                    >
-                      <div className="space-y-3 p-4">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button size="sm" onClick={() => issue(c.client_id)} disabled={busy === "issue" || detailLoading}>
-                            {busy === "issue" ? <RefreshCw className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
-                            Cấp credential
-                          </Button>
-                          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            Ân hạn khi xoay (giây)
-                            <input aria-label="Ân hạn khi xoay (giây)" type="number" min={0} max={86400}
-                                   className="h-8 w-20 rounded-md border border-border bg-elev-1 px-2 text-xs"
-                                   value={grace} onChange={(e) => setGrace(e.target.value)} />
-                          </label>
-                          {isAdmin && (
-                            c.status === "suspended"
-                              ? <Button size="sm" variant="outline" onClick={() => setClientStatus(c, "active")} disabled={busy === `st:${c.client_id}`}>Kích hoạt lại</Button>
-                              : <Button size="sm" variant="outline" onClick={() => setClientStatus(c, "suspended")} disabled={busy === `st:${c.client_id}`}>Tạm khoá client</Button>
-                          )}
-                        </div>
-
-                        {detailLoading && !detail ? (
-                          <div className="text-sm text-muted-foreground">Đang tải credential…</div>
-                        ) : (
-                          <CredentialTable
-                            client={detail ?? c}
-                            busy={busy}
-                            onRotate={(k) => rotate(c.client_id, k)}
-                            onRevoke={(k) => revoke(c.client_id, k)}
-                          />
-                        )}
+          <ul className="divide-y divide-border border-y border-border">
+            {clients.map((c) => {
+              const open = openId === c.client_id;
+              const panelId = `client-${c.client_id}`;
+              return (
+                <li key={c.client_id} className="py-2">
+                  <button type="button" onClick={() => toggleOpen(c.client_id)}
+                          aria-expanded={open} aria-controls={panelId} aria-label={`Chi tiết ${c.tool_name}`}
+                          className="flex min-h-11 w-full items-center gap-2 rounded-md px-1 py-2 text-left hover:bg-elev-2">
+                    {open ? <ChevronDown className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+                      : <ChevronRight className="size-5 shrink-0 text-muted-foreground" aria-hidden />}
+                    <span className="min-w-0 flex-1 break-words font-semibold">{c.tool_name}</span>
+                    <StatusBadge info={clientStatus(c.status)} />
+                  </button>
+                  <dl className="ml-8 grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 pb-1 text-sm sm:flex sm:flex-wrap sm:gap-x-6">
+                    <div className="contents sm:flex sm:gap-1.5">
+                      <dt className="text-muted-foreground">Loại</dt>
+                      <dd>{KIND_LABEL[c.client_kind] ?? c.client_kind}</dd>
+                    </div>
+                    <div className="contents sm:flex sm:gap-1.5">
+                      <dt className="text-muted-foreground">Nền tảng</dt>
+                      <dd>{c.platforms?.length ? c.platforms.map(platformLabel).join(", ") : "—"}</dd>
+                    </div>
+                    {isAdmin && (
+                      <div className="contents sm:flex sm:gap-1.5">
+                        <dt className="text-muted-foreground">Chủ sở hữu</dt>
+                        <dd>{c.owner_username ?? c.owner_account_id ?? "—"}</dd>
                       </div>
-                    </ClientRows>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                    )}
+                    <div className="contents sm:flex sm:gap-1.5">
+                      <dt className="text-muted-foreground">Tạo lúc</dt>
+                      <dd>{fmt(c.created_at)}</dd>
+                    </div>
+                  </dl>
 
+                  {open && (
+                    <div id={panelId} className="ml-8 mt-3 space-y-4 border-l border-border pb-3 pl-4">
+                      <ClientPanel
+                        client={c}
+                        detail={detail}
+                        detailLoading={detailLoading}
+                        busy={busy}
+                        isAdmin={isAdmin}
+                        allowed={canManage(c)}
+                        grace={grace}
+                        onGrace={setGrace}
+                        onIssue={() => issue(c.client_id)}
+                        onRotate={(k) => askRotate(c.client_id, k)}
+                        onRevoke={(k) => askRevoke(c.client_id, k)}
+                        onStatus={(s) => askSetStatus(c, s)}
+                      />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Section>
+
+      <Section title="Tạo công cụ mới" description="Mỗi công cụ ngoài cần một mục riêng. Tạo xong, bạn sẽ tạo khóa kết nối cho nó.">
+        <form onSubmit={handleCreate} noValidate className="max-w-xl space-y-4">
+          <Field label="Tên công cụ" error={formErr.name} hint="Đặt tên dễ nhớ, ví dụ “Công cụ đăng bài”.">
+            {(p) => <Input {...p} value={toolName} maxLength={100} onChange={(e) => setToolName(e.target.value)} placeholder="Ví dụ: Công cụ đăng bài" />}
+          </Field>
+          <Field label="Loại" hint={KIND_HINT[kind]}>
+            {(p) => (
+              <select {...p} className={selectCls} value={kind} onChange={(e) => setKind(e.target.value as ClientKind)}>
+                <option value="primary_tool">Công cụ chính</option>
+                <option value="fallback_tool">Công cụ dự phòng</option>
+                <option value="service">Dịch vụ</option>
+              </select>
+            )}
+          </Field>
+          <Field label="Nền tảng được phép" error={formErr.platforms}
+                 hint="Công cụ chỉ được gửi số liệu của các nền tảng này. Bấm gợi ý hoặc gõ tên, cách nhau bằng dấu phẩy.">
+            {(p) => (
+              <>
+                <Input {...p} value={platforms} onChange={(e) => setPlatforms(e.target.value)} placeholder="facebook, youtube" />
+                <div className="flex flex-wrap gap-2 pt-1" role="group" aria-label="Gợi ý nền tảng">
+                  {PLATFORM_SUGGESTIONS.map((s) => {
+                    const on = platformList.includes(s.value);
+                    return (
+                      <Button key={s.value} type="button" size="sm" variant={on ? "default" : "outline"}
+                              aria-pressed={on} onClick={() => togglePlatform(s.value)}
+                              className="h-11 md:h-10">
+                        {on && <CheckCircle2 aria-hidden />}{s.label}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </Field>
+          <p className="text-sm text-muted-foreground">
+            Quyền của công cụ được cắt theo chính sách của tài khoản bạn. Chỉ tạo được khóa kết nối khi email đã xác thực.
+          </p>
+          <Button type="submit" disabled={creating}>
+            <Plus aria-hidden /> Tạo công cụ
+          </Button>
+        </form>
+      </Section>
+
+      <ConfirmDialog action={confirmAct} onCancel={() => setConfirmAct(null)}
+                     onConfirm={() => { const a = confirmAct; setConfirmAct(null); a?.run(); }} />
       <SecretOnceDialog secret={issued} onClose={() => setIssued(null)} />
     </div>
   );
 }
 
-function ClientRows({ head, open, colSpan, children }: {
-  head: React.ReactNode; open: boolean; colSpan: number; children: React.ReactNode;
+/* ── Xác nhận thao tác có hậu quả ────────────────────────────────────────────── */
+
+function ConfirmDialog({ action, onCancel, onConfirm }: {
+  action: PendingConfirm | null; onCancel: () => void; onConfirm: () => void;
 }) {
   return (
+    <Dialog open={!!action} onOpenChange={(o) => { if (!o) onCancel(); }}>
+      <DialogContent className="max-w-md">
+        <DialogTitle>{action?.title}</DialogTitle>
+        <DialogDescription className="reading mt-2 text-[0.9375rem]">{action?.body}</DialogDescription>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <Button variant="outline" onClick={onCancel}>Hủy, giữ nguyên</Button>
+          <Button variant="destructive" onClick={onConfirm}>{action?.confirmLabel}</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── Bảng điều khiển của một công cụ ─────────────────────────────────────────── */
+
+function ClientPanel({
+  client, detail, detailLoading, busy, isAdmin, allowed, grace, onGrace, onIssue, onRotate, onRevoke, onStatus,
+}: {
+  client: IntegrationClient;
+  detail: IntegrationClient | null;
+  detailLoading: boolean;
+  busy: string | null;
+  isAdmin: boolean;
+  allowed: boolean;
+  grace: string;
+  onGrace: (v: string) => void;
+  onIssue: () => void;
+  onRotate: (keyId: string) => void;
+  onRevoke: (keyId: string) => void;
+  onStatus: (s: "active" | "suspended") => void;
+}) {
+  const blockedByStatus = client.status !== "active";
+  const issueBlocked = !allowed || blockedByStatus || detailLoading;
+  return (
     <>
-      {head}
-      {open && (
-        <tr className="border-b border-border/50 bg-surface-1/40">
-          <td colSpan={colSpan}>{children}</td>
-        </tr>
+      {!allowed && <p className="text-sm text-muted-foreground" data-testid="no-manage-note">{NO_RIGHT_TEXT}</p>}
+      {allowed && client.status === "pending_email_verification" && (
+        <p className="text-sm text-muted-foreground">Công cụ này chờ xác thực email. Xác thực xong bạn mới tạo được khóa kết nối.</p>
       )}
+      {allowed && client.status === "suspended" && (
+        <p className="text-sm text-muted-foreground">Công cụ đang bị tạm khóa nên chưa tạo hay dùng được khóa. Hãy liên hệ quản trị viên.</p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button onClick={onIssue} disabled={issueBlocked || busy === "issue"}>
+          <KeyRound aria-hidden /> Tạo khóa kết nối
+        </Button>
+        {isAdmin && (
+          client.status === "suspended"
+            ? <Button variant="outline" onClick={() => onStatus("active")} disabled={busy === `st:${client.client_id}`}>Kích hoạt lại</Button>
+            : <Button variant="outline" onClick={() => onStatus("suspended")} disabled={busy === `st:${client.client_id}`}>Tạm khóa công cụ</Button>
+        )}
+      </div>
+
+      <Field label="Thời gian giữ khóa cũ khi xoay (giây)" className="max-w-xs"
+             hint="Điền 0 để khóa cũ ngừng ngay. Điền số lớn hơn nếu bạn cần thời gian dán khóa mới vào công cụ.">
+        {(p) => (
+          <Input {...p} type="number" min={0} max={86400} inputMode="numeric" value={grace} onChange={(e) => onGrace(e.target.value)} disabled={!allowed} />
+        )}
+      </Field>
+
+      <div>
+        <h3 className="mb-2">Khóa kết nối</h3>
+        {detailLoading && !detail ? (
+          <p className="text-sm text-muted-foreground">Đang tải khóa kết nối…</p>
+        ) : (
+          <CredentialList client={detail ?? client} busy={busy} allowed={allowed} onRotate={onRotate} onRevoke={onRevoke} />
+        )}
+      </div>
+
+      <TechDetails>
+        <p>Mã công cụ (client_id): <code className="break-all">{client.client_id}</code></p>
+      </TechDetails>
     </>
   );
 }
 
-function CredentialTable({ client, busy, onRotate, onRevoke }: {
-  client: IntegrationClient; busy: string | null;
+function CredentialList({ client, busy, allowed, onRotate, onRevoke }: {
+  client: IntegrationClient; busy: string | null; allowed: boolean;
   onRotate: (keyId: string) => void; onRevoke: (keyId: string) => void;
 }) {
   const creds = client.credentials ?? [];
   if (!creds.length) {
-    return <div className="text-sm text-muted-foreground">Chưa có credential. Bấm “Cấp credential” để tạo API key (hiển thị một lần).</div>;
+    return <p className="text-sm text-muted-foreground">Công cụ này chưa có khóa kết nối. Bấm “Tạo khóa kết nối” để tạo khóa (khóa chỉ hiện một lần).</p>;
   }
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-3 py-2 font-medium">key_id</th>
-            <th className="px-3 py-2 font-medium">Scopes</th>
-            <th className="px-3 py-2 font-medium">Trạng thái</th>
-            <th className="px-3 py-2 font-medium">Hết hạn</th>
-            <th className="px-3 py-2 font-medium">Dùng lần cuối</th>
-            <th className="px-3 py-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {creds.map((k) => (
-            <tr key={k.key_id} className="border-b border-border/50 last:border-0">
-              <td className="px-3 py-2 font-mono text-xs">{k.key_id}</td>
-              <td className="px-3 py-2 text-xs">{k.scopes?.join(", ") || "—"}</td>
-              <td className="px-3 py-2">
-                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusCls(k.status)}`}>{k.status}</span>
-              </td>
-              <td className="px-3 py-2 text-xs text-muted-foreground">{fmt(k.expires_at)}</td>
-              <td className="px-3 py-2 text-xs text-muted-foreground">{fmt(k.last_used_at)}</td>
-              <td className="px-3 py-2">
-                {k.status === "active" && (
-                  <div className="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="sm" title="Xoay key" aria-label={`Xoay ${k.key_id}`}
-                            disabled={busy === `rot:${k.key_id}`} onClick={() => onRotate(k.key_id)}>
-                      <RotateCw className={`size-4 ${busy === `rot:${k.key_id}` ? "animate-spin" : ""}`} />
-                    </Button>
-                    <Button variant="ghost" size="sm" title="Thu hồi" aria-label={`Thu hồi ${k.key_id}`}
-                            className="text-red-500 hover:text-red-600"
-                            disabled={busy === `rev:${k.key_id}`} onClick={() => onRevoke(k.key_id)}>
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ul className="divide-y divide-border border-y border-border">
+      {creds.map((k) => (
+        <li key={k.key_id} className="space-y-2 py-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-sm text-muted-foreground">Mã khóa</span>
+            <code className="font-mono text-sm">{k.key_id}</code>
+            <StatusBadge info={credentialStatus(k)} />
+          </div>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 text-sm">
+            <dt className="text-muted-foreground">Quyền của khóa</dt>
+            <dd>{scopeText(k.scopes)}</dd>
+            <dt className="text-muted-foreground">Hết hạn</dt>
+            <dd>{fmt(k.expires_at, "Không hết hạn")}</dd>
+            <dt className="text-muted-foreground">Dùng lần cuối</dt>
+            <dd>{fmt(k.last_used_at, "Chưa dùng")}</dd>
+          </dl>
+          {k.status === "active" && (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" aria-label={`Xoay khóa ${k.key_id}`} disabled={!allowed || busy === `rot:${k.key_id}`} onClick={() => onRotate(k.key_id)}>
+                <RotateCw aria-hidden /> Xoay khóa
+              </Button>
+              <Button variant="outline" className="text-destructive" aria-label={`Thu hồi khóa ${k.key_id}`} disabled={!allowed || busy === `rev:${k.key_id}`} onClick={() => onRevoke(k.key_id)}>
+                <Trash2 aria-hidden /> Thu hồi khóa
+              </Button>
+            </div>
+          )}
+          <TechDetails>
+            <p>Quyền gốc (scope): <code className="break-words">{k.scopes?.length ? k.scopes.join(", ") : "—"}</code></p>
+          </TechDetails>
+        </li>
+      ))}
+    </ul>
   );
 }
