@@ -5,6 +5,7 @@ import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import DashboardPage from "./DashboardPage";
 import { AuthContext, type AuthCtx, type User } from "../auth";
 import { clearTokens } from "../auth/tokenStore";
+import { resetDataLockForTests } from "../filters/dataLock";
 import { __resetHttpForTests } from "../lib/http";
 import { installFetch, jsonResponse, parseCall, type FetchCall, type Responder } from "../test/helpers";
 
@@ -205,12 +206,13 @@ describe("Dashboard — freshness & analytics không khả dụng", () => {
     expect(b).toHaveTextContent("2 giờ");
   });
 
-  it("stale=false => không có banner cũ, có dòng 'Dữ liệu cập nhật lúc'", async () => {
+  it("stale=false => không có banner cũ và KHÔNG hiện dòng 'Dữ liệu cập nhật lúc …'", async () => {
     const f = installFetch(analytics({ stale: false }));
     renderDashboard("/dashboard");
     await waitAllData(f);
-    await screen.findByTestId("freshness-line");
     expect(screen.queryByTestId("stale-banner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("freshness-line")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Dữ liệu cập nhật lúc/)).not.toBeInTheDocument();
   });
 
   it("503 ngay từ đầu => trạng thái rõ ràng, chưa có dữ liệu, KHÔNG vỡ trang", async () => {
@@ -251,14 +253,45 @@ describe("Dashboard — freshness & analytics không khả dụng", () => {
   });
 });
 
-describe("Dashboard — bộ lọc server thực sự áp dụng", () => {
-  it("viewer bị ép owner = chính mình => hiển thị 'tài khoản của bạn'", async () => {
+describe("Dashboard — không còn dòng 'Bộ lọc áp dụng'", () => {
+  it("viewer bị ép owner: trang KHÔNG hiện dòng bộ lọc áp dụng (yêu cầu bỏ dòng này)", async () => {
     const f = installFetch(analytics({ appliedOwner: "viewer-1" }));
     renderDashboard("/dashboard?owner_account_id=someone-else", viewerUser);
     await waitAllData(f);
-    const bar = await screen.findByTestId("applied-filter");
-    expect(bar).toHaveTextContent("tài khoản của bạn");
-    expect(bar).not.toHaveTextContent("someone-else");
+    expect(screen.queryByTestId("applied-filter")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Bộ lọc áp dụng/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Dashboard — Khóa dữ liệu", () => {
+  afterEach(() => resetDataLockForTests());
+
+  it("bấm 'Khóa dữ liệu' => đổi thành 'Mở khóa dữ liệu (còn 60 phút)', có ghi chú, 'Làm mới' bị vô hiệu; mở khóa thì trở lại", async () => {
+    const f = installFetch(analytics());
+    renderDashboard(FULL);
+    await waitAllData(f);
+    const user = userEvent.setup();
+    expect(screen.getByRole("button", { name: "Làm mới" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Khóa dữ liệu" }));
+    const unlock = screen.getByRole("button", { name: /Mở khóa dữ liệu \(còn 60 phút\)/ });
+    expect(unlock).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("data-lock-note")).toHaveTextContent("vẫn được đồng bộ phía sau");
+    expect(screen.getByRole("button", { name: "Làm mới" })).toBeDisabled();
+    await user.click(unlock);
+    expect(screen.queryByTestId("data-lock-note")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Làm mới" })).toBeEnabled();
+  });
+
+  it("đang khóa: số liệu đã xem không bị hỏi lại server; mở khóa => tải lại số mới nhất", async () => {
+    const f = installFetch(analytics());
+    renderDashboard(FULL);
+    await waitAllData(f);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Khóa dữ liệu" }));
+    const before = f.byPath(at("summary")).length;
+    // đổi cỡ danh sách "kênh nổi bật" rồi quay lại cỡ cũ trong lúc khóa: truy vấn top của cỡ cũ lấy từ bộ nhớ
+    await user.click(screen.getByRole("button", { name: /Mở khóa dữ liệu/ }));
+    await waitFor(() => expect(f.byPath(at("summary")).length).toBeGreaterThan(before)); // mở khóa => tải lại
   });
 });
 

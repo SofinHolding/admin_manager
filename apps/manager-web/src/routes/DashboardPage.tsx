@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { AlertTriangle, ExternalLink, Filter, Maximize2, RefreshCw } from "lucide-react";
+import { AlertTriangle, ExternalLink, Filter, Lock, Maximize2, RefreshCw, Unlock } from "lucide-react";
 import {
   Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, LabelList, Line, LineChart, Pie,
   PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -13,7 +13,6 @@ import {
   type Account,
   type AnalyticsMetric,
   type AnalyticsSummary,
-  type AppliedFilter,
   type ChannelBreakdown,
   type CompareDimension,
   type CompareItem,
@@ -37,7 +36,8 @@ import { FilterProvider, useFilterContext } from "../filters/FilterContext";
 import { countryCatalogParams, todayStr } from "../filters/filterState";
 import { useAnalyticsQuery } from "../filters/useAnalyticsQuery";
 import { mergeFreshness } from "../filters/freshness";
-import { FreshnessBanner, AnalyticsUnavailableBanner, AppliedFilterBar } from "../components/AnalyticsStatus";
+import { FreshnessBanner, AnalyticsUnavailableBanner } from "../components/AnalyticsStatus";
+import { bindLockToUser, useDataLock } from "../filters/dataLock";
 import { errorMessage } from "../lib/errors";
 import { COMMON_COMPARE_DIMENSIONS, type CommonCompareDimension } from "../filters/compareDimensions";
 import { safeHttpUrl } from "../lib/safeUrl";
@@ -199,6 +199,8 @@ function DashboardInner() {
   const [topTab, setTopTab] = useState<"rieng" | "chung">("rieng");
   const [reloadKey, setReloadKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const dataLock = useDataLock();
+  useEffect(() => { bindLockToUser(user?.id); }, [user?.id]);
 
   // Nền tảng dùng CHUNG 1 ô chọn (trong Traffic chart) cho toàn trang: gốc -> `platform`, nhãn tự do -> `platform_tag`.
   const scope = filter.platform || filter.platform_tag;
@@ -236,19 +238,18 @@ function DashboardInner() {
   const metricList: AnalyticsMetric[] = metricsQ.data?.metrics ?? [];
 
   // ── DỮ LIỆU: mọi KPI/biểu đồ phụ thuộc CÙNG `filterKey` và gửi CÙNG bộ tham số ──────────────
-  const summaryQ = useAnalyticsQuery((signal) => analyticsApi.summary(filter, { signal }), [filterKey, reloadKey]);
-  const breakdownQ = useAnalyticsQuery((signal) => analyticsApi.channelBreakdown(filter, { signal }), [filterKey, reloadKey]);
-  const trafficQ = useAnalyticsQuery((signal) => analyticsApi.traffic(filter, { signal }), [filterKey, reloadKey]);
-  const byCountryQ = useAnalyticsQuery((signal) => analyticsApi.viewsByCountry(filter, { signal }), [filterKey, reloadKey]);
+  const summaryQ = useAnalyticsQuery((signal) => analyticsApi.summary(filter, { signal }), [filterKey, reloadKey], { cacheKey: `summary|${filterKey}` });
+  const breakdownQ = useAnalyticsQuery((signal) => analyticsApi.channelBreakdown(filter, { signal }), [filterKey, reloadKey], { cacheKey: `breakdown|${filterKey}` });
+  const trafficQ = useAnalyticsQuery((signal) => analyticsApi.traffic(filter, { signal }), [filterKey, reloadKey], { cacheKey: `traffic|${filterKey}` });
+  const byCountryQ = useAnalyticsQuery((signal) => analyticsApi.viewsByCountry(filter, { signal }), [filterKey, reloadKey], { cacheKey: `bycountry|${filterKey}` });
   const topQ = useAnalyticsQuery((signal) => analyticsApi.topChannels(filter, topLimit, { signal }),
-    [filterKey, topLimit, reloadKey]);
+    [filterKey, topLimit, reloadKey], { cacheKey: `top|${filterKey}|${topLimit}` });
 
   const dataQueries = [summaryQ, breakdownQ, trafficQ, byCountryQ, topQ];
   const unavailable = dataQueries.some((q) => q.unavailable);
   const hasAnyData = dataQueries.some((q) => q.data !== null);
   const hardError = dataQueries.find((q) => q.error && !q.unavailable)?.error ?? null;
   const freshness = mergeFreshness(dataQueries.map((q) => q.data?.freshness));
-  const applied: AppliedFilter | undefined = dataQueries.map((q) => q.data?.filter).find((f) => !!f);
 
   useEffect(() => {
     // Một toast duy nhất (id cố định) dù nhiều widget cùng lỗi
@@ -352,20 +353,32 @@ function DashboardInner() {
         </Button>
 
         {isDashRole && (
-          <Button size="sm" variant="outline" onClick={lamMoi} disabled={refreshing}
-                  title="Xoá cache và tổng hợp lại từ cơ sở dữ liệu">
+          <Button size="sm" variant="outline" onClick={lamMoi} disabled={refreshing || dataLock.locked}
+                  title={dataLock.locked ? "Đang khóa dữ liệu — mở khóa trước khi làm mới" : "Xoá cache và tổng hợp lại từ cơ sở dữ liệu"}>
             <RefreshCw className={cn("size-4", refreshing && "animate-spin")} />
             {refreshing ? "Đang làm mới…" : "Làm mới"}
           </Button>
         )}
+
+        <Button size="sm" variant={dataLock.locked ? "default" : "outline"} aria-pressed={dataLock.locked}
+                onClick={() => (dataLock.locked ? dataLock.unlock() : dataLock.lock())}
+                title={dataLock.locked
+                  ? "Mở khóa để xem số liệu mới nhất"
+                  : "Giữ nguyên số liệu đang xem tối đa 1 giờ. Dữ liệu vẫn được đồng bộ phía sau."}>
+          {dataLock.locked ? <Unlock className="size-4" /> : <Lock className="size-4" />}
+          {dataLock.locked ? `Mở khóa dữ liệu (còn ${dataLock.minutesLeft} phút)` : "Khóa dữ liệu"}
+        </Button>
       </div>
 
-      <AppliedFilterBar
-        applied={applied}
-        selfId={user?.id}
-        ownerName={(id) => viewerAccounts.find((a) => a.id === id)?.username}
-        groupName={(id) => groupsList.find((g) => g.id === id)?.name}
-      />
+      {dataLock.locked && (
+        <p role="status" data-testid="data-lock-note" className="flex items-start gap-1.5 px-1 text-xs text-muted-foreground">
+          <Lock className="mt-0.5 size-3 shrink-0" />
+          <span>
+            Đang khóa dữ liệu: số liệu trên trang được giữ nguyên để bạn xem, tự mở khóa sau tối đa 1 giờ. Dữ liệu mới vẫn được đồng bộ phía sau;
+            bộ lọc chưa xem trước đó sẽ lấy số liệu hiện tại.
+          </span>
+        </p>
+      )}
 
       {unavailable && (
         <AnalyticsUnavailableBanner hasData={hasAnyData} onRetry={() => setReloadKey((k) => k + 1)} />
@@ -1026,6 +1039,7 @@ function CompareCard({ dimension, title, subtitle, emptyText, reloadKey }: {
   const q = useAnalyticsQuery(
     (signal) => analyticsApi.compare(dimension as CompareDimension, filter, { signal }),
     [dimension, key, reloadKey],
+    { cacheKey: `compare|${dimension}|${key}` },
   );
   const series = q.data ? toSeries(q.data.items) : null;
   const hasDays = !!series?.some((s) => s.days?.length);
@@ -1077,7 +1091,7 @@ function ComparisonView({ isDashRole, reloadKey }: { isDashRole: boolean; reload
 function PlatformBreakdownCard({ country, reloadKey }: { country: string; reloadKey: number }) {
   const c = useThemeColors();
   const { filter, key } = useFilterContext();
-  const q = useAnalyticsQuery((signal) => analyticsApi.compare("platform", filter, { signal }), [key, reloadKey]);
+  const q = useAnalyticsQuery((signal) => analyticsApi.compare("platform", filter, { signal }), [key, reloadKey], { cacheKey: `compare|platform|${key}` });
   const items = (q.data?.items ?? [])
     .map((it) => ({ key: it.key, name: it.name, value: it.total || 0 }))
     .filter((r) => r.value > 0);
