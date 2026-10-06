@@ -276,9 +276,12 @@ describe("Dashboard — Khóa dữ liệu", () => {
     const unlock = screen.getByRole("button", { name: /Mở khóa dữ liệu \(còn 60 phút\)/ });
     expect(unlock).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("data-lock-note")).toHaveTextContent("vẫn được đồng bộ phía sau");
+    expect(unlock).toHaveTextContent("Đã khóa · 60 phút");     // nhãn ngắn, kích thước nút cố định (không làm hàng lọc nhảy dòng)
+    expect(unlock.className).toContain("w-[10.5rem]");
     expect(screen.getByRole("button", { name: "Làm mới" })).toBeDisabled();
     await user.click(unlock);
-    expect(screen.queryByTestId("data-lock-note")).not.toBeInTheDocument();
+    expect(screen.getByTestId("data-lock-note")).toBeEmptyDOMElement();
+    expect(screen.getByRole("button", { name: "Khóa dữ liệu" }).className).toContain("w-[10.5rem]");
     expect(screen.getByRole("button", { name: "Làm mới" })).toBeEnabled();
   });
 

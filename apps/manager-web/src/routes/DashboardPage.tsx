@@ -360,25 +360,22 @@ function DashboardInner() {
           </Button>
         )}
 
+        {/* Kích thước CỐ ĐỊNH ở cả hai trạng thái: bật/tắt khóa không làm hàng bộ lọc xuống dòng hay đẩy nội dung bên dưới */}
         <Button size="sm" variant={dataLock.locked ? "default" : "outline"} aria-pressed={dataLock.locked}
+                className="w-[10.5rem] justify-center"
+                aria-label={dataLock.locked ? `Mở khóa dữ liệu (còn ${dataLock.minutesLeft} phút)` : "Khóa dữ liệu"}
                 onClick={() => (dataLock.locked ? dataLock.unlock() : dataLock.lock())}
                 title={dataLock.locked
-                  ? "Mở khóa để xem số liệu mới nhất"
+                  ? "Đang giữ nguyên số liệu để bạn xem; tự mở khóa sau tối đa 1 giờ. Dữ liệu mới vẫn được đồng bộ phía sau. Bấm để mở khóa và xem số liệu mới nhất. Bộ lọc chưa xem trước đó sẽ lấy số liệu hiện tại."
                   : "Giữ nguyên số liệu đang xem tối đa 1 giờ. Dữ liệu vẫn được đồng bộ phía sau."}>
           {dataLock.locked ? <Unlock className="size-4" /> : <Lock className="size-4" />}
-          {dataLock.locked ? `Mở khóa dữ liệu (còn ${dataLock.minutesLeft} phút)` : "Khóa dữ liệu"}
+          <span aria-hidden>{dataLock.locked ? `Đã khóa · ${dataLock.minutesLeft} phút` : "Khóa dữ liệu"}</span>
         </Button>
       </div>
-
-      {dataLock.locked && (
-        <p role="status" data-testid="data-lock-note" className="flex items-start gap-1.5 px-1 text-xs text-muted-foreground">
-          <Lock className="mt-0.5 size-3 shrink-0" />
-          <span>
-            Đang khóa dữ liệu: số liệu trên trang được giữ nguyên để bạn xem, tự mở khóa sau tối đa 1 giờ. Dữ liệu mới vẫn được đồng bộ phía sau;
-            bộ lọc chưa xem trước đó sẽ lấy số liệu hiện tại.
-          </span>
-        </p>
-      )}
+      {/* Đọc cho trình đọc màn hình, không chiếm chỗ trên giao diện */}
+      <p role="status" data-testid="data-lock-note" className="sr-only">
+        {dataLock.locked ? "Đang khóa dữ liệu: số liệu trên trang được giữ nguyên, dữ liệu mới vẫn được đồng bộ phía sau." : ""}
+      </p>
 
       {unavailable && (
         <AnalyticsUnavailableBanner hasData={hasAnyData} onRetry={() => setReloadKey((k) => k + 1)} />
