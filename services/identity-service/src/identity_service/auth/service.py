@@ -72,9 +72,11 @@ class AuthService:
         perms = effective_permissions(account["role"], await perms_repo.granted(conn, account["id"]))
         return await self.tokens.issue(account=account, perms=perms, sid=sid, client_type=client_type)
 
-    async def verify_access_token(self, token: str) -> dict:
-        """Verify chữ ký/iss/aud/exp; nếu token mang `sid` thì phiên phải còn hiệu lực (thu hồi có tác dụng ngay)."""
-        payload = await self.tokens.verify(token)
+    async def verify_access_token(self, token: str, *, any_audience: bool = False) -> dict:
+        """Verify chữ ký/iss/aud/exp; nếu token mang `sid` thì phiên phải còn hiệu lực (thu hồi có tác dụng ngay).
+
+        `any_audience`: chỉ cho endpoint OIDC (token client bên thứ ba không mang audience nền tảng)."""
+        payload = await self.tokens.verify(token, any_audience=any_audience)
         sid = payload.get("sid")
         if sid:
             async with self.db.connection() as conn:
@@ -364,6 +366,7 @@ class AuthService:
 
     async def update_profile(self, account: dict, *, username: str | None, email: str | None) -> dict:
         updates: dict[str, str] = {}
+        verify_token: str | None = None
         async with self.db.transaction() as conn:
             if username and username != account["username"]:
                 if await accounts.username_exists(conn, username):
@@ -377,10 +380,19 @@ class AuthService:
                 return {"ok": True, "message": "Không có thay đổi."}
             try:
                 await accounts.update_profile(conn, account["id"], updates)
-                if "username" in updates:
-                    await events.profile_updated(conn, account["id"], updates["username"])
+                if "email" in updates:
+                    # Email mới chưa được chứng minh sở hữu: bỏ cờ đã xác thực + gửi lại link xác thực.
+                    verify_token = new_token()
+                    await accounts.mark_unverified(conn, account["id"], hash_token(verify_token), self.now())
+                    await audit.record(conn, account_id=account["id"], event_type="email_changed",
+                                       now=self.now(), target_type="account", target_id=account["id"])
+                if updates:  # username đổi, hoặc email đổi (consumer đọc lại hồ sơ qua feed/API)
+                    await events.profile_updated(conn, account["id"], updates.get("username", account["username"]))
             except asyncpg.UniqueViolationError as exc:
                 if "email" in (exc.constraint_name or ""):
                     raise DomainError(409, "Email đã được đăng ký") from None
                 raise DomainError(409, "Tên đăng nhập đã được sử dụng") from None
+        if verify_token:
+            await self._safe_send(self.mailer.send_verify, updates["email"], verify_token,
+                                  updates.get("username", account["username"]))
         return {"ok": True, "message": "Đã cập nhật hồ sơ.", "updates": updates}

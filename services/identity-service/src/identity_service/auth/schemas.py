@@ -2,7 +2,21 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from typing import Annotated
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
+
+from identity_service.security import password_too_long
+
+
+def _max_72_bytes(value: str) -> str:
+    """bcrypt chỉ xét 72 byte đầu: từ chối rõ ràng (422) thay vì để hash lỗi. Thông điệp KHÔNG chứa giá trị nhập."""
+    if password_too_long(value):
+        raise ValueError("Mật khẩu quá dài (tối đa 72 byte; ký tự có dấu chiếm nhiều byte)")
+    return value
+
+
+NewPassword = Annotated[str, Field(min_length=8), AfterValidator(_max_72_bytes)]
 
 
 class ValidateKeyBody(BaseModel):
@@ -31,7 +45,7 @@ class IntegrationRequest(BaseModel):
 class RegisterBody(BaseModel):
     key: str
     username: str = Field(..., min_length=3, max_length=30, pattern=r"^[a-zA-Z0-9_]+$")
-    password: str = Field(..., min_length=8)
+    password: NewPassword
     email: EmailStr
     integration: IntegrationRequest | None = None
 
@@ -55,7 +69,7 @@ class ForgotPasswordBody(BaseModel):
 
 class ResetPasswordBody(BaseModel):
     token: str
-    new_password: str = Field(..., min_length=8)
+    new_password: NewPassword
 
 
 class ResendVerifyBody(BaseModel):
@@ -64,7 +78,7 @@ class ResendVerifyBody(BaseModel):
 
 class ChangePasswordBody(BaseModel):
     code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
-    new_password: str = Field(..., min_length=8)
+    new_password: NewPassword
 
 
 class UpdateProfileBody(BaseModel):

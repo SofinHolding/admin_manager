@@ -31,8 +31,12 @@ class TokenService:
         return self.settings.access_token_alg == "RS256"
 
     async def issue(self, *, account: dict, perms: list[str], sid: str, client_type: str = "web",
-                    audiences: list[str] | None = None, extra: dict | None = None) -> str:
-        """`audiences`/`extra`: dùng cho access token cấp qua OIDC (thêm `aud` của client, `client_id`, `scope`)."""
+                    audiences: list[str] | None = None, extra: dict | None = None,
+                    platform_audience: bool = True) -> str:
+        """`audiences`/`extra`: dùng cho access token cấp qua OIDC (thêm `aud` của client, `client_id`, `scope`).
+
+        `platform_audience=False`: token CHỈ mang `audiences` (client bên thứ ba) — không có audience nền tảng nên
+        không dùng được cho API nền tảng; `audiences` không được chứa audience nền tảng."""
         s = self.settings
         if not self.rs256:
             return legacy_jwt.create_access_token(
@@ -40,7 +44,10 @@ class TokenService:
                 role=account["role"], client_type=client_type, ttl_s=s.access_token_ttl_s)
         key = await self.keystore.active_key()
         now = int(time.time())
-        aud = [s.audience, *[a for a in (audiences or []) if a and a != s.audience]]
+        extra_aud = [a for a in (audiences or []) if a and a != s.audience]
+        if not platform_audience and not extra_aud:
+            raise ValueError("token không mang audience nền tảng thì phải có audience riêng")
+        aud = [s.audience, *extra_aud] if platform_audience else extra_aud
         payload = {**(extra or {}), "iss": s.issuer, "aud": aud, "sub": account["id"], "username": account["username"],
                    "role": account["role"], "perms": sorted(perms), "client_type": client_type, "sid": sid,
                    "jti": uuid.uuid4().hex, "iat": now, "nbf": now, "exp": now + s.access_token_ttl_s}
@@ -89,8 +96,11 @@ class TokenService:
             self._pem_cache[kid] = (pem, time.monotonic())
         return pem
 
-    async def verify(self, token: str) -> dict:
-        """Ném DomainError(401). Chỉ chấp nhận đúng thuật toán đã cấu hình; từ chối `none`, HS* khi ở chế độ RS256."""
+    async def verify(self, token: str, *, any_audience: bool = False) -> dict:
+        """Ném DomainError(401). Chỉ chấp nhận đúng thuật toán đã cấu hình; từ chối `none`, HS* khi ở chế độ RS256.
+
+        Mặc định đòi `aud` chứa audience nền tảng. `any_audience=True` CHỈ cho endpoint OIDC của Identity
+        (userinfo/introspect/revoke) kiểm token của client bên thứ ba (aud riêng): chữ ký/iss/exp/typ vẫn kiểm đủ."""
         try:
             header = jwt.get_unverified_header(token)
         except jwt.InvalidTokenError:
@@ -105,9 +115,11 @@ class TokenService:
         if pem is None:
             raise DomainError(401, "Token không hợp lệ")
         try:
-            return jwt.decode(token, pem, algorithms=["RS256"], audience=self.settings.audience,
+            return jwt.decode(token, pem, algorithms=["RS256"],
+                              audience=None if any_audience else self.settings.audience,
                               issuer=self.settings.issuer, leeway=LEEWAY_S,
-                              options={"require": ["exp", "iat", "nbf", "sub", "iss", "aud"]})
+                              options={"require": ["exp", "iat", "nbf", "sub", "iss", "aud"],
+                                       "verify_aud": not any_audience})
         except jwt.ExpiredSignatureError:
             raise DomainError(401, "Token hết hạn") from None
         except jwt.InvalidTokenError:

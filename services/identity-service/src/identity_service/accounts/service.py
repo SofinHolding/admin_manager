@@ -26,6 +26,17 @@ def account_to_dict(row: dict) -> dict:
             "status": row["status"]}
 
 
+def _guard_admin_target(actor: dict, target: dict | None) -> None:
+    """Chỉ role `admin` mới được tác động lên tài khoản role `admin` (khoá/sửa/đổi role/xoá).
+
+    Chặn dash_admin chiếm admin: khoá/đổi email rồi dùng forgot-password, hoặc xoá/hạ role admin.
+    Tài khoản không tồn tại thì để bước sau trả 404. Khác legacy có chủ đích (xem handbook 02 mục 2.3).
+    """
+    if target and target["role"] == "admin" and actor.get("role") != "admin":
+        raise DomainError(403, "Chỉ quản trị viên (admin) mới được thao tác trên tài khoản admin",
+                          code="ADMIN_TARGET_FORBIDDEN")
+
+
 class AccountAdminService:
     def __init__(self, db: Database, *, now: Callable[[], datetime] = utcnow) -> None:
         self.db = db
@@ -40,6 +51,7 @@ class AccountAdminService:
             raise DomainError(400, "Không thể khoá chính mình")
         async with self.db.transaction() as conn:
             before = await accounts.get_by_id(conn, user_id)
+            _guard_admin_target(actor, before)
             if not before or not await accounts.set_status(conn, user_id, new_status):
                 raise DomainError(404, "Tài khoản không tồn tại")
             if before["status"] != new_status:
@@ -58,6 +70,7 @@ class AccountAdminService:
                      role: str | None) -> dict:
         updates: dict[str, str] = {}
         async with self.db.transaction() as conn:
+            _guard_admin_target(actor, await accounts.get_by_id(conn, user_id))
             if username is not None:
                 existing = await accounts.get_by_username(conn, username)
                 if existing and existing["id"] != user_id:
@@ -103,6 +116,7 @@ class AccountAdminService:
         if user_id == actor.get("sub"):
             raise DomainError(400, "Không thể xoá chính mình")
         async with self.db.transaction() as conn:
+            _guard_admin_target(actor, await accounts.get_by_id(conn, user_id))
             if not await accounts.delete(conn, user_id):
                 raise DomainError(404, "Tài khoản không tồn tại")
             await events.session_revoked(conn, user_id)

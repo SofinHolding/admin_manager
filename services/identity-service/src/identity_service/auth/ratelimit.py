@@ -17,9 +17,11 @@ class RateLimiter:
     def __init__(self, clock: Callable[[], float] = time.time) -> None:
         self._clock = clock
         self._hits: dict[str, list[float]] = defaultdict(list)
+        self._windows: dict[str, int] = {}  # cửa sổ riêng từng khóa: _gc không dọn nhầm khóa có cửa sổ dài hơn
 
     def check(self, ip: str, action: str, max_hits: int, window_s: int) -> None:
         key = f"{ip}:{action}"
+        self._windows[key] = window_s
         now = self._clock()
         recent = [t for t in self._hits[key] if t > now - window_s]
         if len(recent) >= max_hits:
@@ -30,8 +32,9 @@ class RateLimiter:
         recent.append(now)
         self._hits[key] = recent
         if len(self._hits) > 10_000:  # dọn khóa đã hết cửa sổ để không phình bộ nhớ
-            self._gc(now, window_s)
+            self._gc(now)
 
-    def _gc(self, now: float, window_s: int) -> None:
-        for key in [k for k, v in self._hits.items() if not v or v[-1] <= now - window_s]:
+    def _gc(self, now: float) -> None:
+        for key in [k for k, v in self._hits.items() if not v or v[-1] <= now - self._windows.get(k, 0)]:
             del self._hits[key]
+            self._windows.pop(key, None)

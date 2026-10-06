@@ -14,15 +14,30 @@ from datetime import datetime, timezone
 import bcrypt
 
 BCRYPT_ROUNDS = 12
+BCRYPT_MAX_BYTES = 72  # bcrypt chỉ xét 72 byte đầu của mật khẩu (UTF-8)
+
+
+def password_too_long(password: str) -> bool:
+    """Mật khẩu vượt giới hạn 72 BYTE (không phải ký tự) của bcrypt. Dùng ở schema để trả 422 thay vì 500."""
+    return len(password.encode()) > BCRYPT_MAX_BYTES
+
+
+def _bcrypt_input(password: str) -> bytes:
+    """Cắt về 72 byte đúng như bcrypt<5 vẫn âm thầm làm (bcrypt>=5 ném ValueError thay vì cắt).
+
+    Hash legacy tạo bởi bcrypt cũ từ mật khẩu dài vẫn verify được nhờ cắt tương thích này.
+    """
+    return password.encode()[:BCRYPT_MAX_BYTES]
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
+    """Schema đã chặn mật khẩu >72 byte; cắt ở đây chỉ là phòng thủ chiều sâu (không để thành 500)."""
+    return bcrypt.hashpw(_bcrypt_input(password), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
 
 
 def verify_password(password: str, password_hash: str) -> bool:
     try:
-        return bcrypt.checkpw(password.encode(), password_hash.encode())
+        return bcrypt.checkpw(_bcrypt_input(password), password_hash.encode())
     except (ValueError, TypeError):  # hash hỏng/không đúng định dạng -> không khớp, không ném lỗi
         return False
 

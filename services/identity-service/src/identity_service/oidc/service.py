@@ -280,9 +280,17 @@ class OidcService:
                             nonce: str, family_id: str, with_id_token: bool, with_refresh: bool) -> dict:
         now = self.now()
         perms = effective_permissions(account["role"], await perms_repo.granted(conn, account["id"]))
+        # Client first-party: aud = [nền tảng, audience client] (dùng được cho API nền tảng).
+        # Client bên thứ ba: CHỈ audience riêng (mặc định client_id); audience trùng nền tảng bị bỏ qua.
+        first_party = bool(client["first_party"])
+        if first_party:
+            audiences = [client["audience"]]
+        else:
+            own = client["audience"]
+            audiences = [own if own and own != self.settings.audience else client["client_id"]]
         access = await self.tokens.issue(
-            account=account, perms=perms, sid=sid, client_type="web", audiences=[client["audience"]],
-            extra={"client_id": client["client_id"], "scope": scope})
+            account=account, perms=perms, sid=sid, client_type="web", audiences=audiences,
+            platform_audience=first_party, extra={"client_id": client["client_id"], "scope": scope})
         out = {"access_token": access, "token_type": "Bearer", "expires_in": self.settings.access_token_ttl_s,
                "scope": scope}
         scopes = scope.split(" ")
@@ -436,7 +444,7 @@ class OidcService:
 
     async def _live_access_claims(self, token: str) -> tuple[dict, dict]:
         """(claims, account) của access token CÒN SỐNG; ném DomainError(401) nếu không."""
-        payload = await self.auth.verify_access_token(token)
+        payload = await self.auth.verify_access_token(token, any_audience=True)  # token client bên thứ ba
         async with self.db.connection() as conn:
             account = await accounts.get_by_id(conn, payload["sub"])
         if not account or account["status"] != "active":
@@ -521,7 +529,7 @@ class OidcService:
         if token.count(".") != 2:
             return
         try:
-            payload = await self.tokens.verify(token)
+            payload = await self.tokens.verify(token, any_audience=True)
         except DomainError:
             return
         if payload.get("client_id") != client["client_id"] or not payload.get("sid"):

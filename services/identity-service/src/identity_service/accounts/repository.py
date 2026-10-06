@@ -59,6 +59,13 @@ async def set_verify_token(conn: asyncpg.Connection, account_id: str, token_hash
                        account_id, token_hash, now)
 
 
+async def mark_unverified(conn: asyncpg.Connection, account_id: str, token_hash: str, now: datetime) -> None:
+    """Đổi email: email mới chưa được xác thực. Đặt token xác thực mới (không đổi status để không khoá phiên)."""
+    await conn.execute(
+        "UPDATE accounts SET email_verified = false, verify_token_hash = $2, verify_token_at = $3 WHERE id = $1",
+        account_id, token_hash, now)
+
+
 async def mark_verified(conn: asyncpg.Connection, account_id: str) -> None:
     """Chỉ chuyển pending -> active. Tài khoản đang bị khóa (suspended) KHÔNG được mở lại bằng link xác thực
     (legacy đặt status='active' vô điều kiện nên một link cũ có thể gỡ khóa của admin)."""
