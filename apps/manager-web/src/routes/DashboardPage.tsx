@@ -225,9 +225,21 @@ function DashboardInner() {
   const platformTagsQ = useAnalyticsQuery((signal) => analyticsApi.platformTags(filter, { signal }),
     [filter.owner_account_id, reloadKey], { enabled: ownerKnown });
   const platformTags = ownerKnown ? platformTagsQ.data?.items ?? [] : [];
+  // Nền tảng THỰC SỰ có dữ liệu (Tool nào đẩy lên cũng hiện ở đây, không cần sửa code): lấy từ `channel-breakdown`
+  // với bộ lọc KHÔNG có nền tảng, để danh sách không co lại theo ô đang chọn.
+  const platformCatalogQ = useAnalyticsQuery((signal) => analyticsApi.platforms(filter, { signal }),
+    [filter.owner_account_id, reloadKey]);
+  // Nhớ danh sách đã có: dù truy vấn đang tải lại hay lỗi tạm thời, ô chọn KHÔNG được co lại
+  const [knownPlatforms, setKnownPlatforms] = useState<string[]>([]);
+  useEffect(() => {
+    const items = platformCatalogQ.data?.items;
+    if (items) setKnownPlatforms((prev) => Array.from(new Set([...prev, ...items])));
+  }, [platformCatalogQ.data]);
+  const dataPlatforms = useMemo(() => knownPlatforms.filter((p) => !!p && !BUILTIN_PLATFORMS.includes(p)), [knownPlatforms]);
   const allPlatforms = useMemo(
-    () => [...BUILTIN_PLATFORMS, ...platformTags.filter((p) => !BUILTIN_PLATFORMS.includes(p))],
-    [platformTags],
+    () => [...BUILTIN_PLATFORMS, ...dataPlatforms,
+      ...platformTags.filter((p) => !BUILTIN_PLATFORMS.includes(p) && !dataPlatforms.includes(p))],
+    [platformTags, dataPlatforms],
   );
 
   // Danh mục lọc (không co theo chính ô đang chọn — xem filterState.ts)
@@ -269,7 +281,7 @@ function DashboardInner() {
 
   const onScope = (v: string) => {
     if (!v) setFilter({ platform: "", platform_tag: "" });
-    else if (BUILTIN_PLATFORMS.includes(v) && !platformTags.includes(v)) setFilter({ platform: v, platform_tag: "" });
+    else if ((BUILTIN_PLATFORMS.includes(v) || dataPlatforms.includes(v)) && !platformTags.includes(v)) setFilter({ platform: v, platform_tag: "" });
     else setFilter({ platform: "", platform_tag: v });
   };
 
@@ -618,7 +630,7 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope, platformTa
   );
 
   const customTags = platformTags.filter((p) => p !== "youtube" && p !== "facebook");
-  const scopeLabel = scope === "" ? "cả hai nền tảng" : scope === "youtube" ? "chỉ YouTube"
+  const scopeLabel = scope === "" ? "tất cả nền tảng" : scope === "youtube" ? "chỉ YouTube"
     : scope === "facebook" ? "chỉ Facebook" : `nhãn "${scope}"`;
 
   return (
@@ -627,7 +639,7 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope, platformTa
         <div className="min-w-0">
           <h3 className="font-semibold">Traffic theo chỉ số</h3>
           <p className="text-xs text-muted-foreground">
-            {data?.scope_label || "Tổng — cả hai nền tảng"}
+            {data?.scope_label || "Tổng — tất cả nền tảng"}
             {kind === "pie" ? " · tổng cả khoảng ngày" : " · theo từng ngày"}
           </p>
         </div>
@@ -647,7 +659,7 @@ function TrafficMetricChart({ data, loading, metrics, scope, onScope, platformTa
                 onValueChange={(v) => onScope(v === SCOPE_ALL ? "" : v)}>
           <SelectTrigger className="mr-1 h-8 w-48 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value={SCOPE_ALL}>Tổng — cả hai nền tảng</SelectItem>
+            <SelectItem value={SCOPE_ALL}>Tổng — tất cả nền tảng</SelectItem>
             <SelectItem value="youtube">YouTube</SelectItem>
             <SelectItem value="facebook">Facebook</SelectItem>
             {customTags.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}

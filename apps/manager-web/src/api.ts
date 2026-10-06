@@ -293,6 +293,10 @@ export const analyticsApi = {
   platformTags: (f: FilterState, o?: Opts) =>
     apiFetch<{ items: string[] }>(`/v1/analytics/platform-tags${qs(platformTagCatalogParams(f))}`, undefined, o),
 
+  /** Danh mục nền tảng ĐANG CÓ dữ liệu của phạm vi người gọi (không co theo ô nền tảng đang chọn). */
+  platforms: (f: FilterState, o?: Opts) =>
+    apiFetch<{ items: string[] }>(`/v1/analytics/platforms${qs(platformTagCatalogParams(f))}`, undefined, o),
+
   metrics: (o?: Opts) =>
     apiFetch<{ metrics: AnalyticsMetric[] }>("/v1/analytics/metrics", undefined, o),
 

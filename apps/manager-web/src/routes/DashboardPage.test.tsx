@@ -51,6 +51,7 @@ function analytics(o: Opts = {}): Responder {
     if (p === "channel-breakdown") return jsonResponse({ total: { managed: 3, active: 2 }, by_platform: [{ platform: "facebook", managed: 3, active: 2 }], ...meta });
     if (p === "country-tags") return jsonResponse({ items: [{ id: "1", name: "Vietnam" }] });
     if (p === "platform-tags") return jsonResponse({ items: [] });
+    if (p === "platforms") return jsonResponse({ items: ["demo_social", "toolx_social"] });
     if (p === "metrics") return jsonResponse({ metrics: [] });
     if (p === "groups") return jsonResponse({ items: [] });
     if (p.startsWith("compare/")) {
@@ -250,6 +251,24 @@ describe("Dashboard — freshness & analytics không khả dụng", () => {
     const a = await screen.findByText(/Không tải được số liệu/);
     expect(a).toBeInTheDocument();
     expect(screen.queryByTestId("analytics-unavailable")).not.toBeInTheDocument();
+  });
+});
+
+describe("Dashboard — ô chọn nền tảng lấy từ dữ liệu thật", () => {
+  it("liệt kê nền tảng của Tool mới; chọn nó gửi platform=<khóa>; danh sách KHÔNG co lại sau khi chọn", async () => {
+    const f = installFetch(analytics());
+    renderDashboard("/dashboard");
+    await waitAllData(f);
+    const user = userEvent.setup();
+    const open = async () => { await user.click(screen.getAllByRole("combobox").find((c) => /Tổng — tất cả nền tảng|demo_social|toolx_social|YouTube|Facebook/.test(c.textContent ?? ""))!); };
+    await open();
+    for (const name of ["YouTube", "Facebook", "demo_social", "toolx_social"]) expect(await screen.findByRole("option", { name })).toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: "toolx_social" }));
+    await waitFor(() => expect(screen.getByTestId("loc").textContent).toContain("platform=toolx_social"));
+    expect(screen.getByTestId("loc").textContent).not.toContain("platform_tag");   // là nền tảng, không phải nhãn tự do
+    await waitFor(() => expect(f.byPath(at("summary")).some((c) => c.params.get("platform") === "toolx_social")).toBe(true));
+    await open();                                                                  // mở lại: vẫn đủ danh sách
+    for (const name of ["YouTube", "Facebook", "demo_social", "toolx_social"]) expect(await screen.findByRole("option", { name })).toBeInTheDocument();
   });
 });
 

@@ -100,6 +100,19 @@ def _tags_from_dataset(ds, ctx, sel, extra) -> dict:
 SPEC_PLATFORM_TAGS = QuerySpec("platform-tags", _tags_from_dataset, window="none", ignore_country=True)
 
 
+def _platforms_from_dataset(ds, ctx, sel, extra) -> dict:
+    return {"items": sorted(p for p in ds.platforms if p)}
+
+
+SPEC_PLATFORMS = QuerySpec("platforms", _platforms_from_dataset, window="none", ignore_country=True)
+
+
+@router.get("/platforms", summary="Danh sách nền tảng ĐANG CÓ dữ liệu trong phạm vi người gọi (Tool nào đẩy lên cũng hiện)")
+async def platforms(response: Response, query: FilterQuery = Depends(), principal: Principal = User,
+                    c=Depends(container)) -> dict:
+    return await c.query.run(SPEC_PLATFORMS, principal, query, response)
+
+
 @router.get("/platform-tags", summary="Danh sách nhãn nền tảng đã gắn (tự do, từ nhóm kênh)")
 async def platform_tags(response: Response, query: FilterQuery = Depends(), principal: Principal = User,
                         c=Depends(container)) -> dict:
