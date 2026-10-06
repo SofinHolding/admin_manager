@@ -426,8 +426,8 @@ export default function IntegrationClientsPage() {
                   <button type="button" onClick={() => toggleOpen(c.client_id)}
                           aria-expanded={open} aria-controls={panelId} aria-label={`Chi tiết ${c.tool_name}`}
                           className="flex min-h-11 w-full items-center gap-2 rounded-md px-1 py-2 text-left hover:bg-elev-2">
-                    {open ? <ChevronDown className="size-5 shrink-0 text-muted-foreground" aria-hidden />
-                      : <ChevronRight className="size-5 shrink-0 text-muted-foreground" aria-hidden />}
+                    {open ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                      : <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
                     <span className="min-w-0 flex-1 break-words font-semibold">{c.tool_name}</span>
                     <StatusBadge info={clientStatus(c.status)} />
                   </button>

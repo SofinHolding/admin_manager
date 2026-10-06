@@ -500,7 +500,7 @@ export default function JobDetailPage() {
                 const at = ev.at ?? ev.created_at;
                 return (
                   <li key={ev.id} className="flex gap-3 border-b border-border py-3">
-                    <Icon className={`mt-0.5 size-5 shrink-0 ${v.tone === "warning" ? "text-warning" : v.tone === "success" ? "text-success" : "text-muted-foreground"}`} aria-hidden />
+                    <Icon className={`mt-0.5 size-4 shrink-0 ${v.tone === "warning" ? "text-warning" : v.tone === "success" ? "text-success" : "text-muted-foreground"}`} aria-hidden />
                     <div className="min-w-0 flex-1">
                       <p>{v.title}</p>
                       <p className="mt-0.5 text-sm text-muted-foreground">

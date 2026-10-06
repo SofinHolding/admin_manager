@@ -127,7 +127,7 @@ export default function LoginPage() {
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
               aria-describedby="remember-hint"
-              className="size-5 accent-primary"
+              className="size-4 accent-primary"
             />
             Ghi nhớ đăng nhập
           </label>

@@ -104,7 +104,7 @@ export function EmptyState({
 }) {
   return (
     <div className={cn("flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-strong px-5 py-8", className)}>
-      {Icon && <Icon className="size-7 text-muted-foreground" aria-hidden />}
+      {Icon && <Icon className="size-5 text-muted-foreground" aria-hidden />}
       <div>
         <p className="font-semibold">{title}</p>
         {children && <p className="reading mt-1 text-muted-foreground">{children}</p>}
@@ -139,7 +139,7 @@ export function Notice({
   const Icon = t.icon;
   return (
     <div role={t.role} className={cn("flex items-start gap-3 rounded-lg border px-4 py-3", t.box, className)}>
-      <Icon className={cn("mt-0.5 size-5 shrink-0", t.icon_cls)} aria-hidden />
+      <Icon className={cn("mt-0.5 size-4 shrink-0", t.icon_cls)} aria-hidden />
       <div className="min-w-0 flex-1">
         {title && <p className="font-semibold">{title}</p>}
         {children && <div className={cn("text-[0.9375rem]", title && "mt-0.5 text-muted-foreground")}>{children}</div>}

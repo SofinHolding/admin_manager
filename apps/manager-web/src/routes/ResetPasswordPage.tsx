@@ -52,7 +52,7 @@ function ForgotPasswordForm() {
       <AuthShell title="Kiểm tra email" description="Chúng tôi đã xử lý yêu cầu của bạn.">
         <div className="flex flex-col gap-5">
           <p className="flex items-start gap-3">
-            <Mail className="mt-0.5 size-5 shrink-0 text-primary-text" aria-hidden />
+            <Mail className="mt-0.5 size-4 shrink-0 text-primary-text" aria-hidden />
             <span>
               Nếu email này có tài khoản, một liên kết đặt lại mật khẩu đã được gửi tới đó. Thư có thể mất vài phút
               để tới; nếu chưa thấy, hãy xem cả mục thư rác.

@@ -135,7 +135,7 @@ export function AuthShell({
     <main className="mx-auto flex min-h-dvh w-full max-w-[28rem] flex-col justify-center px-4 py-8">
       <p className="mb-6 flex items-center gap-2 text-lg font-bold">
         <span className="grid size-9 place-items-center rounded-md bg-primary text-primary-foreground">
-          <BarChart3 className="size-5" aria-hidden />
+          <BarChart3 className="size-4" aria-hidden />
         </span>
         Manager
       </p>
@@ -157,7 +157,7 @@ export function TextLink({ to, children, className }: { to: string; children: Re
 
 /** Biểu tượng quay khi đang xử lý; dừng quay nếu người dùng chọn giảm chuyển động (chữ đi kèm vẫn cho biết trạng thái). */
 export function Spinner() {
-  return <Loader2 className="size-[1.125rem] motion-safe:animate-spin" aria-hidden />;
+  return <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden />;
 }
 
 /* ── Ô mật khẩu có nút hiện/ẩn ──────────────────────────────────────────────── */
@@ -200,7 +200,7 @@ export function PasswordField({
             aria-pressed={show}
             className="absolute right-0 top-0 grid size-11 place-items-center rounded-md text-muted-foreground hover:text-foreground"
           >
-            {show ? <EyeOff className="size-5" aria-hidden /> : <Eye className="size-5" aria-hidden />}
+            {show ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
           </button>
         </div>
       )}

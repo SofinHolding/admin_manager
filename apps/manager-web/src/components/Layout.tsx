@@ -11,7 +11,7 @@ import { cn } from "../lib/utils";
 
 const itemCls = ({ isActive }: { isActive: boolean }) =>
   cn(
-    "flex min-h-10 items-center gap-3 rounded-md px-3 py-1.5 text-sm transition-colors",
+    "flex min-h-9 items-center gap-2.5 rounded-md px-3 py-1.5 text-sm transition-colors",
     isActive
       ? "bg-primary/10 font-semibold text-primary-text shadow-[inset_3px_0_0_0_var(--color-primary)]"
       : "text-foreground/85 hover:bg-elev-2 hover:text-foreground",
@@ -27,7 +27,7 @@ function NavList({ groups, onNavigate }: { groups: NavGroup[]; onNavigate?: () =
             {g.items.map((it) => (
               <li key={it.to}>
                 <NavLink to={it.to} className={itemCls} onClick={onNavigate}>
-                  <it.icon className="size-[1.125rem] shrink-0" aria-hidden />
+                  <it.icon className="size-4 shrink-0" aria-hidden />
                   <span>{it.label}</span>
                 </NavLink>
               </li>
@@ -80,7 +80,7 @@ function DisplayPrefs() {
   return (
     <details className="group rounded-md">
       <summary className="flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-md px-3 text-[0.9375rem] text-foreground/85 hover:bg-elev-2 hover:text-foreground">
-        <Palette className="size-5" aria-hidden />
+        <Palette className="size-4" aria-hidden />
         Giao diện và cỡ chữ
       </summary>
       <div className="mt-2 space-y-3 px-1 pb-1">
@@ -129,7 +129,7 @@ function AccountBlock({ onNavigate }: { onNavigate?: () => void }) {
         onClick={logout}
         className="flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-md px-3 text-[0.9375rem] text-foreground/85 transition-colors hover:bg-elev-2 hover:text-foreground"
       >
-        <LogOut className="size-5" aria-hidden />
+        <LogOut className="size-4" aria-hidden />
         Đăng xuất
       </button>
     </div>
@@ -181,7 +181,7 @@ export function Layout() {
           aria-label="Mở menu"
           className="grid size-11 cursor-pointer place-items-center rounded-md hover:bg-elev-2"
         >
-          <Menu className="size-6" aria-hidden />
+          <Menu className="size-5" aria-hidden />
         </button>
       </header>
 
@@ -195,7 +195,7 @@ export function Layout() {
             <div className="flex items-center justify-between">
               <DialogPrimitive.Title className="px-3 text-lg font-bold">Menu</DialogPrimitive.Title>
               <DialogPrimitive.Close className="grid size-11 cursor-pointer place-items-center rounded-md hover:bg-elev-2" aria-label="Đóng menu">
-                <X className="size-5" aria-hidden />
+                <X className="size-4" aria-hidden />
               </DialogPrimitive.Close>
             </div>
             <div className="flex-1"><NavList groups={groups} onNavigate={() => setDrawer(false)} /></div>

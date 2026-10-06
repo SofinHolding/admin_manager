@@ -191,7 +191,7 @@ function RRow({ children }: { children: ReactNode }) {
 function RCell({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
     <td data-label={label} className={cn(
-      "block min-w-0 py-1 md:table-cell md:px-3 md:py-3 md:align-middle md:first:pl-0",
+      "block min-w-0 py-1 md:table-cell md:px-3 md:py-2 md:align-middle md:first:pl-0",
       "before:block before:text-sm before:text-muted-foreground before:content-[attr(data-label)] md:before:hidden",
       className,
     )}>{children}</td>
@@ -235,7 +235,7 @@ export default function AdminPage() {
 
 // ── Mã mời ──────────────────────────────────────────────────────────────────
 
-const checkboxCls = "size-5 shrink-0 rounded accent-primary";
+const checkboxCls = "size-4 shrink-0 rounded accent-primary";
 
 function InviteKeysTab() {
   const [keys, setKeys] = useState<InviteKey[]>([]);
@@ -423,7 +423,7 @@ function InviteKeysTab() {
                   <RCell label="Hạn dùng">
                     {st === "revoked" ? "—" : <time dateTime={k.expires_at} title={fmtDate(k.expires_at)}>{relativeExpiry(k.expires_at)}</time>}
                   </RCell>
-                  <RCell label="Tạo lúc" className="text-muted-foreground">{fmtDate(k.created_at)}</RCell>
+                  <RCell label="Tạo lúc" className="whitespace-nowrap text-muted-foreground">{fmtDate(k.created_at)}</RCell>
                   <RCell label="" className="md:text-right">
                     {st === "active" && (
                       <Button variant="outline" onClick={() => setRevokeTarget(k)} aria-label={`Thu hồi mã ${k.key}`}>
@@ -607,21 +607,21 @@ function AccountsTab({ isDashAdmin }: { isDashAdmin: boolean }) {
                   </RCell>
                   <RCell label="Vai trò">{roleLabel(u.role)}</RCell>
                   <RCell label="Trạng thái"><StatusBadge spec={st} /></RCell>
-                  <RCell label="Đăng nhập gần nhất" className="text-muted-foreground">{fmtDate(u.last_login, "Chưa đăng nhập")}</RCell>
-                  <RCell label="Tạo lúc" className="text-muted-foreground">{fmtDate(u.created_at)}</RCell>
+                  <RCell label="Đăng nhập gần nhất" className="whitespace-nowrap text-muted-foreground">{fmtDate(u.last_login, "Chưa đăng nhập")}</RCell>
+                  <RCell label="Tạo lúc" className="whitespace-nowrap text-muted-foreground">{fmtDate(u.created_at)}</RCell>
                   <RCell label="Thao tác">
-                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                      <div className="flex flex-wrap gap-2">
-                        <Button variant="outline" disabled={locked} aria-describedby={locked ? whyId : undefined}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <div className="contents">
+                        <Button variant="outline" size="sm" disabled={locked} aria-describedby={locked ? whyId : undefined}
                                 onClick={() => startEdit(u)} aria-label={`Sửa ${u.username}`}>
                           <Pencil aria-hidden /> Sửa
                         </Button>
-                        <Button variant="outline" disabled={locked} aria-describedby={locked ? whyId : undefined}
+                        <Button variant="outline" size="sm" disabled={locked} aria-describedby={locked ? whyId : undefined}
                                 onClick={() => setPermTarget(u)} aria-label={`Quản lý quyền của ${u.username}`}>
                           <ShieldPlus aria-hidden /> Quyền
                         </Button>
                       </div>
-                      <Button variant="outline" disabled={locked || busy} aria-describedby={locked ? whyId : undefined}
+                      <Button variant="outline" size="sm" disabled={locked || busy} aria-describedby={locked ? whyId : undefined}
                               onClick={() => (suspended ? void setStatus(u, "active") : setLockTarget(u))}
                               aria-label={`${suspended ? "Mở khóa" : "Khóa"} ${u.username}`}>
                         {suspended ? <UserCheck aria-hidden /> : <UserX aria-hidden />} {suspended ? "Mở khóa" : "Khóa"}
@@ -737,7 +737,7 @@ function SystemJobsSection() {
               <RCell label="Chủ sở hữu">{j.owner_username ?? "—"}</RCell>
               <RCell label="Trạng thái">{JOB_STATUS[j.status] ?? j.status}</RCell>
               <RCell label="Số mục" className="tabular-nums">{j.total_items.toLocaleString("vi-VN")}</RCell>
-              <RCell label="Tạo lúc" className="text-muted-foreground">{fmtDate(j.created_at)}</RCell>
+              <RCell label="Tạo lúc" className="whitespace-nowrap text-muted-foreground">{fmtDate(j.created_at)}</RCell>
             </RRow>
           ))}
         </RTable>

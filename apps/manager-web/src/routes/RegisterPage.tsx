@@ -177,7 +177,7 @@ export default function RegisterPage() {
       >
         <div className="flex flex-col gap-5">
           <p className="flex items-start gap-3">
-            <Mail className="mt-0.5 size-5 shrink-0 text-primary-text" aria-hidden />
+            <Mail className="mt-0.5 size-4 shrink-0 text-primary-text" aria-hidden />
             <span>
               Chúng tôi đã gửi thư xác thực tới <strong className="break-all">{registeredEmail}</strong>.
             </span>
@@ -323,7 +323,7 @@ export default function RegisterPage() {
         {policy && (
           <div className="border-t border-border pt-4" data-testid="register-tool">
             <label className="flex min-h-11 cursor-pointer items-center gap-3 font-semibold">
-              <input type="checkbox" className="size-5 accent-primary" checked={withTool}
+              <input type="checkbox" className="size-4 accent-primary" checked={withTool}
                      aria-describedby="register-tool-hint"
                      onChange={(e) => setWithTool(e.target.checked)} />
               Tạo công cụ đẩy dữ liệu
@@ -353,7 +353,7 @@ export default function RegisterPage() {
                     <div className="flex flex-wrap gap-x-5">
                       {policyPlatforms.map((pl) => (
                         <label key={pl} className="flex min-h-11 cursor-pointer items-center gap-2">
-                          <input type="checkbox" className="size-5 accent-primary" checked={toolPlatforms.includes(pl)}
+                          <input type="checkbox" className="size-4 accent-primary" checked={toolPlatforms.includes(pl)}
                                  onChange={(e) => setToolPlatforms((cur) => e.target.checked ? [...cur, pl] : cur.filter((x) => x !== pl))} />
                           {pl}
                         </label>

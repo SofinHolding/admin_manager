@@ -174,7 +174,7 @@ export default function ResourcesPage() {
                       {platformLabel(s.platform)}{s.default_country ? ` · Quốc gia mặc định: ${s.default_country}` : ""}
                     </span>
                   </span>
-                  <ChevronRight className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 </button>
               </li>
             ))}

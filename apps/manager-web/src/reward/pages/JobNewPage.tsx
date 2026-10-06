@@ -273,7 +273,7 @@ export default function JobNewPage() {
 
       <Section id="cai-dat" title="3. Cài đặt riêng" description="Mặc định công việc dùng đúng cấu hình ở trang Kết nối Discord. Chỉ bật mục này khi công việc này cần khác đi.">
         <label className="flex min-h-11 cursor-pointer items-center gap-3 font-medium">
-          <input type="checkbox" checked={overrideEnabled} disabled={locked} onChange={(e) => setOverrideEnabled(e.target.checked)} className="size-5 rounded accent-primary" />
+          <input type="checkbox" checked={overrideEnabled} disabled={locked} onChange={(e) => setOverrideEnabled(e.target.checked)} className="size-4 rounded accent-primary" />
           Dùng cài đặt khác cho công việc này
         </label>
         {overrideEnabled && (

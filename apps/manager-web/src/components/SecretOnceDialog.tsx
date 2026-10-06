@@ -132,7 +132,7 @@ export function SecretOnceDialog({ secret, onClose }: { secret: OneTimeSecret | 
               checked={saved}
               onChange={(e) => { setSaved(e.target.checked); if (e.target.checked) setNeedSaved(false); }}
               aria-describedby={hintId}
-              className="mt-1 size-5 shrink-0 accent-[var(--primary)]"
+              className="mt-1 size-4 shrink-0 accent-[var(--primary)]"
             />
             <span>Tôi đã lưu khóa này ở nơi an toàn</span>
           </label>

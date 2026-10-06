@@ -75,7 +75,7 @@ export function PermissionsDialog({ account, onClose }: { account: Account | nul
     <Dialog open={!!account} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-lg">
         <DialogTitle className="flex items-center gap-2">
-          <ShieldCheck className="size-5 text-primary-text" aria-hidden /> Quyền của {account?.username}
+          <ShieldCheck className="size-4 text-primary-text" aria-hidden /> Quyền của {account?.username}
         </DialogTitle>
         <DialogDescription className="reading mt-1">
           Cấp hoặc thu từng quyền. Thay đổi có hiệu lực ở lần làm mới phiên kế tiếp (tối đa vài phút) hoặc khi người này đăng nhập lại.
