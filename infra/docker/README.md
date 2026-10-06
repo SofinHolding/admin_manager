@@ -10,7 +10,7 @@ Dùng riêng cho dự án này. **Không đụng** container, volume, network ha
 | Network | `mp_dev_net` | |
 
 ```bash
-docker compose -f infra/docker/compose.dev.yml up -d      # tạo
+docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d      # tạo (cần .env.dev từ bootstrap_dev.py)
 docker compose -f infra/docker/compose.dev.yml ps         # xem
 docker compose -f infra/docker/compose.dev.yml down       # dừng (giữ dữ liệu)
 docker compose -f infra/docker/compose.dev.yml down -v    # dừng và XÓA dữ liệu của stack này

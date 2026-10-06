@@ -1,6 +1,6 @@
 # Ingest Data Contract v1 (contract_version `2026-10-01`)
 
-Trạng thái: **ĐỀ XUẤT ĐÃ ĐÓNG BĂNG ĐỂ REVIEW** (Phase 0). Chưa có service nào triển khai.
+Trạng thái: **ĐÃ ĐÓNG BĂNG và ĐÃ HIỆN THỰC** ở `integration-service` (ingest/merge/snapshot), `analytics-service` (read model) và `manager_sdk.IntegrationClient` (client); có test hợp đồng + E2E (`tests/e2e/test_mock_tool_x.py`). Đổi hợp đồng = thư mục contract version mới.
 Schema máy đọc được: [`packages/contracts/ingest/2026-10-01/ingest.schema.json`](../../packages/contracts/ingest/2026-10-01/ingest.schema.json).
 Ví dụ đã được kiểm chứng với schema: thư mục `examples/` cùng nơi.
 

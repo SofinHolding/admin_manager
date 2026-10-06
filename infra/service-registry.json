@@ -61,6 +61,8 @@
         "account.registered",
         "account.verified",
         "account.status_changed",
+        "account.role_changed",
+        "account.profile_updated",
         "account.deleted",
         "account.permission_changed",
         "session.revoked"

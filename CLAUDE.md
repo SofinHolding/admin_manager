@@ -1,6 +1,7 @@
 # CLAUDE.md — Manager Platform (monorepo microservices)
 
 Tài liệu RÀNG BUỘC. Mọi thay đổi về sau phải tuân theo. Vi phạm sẽ làm `python infra/scripts/test_all.py` đỏ.
+Người/Agent mới: bắt đầu từ `docs/handbook/README.md` (tổng quan, trạng thái đã/chưa làm, mô tả từng service, hướng dẫn phát triển, backlog). Handbook phải được cập nhật cùng mỗi thay đổi (test `tests/arch/test_handbook.py` giữ link/độ phủ).
 Đọc trước khi làm: `docs/architecture/architecture-assessment-v2.md` (kiến trúc, quyết định D1-D14) và
 `docs/api/ingest-data-contract-v1.md` (hợp đồng dữ liệu Tool đẩy lên).
 
@@ -100,7 +101,7 @@ python infra/scripts/dev_stack.py up        # dựng cả stack bằng tiến tr
 ```
 
 - Hạ tầng dev riêng (Postgres `127.0.0.1:55440`, Redis `127.0.0.1:56390`, tên `mp-dev-*`): xem `infra/docker/README.md`.
-  Bật: `docker compose -f infra/docker/compose.dev.yml up -d`. Test cần hạ tầng đặt `TEST_PG_HOST`, `TEST_PG_PORT`,
+  Bật: `docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d`. Test cần hạ tầng đặt `TEST_PG_HOST`, `TEST_PG_PORT`,
   `TEST_REDIS_HOST`, `TEST_REDIS_PORT`. **Không bao giờ** dùng, sửa hay xóa container/volume/cổng của project khác trên máy.
 - Mỗi service chạy pytest **riêng** (`cd services/<s> && python -m pytest -q`), không gộp một lần.
 - Mỗi thay đổi hành vi phải có test; mỗi quy tắc kiến trúc phải có "test của test" (ca giả lập vi phạm).
