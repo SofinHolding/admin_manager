@@ -100,3 +100,8 @@ Lỗi: nói điều gì xảy ra + cách sửa, không xin lỗi chung chung, kh
 ## 8. Việc nằm ngoài phạm vi v1
 
 Đa ngôn ngữ (chỉ tiếng Việt), chế độ độ tương phản cao riêng (đã đạt AA), thiết kế lại biểu đồ bằng thư viện khác (giữ `recharts`), trình soạn nội dung, bảng điều khiển tùy biến theo người dùng.
+
+## 9. Ngoại lệ do chủ dự án quyết định
+
+**Trang Thống kê / Tổng quan (`/dashboard`) giữ nguyên bố cục cũ** (bộ lọc ngày + 3 thẻ số liệu + biểu đồ) theo yêu cầu của chủ dự án; chỉ hưởng khung mới (thanh bên, chữ, màu).
+Phiên bản đã thiết kế lại (câu tóm tắt có số, lọc nhanh 7/30/90 ngày, bảng thay thế biểu đồ) nằm ở commit `f9f1c66` nếu cần khôi phục. Các trang còn lại theo thiết kế v1.

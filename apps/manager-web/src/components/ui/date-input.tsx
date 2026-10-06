@@ -5,11 +5,8 @@ import { Input } from "./input";
 import { cn } from "../../lib/utils";
 
 export function DateInput({
-  value, onChange, min, max, title, className, onEnter, disabled, id, "aria-label": ariaLabel, "aria-describedby": describedBy,
+  value, onChange, min, max, title, className, onEnter, disabled,
 }: {
-  id?: string;
-  "aria-label"?: string;
-  "aria-describedby"?: string;
   value: string;
   onChange: (iso: string) => void;
   min?: string;
@@ -58,9 +55,6 @@ export function DateInput({
   return (
     <div ref={boxRef} className={cn("relative", className || "w-36")}>
       <Input
-        id={id}
-        aria-label={ariaLabel}
-        aria-describedby={describedBy}
         value={text}
         title={title}
         disabled={disabled}
@@ -74,18 +68,16 @@ export function DateInput({
           commit();
           onEnter?.();
         }}
-        className="w-full pr-11 tabular-nums"
+        className="w-full pr-8 text-center font-mono"
       />
       <button
         type="button"
         title="Chọn ngày trên lịch"
-        aria-label="Chọn ngày trên lịch"
-        aria-expanded={open}
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className="absolute right-0.5 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-elev-2 hover:text-foreground disabled:opacity-45"
+        className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-elev-2 hover:text-foreground"
       >
-        <CalendarDays className="size-4" />
+        <CalendarDays className="size-3.5" />
       </button>
 
       {open && (
@@ -106,8 +98,8 @@ export function DateInput({
   );
 }
 
-const PANEL_W = 304;
-const PANEL_H = 400;
+const PANEL_W = 288;
+const PANEL_H = 340;
 
 const WEEKDAYS = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 const MONTHS = ["Tháng 1", "Tháng 2", "Tháng 3", "Tháng 4", "Tháng 5", "Tháng 6",
@@ -141,22 +133,20 @@ function Calendar({ anchor, panelRef, value, min, max, onPick }: {
     <div
       style={{ left, top }}
       ref={panelRef}
-      role="dialog"
-      aria-label="Chọn ngày"
-      className="fixed z-200 w-76 rounded-xl border border-border-strong bg-popover p-3 text-popover-foreground shadow-[var(--shadow-overlay)]"
+      className="fixed z-200 w-72 rounded-xl border border-hairline bg-popover p-3 text-popover-foreground shadow-2xl"
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={() => setPickMonth((v) => !v)}
           title="Chọn tháng"
-          className="min-h-10 rounded-lg px-3 text-base font-semibold transition-colors hover:bg-elev-2"
+          className="rounded-lg px-2 py-1 text-base font-semibold transition-colors hover:bg-elev-2"
         >
           {MONTHS[m]}
         </button>
         <div className="flex items-center gap-1">
           <NavBtn onClick={() => setY(y - 1)} title="Năm trước"><ChevronLeft className="size-4" /></NavBtn>
-          <span className="min-w-[4ch] text-center text-base font-semibold tabular-nums" aria-live="polite">{y}</span>
+          <span className="min-w-[3ch] text-center text-base font-semibold tabular-nums">{y}</span>
           <NavBtn onClick={() => setY(y + 1)} title="Năm sau"><ChevronRight className="size-4" /></NavBtn>
         </div>
       </div>
@@ -169,7 +159,7 @@ function Calendar({ anchor, panelRef, value, min, max, onPick }: {
               type="button"
               onClick={() => { setM(i); setPickMonth(false); }}
               className={cn(
-                "min-h-11 rounded-lg text-sm transition-colors hover:bg-elev-2",
+                "rounded-lg py-2 text-xs transition-colors hover:bg-elev-2",
                 i === m && "bg-primary text-primary-foreground font-semibold hover:bg-primary",
               )}
             >
@@ -179,7 +169,7 @@ function Calendar({ anchor, panelRef, value, min, max, onPick }: {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-7 text-center text-xs text-muted-foreground">
+          <div className="grid grid-cols-7 text-center text-[11px] text-muted-foreground">
             {WEEKDAYS.map((w) => <span key={w} className="py-1.5">{w}</span>)}
           </div>
 
@@ -194,15 +184,12 @@ function Calendar({ anchor, panelRef, value, min, max, onPick }: {
                   <button
                     type="button"
                     disabled={disabled}
-                    aria-pressed={selected}
-                    aria-current={iso === today ? "date" : undefined}
-                    aria-label={`${i + 1} ${MONTHS[m].toLowerCase()} ${y}`}
                     onClick={() => onPick(iso)}
                     className={cn(
-                      "flex size-10 items-center justify-center text-sm tabular-nums transition-colors",
+                      "flex size-8 items-center justify-center text-[13px] tabular-nums transition-colors",
                       selected ? "rounded-full bg-primary font-semibold text-primary-foreground" : "rounded-lg",
                       !selected && iso === today && "border border-foreground/70 font-semibold",
-                      disabled && "cursor-not-allowed text-muted-foreground/40 line-through",
+                      disabled && "cursor-not-allowed text-muted-foreground/25",
                       !disabled && !selected && "hover:bg-elev-2",
                     )}
                   >
@@ -217,7 +204,7 @@ function Calendar({ anchor, panelRef, value, min, max, onPick }: {
             type="button"
             disabled={outside(today)}
             onClick={() => onPick(today)}
-            className="mt-2 min-h-10 w-full rounded-lg text-sm text-muted-foreground transition-colors hover:bg-elev-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            className="mt-2 w-full rounded-lg py-1.5 text-xs text-muted-foreground transition-colors hover:bg-elev-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
           >
             Hôm nay
           </button>
@@ -236,8 +223,7 @@ function NavBtn({ onClick, title, children }: {
       type="button"
       onClick={onClick}
       title={title}
-      aria-label={title}
-      className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-elev-2 hover:text-foreground"
+      className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-elev-2 hover:text-foreground"
     >
       {children}
     </button>

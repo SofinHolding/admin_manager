@@ -1,43 +1,13 @@
-/**
- * Trạng thái dữ liệu Analytics: độ tươi (freshness), không khả dụng, và bộ lọc server THỰC SỰ áp dụng.
- * Nói bằng lời giản dị: chuyện gì xảy ra + cách làm tiếp (docs/architecture/ui-design-v1.md §6).
- */
+/** Trạng thái dữ liệu Analytics: độ tươi (freshness), không khả dụng, và bộ lọc server THỰC SỰ áp dụng. */
 
-import { Button } from "./ui/button";
+import { AlertTriangle, CloudOff, Info } from "lucide-react";
 import type { AppliedFilter, Freshness } from "../api";
 import { formatLag } from "../filters/freshness";
-import { Notice } from "./kit";
 
 function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("vi-VN");
-}
-
-/** "2026-09-07" -> "07/09/2026" */
-export function fmtDay(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
-}
-
-/** Số ngày của khoảng [from, to] (gồm cả hai đầu); 0 nếu ngày sai định dạng. */
-export function daysInclusive(from: string, to: string): number {
-  const a = Date.parse(`${from}T00:00:00Z`);
-  const b = Date.parse(`${to}T00:00:00Z`);
-  if (Number.isNaN(a) || Number.isNaN(b) || b < a) return 0;
-  return Math.round((b - a) / 86_400_000) + 1;
-}
-
-const todayIso = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-
-/** Khoảng ngày bằng lời: "30 ngày qua (từ 08/09/2026)" khi kết thúc hôm nay, ngược lại "từ A đến B". */
-export function rangeInWords(from: string, to: string): string {
-  const n = daysInclusive(from, to);
-  if (n > 0 && to === todayIso()) return `${n} ngày qua (từ ${fmtDay(from)})`;
-  return `từ ${fmtDay(from)} đến ${fmtDay(to)}`;
 }
 
 export function FreshnessBanner({ freshness }: { freshness: Freshness | null }) {
@@ -46,42 +16,53 @@ export function FreshnessBanner({ freshness }: { freshness: Freshness | null }) 
   if (freshness.stale) {
     const lag = formatLag(freshness.lag_seconds);
     return (
-      <div data-testid="stale-banner">
-        <Notice tone="warning" title="Dữ liệu cũ">
-          Lần cập nhật gần nhất {asOf ? `lúc ${asOf}` : "đã lâu"}{lag ? `, trễ ${lag}` : ""}.
-          {" "}Bạn đang xem số liệu gần nhất hệ thống có, nên có thể chưa khớp với nguồn dữ liệu. Số liệu sẽ tự mới lại khi nguồn đẩy dữ liệu lên.
-        </Notice>
+      <div role="status" data-testid="stale-banner"
+           className="flex items-start gap-2 rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-2.5 text-sm text-yellow-700">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+        <div>
+          <span className="font-medium">Dữ liệu cũ</span>
+          {asOf ? ` — cập nhật lần cuối ${asOf}` : ""}{lag ? ` (trễ ${lag})` : ""}.
+          {" "}Số liệu có thể chưa khớp Tool mới nhất.
+        </div>
       </div>
     );
   }
   if (!asOf) return null;
   return (
-    <p data-testid="freshness-line" className="text-sm text-muted-foreground">
-      Dữ liệu cập nhật lúc {asOf}{freshness.lag_seconds != null ? `, trễ ${formatLag(freshness.lag_seconds)}` : ""}
+    <p data-testid="freshness-line" className="px-1 text-[11px] text-muted-foreground">
+      Dữ liệu cập nhật lúc {asOf}{freshness.lag_seconds != null ? ` · trễ ${formatLag(freshness.lag_seconds)}` : ""}
     </p>
   );
 }
 
 export function AnalyticsUnavailableBanner({ hasData, onRetry }: { hasData: boolean; onRetry?: () => void }) {
   return (
-    <div data-testid="analytics-unavailable">
-      <Notice
-        tone="error"
-        title="Dịch vụ thống kê tạm thời không khả dụng"
-        action={onRetry && <Button type="button" size="sm" variant="outline" onClick={onRetry}>Thử lại</Button>}
-      >
-        {hasData
-          ? "Đang hiển thị dữ liệu tải thành công gần nhất, có thể đã cũ. Bạn không cần làm gì thêm; bấm Thử lại sau ít phút để lấy số liệu mới."
-          : "Chưa có dữ liệu để hiển thị. Hãy thử lại sau ít phút."}
-        {" "}Các trang khác (hồ sơ, quản trị, kết nối dữ liệu) vẫn dùng bình thường.
-      </Notice>
+    <div role="alert" data-testid="analytics-unavailable"
+         className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+      <CloudOff className="mt-0.5 size-4 shrink-0" />
+      <div className="flex-1">
+        <div className="font-medium">Dịch vụ thống kê tạm thời không khả dụng</div>
+        <div className="text-xs opacity-80">
+          {hasData
+            ? "Đang hiển thị dữ liệu tải thành công gần nhất — có thể đã cũ. "
+            : "Chưa có dữ liệu để hiển thị. "}
+          Các trang khác (hồ sơ, quản trị, tích hợp) vẫn dùng bình thường.
+        </div>
+      </div>
+      {onRetry && (
+        <button type="button" onClick={onRetry} className="shrink-0 rounded-md border border-destructive/40 px-2 py-1 text-xs hover:bg-destructive/10">
+          Thử lại
+        </button>
+      )}
     </div>
   );
 }
 
-const PLATFORM_NAMES: Record<string, string> = { youtube: "YouTube", facebook: "Facebook" };
+const LABELS: Record<string, string> = {
+  platform: "Nền tảng", country: "Quốc gia", project: "Chủ đề", group_id: "Nhóm", platform_tag: "Nhãn nền tảng",
+};
 
-/** "Đang xem: …" bằng lời, từ bộ lọc server ĐÃ áp dụng (sau khi ép quyền) — có thể khác bộ lọc người dùng yêu cầu. */
+/** Hiển thị bộ lọc server ĐÃ áp dụng (sau khi ép quyền) — có thể khác bộ lọc người dùng yêu cầu. */
 export function AppliedFilterBar({ applied, selfId, ownerName, groupName }: {
   applied: AppliedFilter | undefined;
   selfId?: string;
@@ -90,19 +71,22 @@ export function AppliedFilterBar({ applied, selfId, ownerName, groupName }: {
 }) {
   if (!applied) return null;
   const parts: string[] = [];
-  if (applied.date_from && applied.date_to) parts.push(rangeInWords(applied.date_from, applied.date_to));
+  if (applied.date_from && applied.date_to) parts.push(`${applied.date_from} → ${applied.date_to}`);
   if (applied.owner_account_id) {
-    parts.push(`nhân sự ${applied.owner_account_id === selfId ? "là tài khoản của bạn" : ownerName?.(applied.owner_account_id) ?? applied.owner_account_id}`);
+    parts.push(`Nhân sự: ${applied.owner_account_id === selfId ? "tài khoản của bạn" : ownerName?.(applied.owner_account_id) ?? applied.owner_account_id}`);
   }
-  if (applied.platform) parts.push(`nền tảng ${PLATFORM_NAMES[applied.platform] ?? applied.platform}`);
-  if (applied.country) parts.push(`quốc gia ${applied.country}`);
-  if (applied.project) parts.push(`chủ đề ${applied.project}`);
-  if (applied.platform_tag) parts.push(`nhãn ${applied.platform_tag}`);
-  if (applied.group_id) parts.push(`nhóm kênh ${groupName?.(applied.group_id) ?? applied.group_id}`);
+  for (const k of ["platform", "country", "project", "platform_tag"] as const) {
+    if (applied[k]) parts.push(`${LABELS[k]}: ${applied[k]}`);
+  }
+  if (applied.group_id) parts.push(`Nhóm: ${groupName?.(applied.group_id) ?? applied.group_id}`);
   if (!parts.length) return null;
   return (
-    <p data-testid="applied-filter" className="text-sm text-muted-foreground">
-      <span className="font-semibold text-foreground">Đang xem:</span> {parts.join(", ")}.
+    <p data-testid="applied-filter" className="flex flex-wrap items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
+      <Info className="size-3 shrink-0" />
+      <span>Bộ lọc áp dụng:</span>
+      {parts.map((t) => (
+        <span key={t} className="rounded border border-hairline bg-elev-1 px-1.5 py-0.5">{t}</span>
+      ))}
     </p>
   );
 }
