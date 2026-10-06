@@ -25,6 +25,7 @@ Mọi nội dung phản ánh trạng thái repo tại **2026-10-06**, nhánh `re
 | Kiến trúc đích, quyết định D1–D14, bounded context, ma trận sở hữu | [`architecture/architecture-assessment-v2.md`](../architecture/architecture-assessment-v2.md) |
 | Quyết định phát sinh khi hiện thực (ADR-001…011) | [`architecture/implementation-decisions.md`](../architecture/implementation-decisions.md) |
 | Quy ước chassis service | [`architecture/service-conventions-v1.md`](../architecture/service-conventions-v1.md) |
+| Chuẩn tổ chức thư mục + kế hoạch di chuyển (chờ duyệt) | [`architecture/repo-layout-v1.md`](../architecture/repo-layout-v1.md) |
 | Sơ đồ tương tác (HTML) | [`architecture/manager-platform-architecture.html`](../architecture/manager-platform-architecture.html), `cache-aside-*-sequence.html`, `rp-login-revocation-sequence.html` |
 | Xác thực giữa service | [`api/service-auth-contract-v1.md`](../api/service-auth-contract-v1.md) |
 | Feed nội bộ + canonical export | [`api/internal-feed-contract-v1.md`](../api/internal-feed-contract-v1.md) |
