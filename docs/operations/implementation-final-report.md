@@ -15,7 +15,7 @@ Cổng chất lượng: `python infra/scripts/test_all.py` — lần chạy đ�
 | 2 | integration-service: clients/credentials/handshake/snapshot ingest atomic/idempotency/feed/provisioning | Xong |
 | 2b | jobs/lease (Fallback Tool) + legacy ACL (26 operation `/v1/resources`, `/v1/ops`, `/v1/viewer/links`) | Xong (trừ canonicalizer `documents→snapshot`) |
 | 3 | analytics-service: read model, consumer theo revision, FilterContext, cache-aside Redis, reconcile | Xong |
-| 4 | reward-service bỏ bảng `accounts`/JWT secret chung; RS256 qua SDK; quyền qua Identity; feed consumer + denylist | Xong (`reward-service/` giữ vị trí) |
+| 4 | reward-service bỏ bảng `accounts`/JWT secret chung; RS256 qua SDK; quyền qua Identity; feed consumer + denylist | Xong (đã chuyển vào `services/reward-service/`, skeleton chuẩn) |
 | 5 | Push Redis Streams tùy chọn | **Chưa** (đường mặc định — feed kéo + outbox — đã xong và đủ) |
 | 6 | Retire legacy, bật lại CI/CD, chuyển `local-ops-hub` | **Chưa** — `PENDING_PRODUCTION_APPROVAL` |
 | 7 | admin-web dùng `/v1/*` qua gateway, FilterContext, OIDC tùy chọn, hardening | Xong |
@@ -106,4 +106,4 @@ Toàn bộ trong `production-cutover-runbook.md`: tạo DB/role/Redis ACL thật
 build/deploy web; chuyển `local-ops-hub`; bật lại CI/CD (trigger `push`); gỡ legacy; xoay secret. Không bước nào đã được thực hiện.
 
 ## 10. Rollback / runbook
-`docs/operations/production-cutover-runbook.md` (từng bước có quay lui), `docs/operations/identity-migration-runbook.md`, `reward-service/DEPLOY.md`, `infra/docker/README.md` (hạ tầng DEV), `docs/architecture/implementation-decisions.md` (ADR).
+`docs/operations/production-cutover-runbook.md` (từng bước có quay lui), `docs/operations/identity-migration-runbook.md`, `services/reward-service/DEPLOY.md`, `infra/docker/README.md` (hạ tầng DEV), `docs/architecture/implementation-decisions.md` (ADR).

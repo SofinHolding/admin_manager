@@ -1,4 +1,4 @@
-"""JWT HS256 tương thích với admin-server/reward-service cũ (chung `JWT_SECRET`).
+"""JWT HS256 tương thích với legacy/admin-server/reward-service cũ (chung `JWT_SECRET`).
 
 TẠM THỜI trong giai đoạn Strangler. Phase 1.4 thay bằng RS256 + JWKS (module `tokens`); cửa sổ chấp nhận cả hai
 tối đa bằng TTL của access token (15 phút), sau đó xóa file này.

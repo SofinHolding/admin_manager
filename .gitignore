@@ -15,7 +15,7 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# ── Node / Vite (admin-web) ──
+# ── Node / Vite (apps/manager-web, apps/local-fallback-tool) ──
 node_modules/
 dist/
 .vite/

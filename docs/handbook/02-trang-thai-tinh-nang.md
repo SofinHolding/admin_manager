@@ -14,7 +14,7 @@ Số liệu test tại thời điểm viết: arch 117 · contract 38 · identit
 | 1.1–1.2 | identity: chassis, port auth/accounts/keys, parity legacy, `legacy_sync` (shadow one-way) | ✅ | 7 kịch bản parity với `admin-server` |
 | 1.3 | Cutover single-writer Identity (legacy → identity_db) | 🔒 | Quy trình ở `operations/identity-migration-runbook.md`; chưa chạy trên dữ liệu thật |
 | 1.4 | RS256/JWKS, phiên `sid` thu hồi được, permission, transactional outbox + feed | ✅ | |
-| 1.5 | Reward bỏ bảng `accounts`/JWT secret chung | ✅ (làm ở Phase 4) | `git mv reward-service → services/` **chưa làm** 🔒 |
+| 1.5 | Reward bỏ bảng `accounts`/JWT secret chung | ✅ (làm ở Phase 4) | Đã chuyển vào `services/reward-service` với skeleton chuẩn (`src/reward_service/…`) |
 | 1.6 | OIDC (authorize + PKCE, token, userinfo, introspect, revoke, logout, back-channel) | ✅ | Chưa có Relying Party thật nào dùng (ngoài test) |
 | 1.7 | Đăng ký kèm integration + provisioning client tự động | ✅ | |
 | 2 | integration-service core | ✅ | |
@@ -90,10 +90,10 @@ Số liệu test tại thời điểm viết: arch 117 · contract 38 · identit
 | Verify RS256 qua `manager_sdk` (JWKS offline); `reward:access`/`reward:admin` | ✅ | |
 | Quyền do Identity quản lý (`grant-discord`/`revoke-discord` gọi Identity bằng Bearer của người gọi) | ✅ | Revoke role `discord` (shim) → 409 cho tới khi cấp `reward:access` tường minh |
 | Consumer feed Identity → `account_projection`, `account_denylist`; thu quyền/khóa/xóa/`session.revoked` dừng job | ✅ | `session.revoked` dừng **mọi** job của tài khoản (thận trọng) |
-| `git mv` sang `services/` | 🔒 | |
+| Chuyển vào `services/` + skeleton chuẩn (`src/reward_service`, `migrations/`, Dockerfile) | ✅ | Image build được, health xanh trong `infra/compose/stack.yml` |
 | `deploy-reward.yml` theo mô hình mới | ⛔🔒 | Hiện theo mô hình cũ (Postgres chung, `JWT_SECRET`) |
 
-### manager-web (`admin-web/`)
+### manager-web (`apps/manager-web/`)
 | Tính năng | | Ghi chú |
 |---|:-:|---|
 | Chuyển sang `/v1/*` qua gateway; lõi HTTP (refresh 401 gộp một lần, timeout, abort) | ✅ | |
@@ -114,7 +114,7 @@ Số liệu test tại thời điểm viết: arch 117 · contract 38 · identit
 | Test E2E tiến trình thật + cô lập lỗi + Mock Tool X | ✅ | `tests/e2e` |
 | Cổng chất lượng `test_all.py` (bootstrap hạ tầng, migrate, mọi bộ, frontend) | ✅ | |
 | CI GitHub | 🟡 | `ci-tests.yml` chỉ `workflow_dispatch`, **chưa cập nhật** cho bộ test mới (không dựng Postgres ⇒ test DB sẽ SKIP). Deploy workflows chỉ `workflow_dispatch` (khóa bằng `tests/arch/test_ci_guard.py`) |
-| Build Docker image các service | ⛔ | Dockerfile có (non-root, kèm migrations + SDK) nhưng **chưa từng build** |
+| Build Docker image các service + chạy stack bằng container | ✅ | `infra/compose/stack.yml`: 5 image build được, `/health/ready` 200, gateway chuyển được JWKS. Chưa chạy E2E bằng container |
 | Production / VPS | 🔒 | Không có gì được triển khai |
 
 ## 2.3 Khác biệt có chủ đích so với legacy (đừng "sửa" lại)

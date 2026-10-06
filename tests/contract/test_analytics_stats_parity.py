@@ -28,7 +28,7 @@ import pytest_asyncio
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVICE = ROOT / "services" / "analytics-service"
-for p in (ROOT / "admin-server", SERVICE / "src", SERVICE / "tests", ROOT / "packages" / "observability" / "src",
+for p in (ROOT / "legacy" / "admin-server", SERVICE / "src", SERVICE / "tests", ROOT / "packages" / "observability" / "src",
           ROOT / "packages" / "contracts" / "python", ROOT / "packages" / "sdk-python", ROOT / "infra" / "scripts"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
@@ -43,7 +43,7 @@ import stats_core as legacy_stats  # noqa: E402,F401  (xác nhận import đư�
 from analytics_harness import FakeClock, build_world, dsn, reset_database  # noqa: E402
 from analytics_testsupport import (OWN_A, FakeIdentityFeed, FakeIntegration, Issuer, daily, event, post, res,  # noqa: E402
                                    project)
-from db import LocalFileDb  # noqa: E402  (legacy admin-server/db.py)
+from db import LocalFileDb  # noqa: E402  (legacy legacy/admin-server/db.py)
 
 from analytics_service import migrate  # noqa: E402
 from analytics_service.db import Database  # noqa: E402

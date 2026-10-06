@@ -1,7 +1,6 @@
 # Repo Layout v1 — chuẩn tổ chức thư mục (ĐỀ XUẤT, chờ duyệt phần di chuyển)
 
-Trạng thái: **đã rà soát và thiết kế; CHƯA di chuyển thư mục nào.** Lý do: việc di chuyển động tới thư mục legacy đang chạy production và các workflow deploy; cần người dùng duyệt rõ ràng (xem §7).
-Phần không cần di chuyển (test chuẩn skeleton service, tài liệu này) đã có hiệu lực ngay.
+Trạng thái: **ĐÃ ÁP DỤNG** (chủ dự án duyệt di chuyển; ADR-012). Các mục §1 mô tả hiện trạng TRƯỚC khi áp dụng; §5-§6 ghi lại những gì đã làm; chuẩn hiện hành nằm ở §2-§4 và được `tests/arch/test_repo_layout.py` giữ.
 
 ## 1. Rà soát hiện trạng — vấn đề
 

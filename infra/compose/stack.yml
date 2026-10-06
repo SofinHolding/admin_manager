@@ -1,0 +1,117 @@
+# Toàn bộ nền tảng bằng container (DEV/thử nghiệm): build mỗi service từ Dockerfile của nó (build context = GỐC repo).
+# Cần hạ tầng dữ liệu DEV chạy trước (Postgres + Redis riêng, network `mp_dev_net`):
+#   python infra/scripts/bootstrap_dev.py
+#   docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d
+#   docker compose --env-file .env.dev -f infra/compose/stack.yml up -d --build
+# Mỗi service độc lập: build/restart riêng được (`docker compose ... up -d --build identity`). Migration là job riêng chạy một lần.
+# Chỉ bind 127.0.0.1. KHÔNG dùng cho production (production: PENDING_PRODUCTION_APPROVAL, xem infra/deploy/README.md).
+name: manager-platform-stack
+
+x-svc: &svc
+  restart: unless-stopped
+  networks: [mp_dev_net]
+
+services:
+  identity-migrate:
+    build: {context: ../.., dockerfile: services/identity-service/Dockerfile}
+    image: mp-identity-service:dev
+    command: ["python", "-m", "identity_service.migrate"]
+    restart: "no"
+    networks: [mp_dev_net]
+    environment: &identity_env
+      IDENTITY_ENV: dev
+      IDENTITY_DATABASE_URL: postgresql://identity_svc:${DEV_PG_IDENTITY_PASSWORD:?}@mp-dev-postgres:5432/identity_db
+      IDENTITY_ISSUER: http://identity:8430
+      IDENTITY_KEY_ENCRYPTION_KEY: ${IDENTITY_KEY_ENCRYPTION_KEY:?}
+      IDENTITY_FEED_KEY_ANALYTICS: ${IDENTITY_FEED_KEY_ANALYTICS:?}
+      IDENTITY_FEED_KEY_INTEGRATION: ${IDENTITY_FEED_KEY_INTEGRATION:?}
+      IDENTITY_FEED_KEY_REWARD: ${IDENTITY_FEED_KEY_REWARD:?}
+      IDENTITY_INTEGRATION_FEED_URL: http://integration:8431
+      IDENTITY_INTEGRATION_FEED_KEY: ${INTEGRATION_FEED_KEY_IDENTITY:?}
+
+  identity:
+    <<: *svc
+    image: mp-identity-service:dev
+    ports: ["127.0.0.1:8430:8430"]
+    environment: *identity_env
+    depends_on: {identity-migrate: {condition: service_completed_successfully}}
+
+  integration-migrate:
+    build: {context: ../.., dockerfile: services/integration-service/Dockerfile}
+    image: mp-integration-service:dev
+    command: ["python", "-m", "integration_service.migrate"]
+    restart: "no"
+    networks: [mp_dev_net]
+    environment: &integration_env
+      INTEGRATION_ENV: dev
+      INTEGRATION_DATABASE_URL: postgresql://integration_svc:${DEV_PG_INTEGRATION_PASSWORD:?}@mp-dev-postgres:5432/integration_db
+      INTEGRATION_ISSUER: http://identity:8430
+      INTEGRATION_IDENTITY_JWKS_URL: http://identity:8430/.well-known/jwks.json
+      INTEGRATION_FEED_KEY_ANALYTICS: ${INTEGRATION_FEED_KEY_ANALYTICS:?}
+      INTEGRATION_FEED_KEY_IDENTITY: ${INTEGRATION_FEED_KEY_IDENTITY:?}
+      INTEGRATION_IDENTITY_FEED_URL: http://identity:8430
+      INTEGRATION_IDENTITY_FEED_KEY: ${IDENTITY_FEED_KEY_INTEGRATION:?}
+
+  integration:
+    <<: *svc
+    image: mp-integration-service:dev
+    ports: ["127.0.0.1:8431:8431"]
+    environment: *integration_env
+    depends_on: {integration-migrate: {condition: service_completed_successfully}}
+
+  analytics-migrate:
+    build: {context: ../.., dockerfile: services/analytics-service/Dockerfile}
+    image: mp-analytics-service:dev
+    command: ["python", "-m", "analytics_service.migrate"]
+    restart: "no"
+    networks: [mp_dev_net]
+    environment: &analytics_env
+      ANALYTICS_ENV: dev
+      ANALYTICS_DATABASE_URL: postgresql://analytics_svc:${DEV_PG_ANALYTICS_PASSWORD:?}@mp-dev-postgres:5432/analytics_db
+      ANALYTICS_REDIS_URL: redis://analytics_cache:${DEV_REDIS_ANALYTICS_PASSWORD:?}@mp-dev-redis:6379/0
+      ANALYTICS_ISSUER: http://identity:8430
+      ANALYTICS_IDENTITY_JWKS_URL: http://identity:8430/.well-known/jwks.json
+      ANALYTICS_INTEGRATION_URL: http://integration:8431
+      ANALYTICS_INTEGRATION_FEED_KEY: ${INTEGRATION_FEED_KEY_ANALYTICS:?}
+      ANALYTICS_IDENTITY_URL: http://identity:8430
+      ANALYTICS_IDENTITY_FEED_KEY: ${IDENTITY_FEED_KEY_ANALYTICS:?}
+
+  analytics:
+    <<: *svc
+    image: mp-analytics-service:dev
+    ports: ["127.0.0.1:8432:8432"]
+    environment: *analytics_env
+    depends_on: {analytics-migrate: {condition: service_completed_successfully}}
+
+  reward:
+    <<: *svc
+    build: {context: ../.., dockerfile: services/reward-service/Dockerfile}
+    image: mp-reward-service:dev
+    ports: ["127.0.0.1:8422:8422"]
+    environment:
+      REWARD_DATABASE_URL: postgresql://reward_svc:${DEV_PG_REWARD_PASSWORD:?}@mp-dev-postgres:5432/reward_db
+      REWARD_DB_MIGRATE_ON_BOOT: "1"
+      REWARD_IDENTITY_URL: http://identity:8430
+      REWARD_IDENTITY_JWKS_URL: http://identity:8430/.well-known/jwks.json
+      REWARD_ISSUER: http://identity:8430
+      REWARD_IDENTITY_FEED_URL: http://identity:8430
+      REWARD_IDENTITY_FEED_KEY: ${IDENTITY_FEED_KEY_REWARD:?}
+      REWARD_TOKEN_KEY: ${REWARD_TOKEN_KEY:?}
+
+  gateway:
+    <<: *svc
+    build: {context: ../.., dockerfile: services/api-gateway/Dockerfile}
+    image: mp-api-gateway:dev
+    ports: ["127.0.0.1:8400:8400"]
+    environment:
+      GATEWAY_ENV: dev
+      GATEWAY_UPSTREAM_IDENTITY: http://identity:8430
+      GATEWAY_UPSTREAM_INTEGRATION: http://integration:8431
+      GATEWAY_UPSTREAM_ANALYTICS: http://analytics:8432
+      GATEWAY_UPSTREAM_REWARD: http://reward:8422
+    depends_on: [identity, integration, analytics, reward]
+
+networks:
+  mp_dev_net:
+    external: true
+    name: mp_dev_net

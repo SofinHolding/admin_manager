@@ -317,13 +317,12 @@
       }
     },
     "reward-service": {
-      "status": "legacy-in-place",
-      "path": "reward-service",
-      "target_path": "services/reward-service",
+      "status": "active",
+      "path": "services/reward-service",
       "package": "reward_service",
       "port": 8422,
       "database": "reward_db",
-      "responsibility": "Phân phối điểm thưởng qua Discord. Giữ nguyên tại chỗ; git mv sang services/ ở Phase 1.5. Phase 4: DB riêng reward_db, verify RS256/JWKS offline, quyền do Identity quản lý.",
+      "responsibility": "Phân phối điểm thưởng qua Discord. Nằm ở services/reward-service (skeleton chuẩn). DB riêng reward_db, verify RS256/JWKS offline, quyền do Identity quản lý.",
       "public_prefixes": [
         "/v1/rewards",
         "/v1/reward"

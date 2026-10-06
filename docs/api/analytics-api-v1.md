@@ -46,7 +46,7 @@ Dashboard luôn hiển thị được dữ liệu cũ kèm `stale`, **không** t
 | `POST /v1/analytics/admin/rebuild` | — | admin: đặt revision về 0 và dựng lại read model |
 | `POST /v1/analytics/admin/reconcile` | — | admin: so read model với `canonical/summary`, trả chênh lệch |
 
-Quy tắc nghiệp vụ giữ nguyên `admin-server/stats_core.py`: lượt xem FB của một ngày = tổng `views` các bài có **ngày đăng** đó (số cộng dồn hiện tại);
+Quy tắc nghiệp vụ giữ nguyên `legacy/admin-server/stats_core.py`: lượt xem FB của một ngày = tổng `views` các bài có **ngày đăng** đó (số cộng dồn hiện tại);
 YouTube = `metrics.views` theo ngày; `videos_posted` = số event `kind=post_ok` theo `occurred_date`; `None≠0`; kênh quản lý/hoạt động theo `managed/active` của resource
 (FB đếm theo cặp (resource, project)); quốc gia: `country_override` của nhóm > quốc gia resource > quốc gia của project; "Khác" khi trống.
 

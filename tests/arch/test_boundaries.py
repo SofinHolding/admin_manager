@@ -59,7 +59,7 @@ def test_checker_ignores_relative_imports():
 def test_forbidden_legacy_list_covers_every_legacy_module():
     """Danh sách cấm phải đủ mọi module cấp cao của admin-server hiện có (không bỏ sót khi legacy đổi)."""
     tooling = {"create_admin", "import_local_data", "seed_qa_demo"}
-    legacy = {p.stem for p in (ROOT / "admin-server").glob("*.py")} - tooling
+    legacy = {p.stem for p in (ROOT / "legacy" / "admin-server").glob("*.py")} - tooling
     missing = legacy - set(REGISTRY["forbidden_legacy_modules"])
     assert not missing, f"thêm vào forbidden_legacy_modules: {sorted(missing)}"
 

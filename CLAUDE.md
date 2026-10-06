@@ -19,15 +19,15 @@ Làm việc trên nhánh `refactor/microservices`. Tag `legacy-baseline` = code 
 | 1.4–1.7 | RS256/JWKS, permission, outbox, OIDC/PKCE, đăng ký kèm integration | **Xong ở repo** |
 | 2 | integration-service: clients/credentials/ingest/feed/provisioning/jobs/legacy ACL | **Xong ở repo** (canonicalizer `documents→snapshot` chưa, chờ duyệt) |
 | 3 | analytics-service: read model, consumer feed, FilterContext, cache | **Xong ở repo** |
-| 4 | reward-service tách khỏi bảng `accounts`/JWT secret chung | **Xong ở repo** (`reward-service/` giữ nguyên vị trí) |
+| 4 | reward-service tách khỏi bảng `accounts`/JWT secret chung | **Xong ở repo** (đã chuyển vào `services/reward-service/`, skeleton chuẩn) |
 | 5 | Push (Redis Streams) tùy chọn + DLQ vận hành | Chưa (đường mặc định là feed kéo, đã xong) |
 | 6 | Retire legacy, bật lại CI/CD | Chưa, **cần duyệt**. `docs/operations/production-cutover-runbook.md` |
 | 7 | admin-web dùng `/v1/*` qua gateway, FilterContext, OIDC tùy chọn | **Xong ở repo** |
 
 Báo cáo đầy đủ: `docs/operations/implementation-final-report.md`. Quyết định thực thi: `docs/architecture/implementation-decisions.md`.
 
-Legacy còn chạy: `admin-server/`, `reward-service/`, `admin-web/`, `local-ops-hub/`. **Không sửa legacy** trừ lỗi nghiêm
-trọng; tính năng mới làm ở service đích. `reward-service/` vẫn nằm ngoài `services/` (ADR: không `git mv` cho tới khi người dùng duyệt).
+Hệ cũ còn chạy production: `legacy/admin-server/` (đóng băng), `apps/manager-web/` (frontend, đã dùng `/v1/*`), `apps/local-fallback-tool/` (Tool B legacy), `services/reward-service/` (đã tách DB).
+**Không sửa `legacy/`** trừ lỗi nghiêm trọng; tính năng mới làm ở service đích. Cấu trúc thư mục: `docs/architecture/repo-layout-v1.md` (đã áp dụng).
 
 ## 2. Luật không được phá
 
@@ -50,18 +50,25 @@ trọng; tính năng mới làm ở service đích. `reward-service/` vẫn nằ
 ## 3. Cấu trúc
 
 ```text
-infra/service-registry.json   NGUỒN SỰ THẬT: service, module, bảng sở hữu, event, cổng, DB
-infra/gateway/route-map.json  Ánh xạ route legacy → service đích
-infra/docker/                 compose.dev.yml, initdb (DB + user riêng), redis ACL
-infra/scripts/                scaffold_service.py, test_all.py
-services/<name>-service/      src/<package>/<module>/, migrations/, tests/, Dockerfile, .env.example
-packages/contracts/           schema hợp đồng (ingest/<ngày>/) + python/manager_contracts
-packages/observability/       log JSON, request-id, health, app factory
-packages/sdk-typescript|sdk-python/   SDK sinh từ OpenAPI (chưa có)
-apps/                         manager-web, local-fallback-tool (chuyển vào ở phase tương ứng)
-tests/{arch,contract,integration,e2e}/
-docs/architecture, docs/api (docs/api/legacy = baseline OpenAPI cũ)
+apps/                         ỨNG DỤNG người dùng/biên: manager-web (React), local-fallback-tool (Tool B)
+services/<name>-service/      BACKEND, một skeleton chung: src/<package>/<module>/, migrations/ (nếu có DB), tests/, Dockerfile, .env.example, README.md, pytest.ini, requirements.txt
+  api-gateway  identity-service  integration-service  analytics-service  reward-service
+legacy/                       HỆ CŨ ĐÓNG BĂNG (admin-server) — chỉ sửa lỗi nghiêm trọng
+packages/                     mã dùng chung CHỈ generic: contracts (schema + manager_contracts), observability, sdk-python (sdk-typescript: chưa có)
+infra/
+  infra/service-registry.json NGUỒN SỰ THẬT: service, module, bảng sở hữu, event, cổng, DB
+  gateway/                    infra/gateway/route-map.json (route legacy → service), render_nginx.py, nginx.conf
+  docker/                     hạ tầng dữ liệu DEV (compose.dev.yml, templates/ initdb + redis ACL)
+  compose/                    stack toàn nền tảng (build mọi service từ Dockerfile)
+  deploy/                     manifest/script triển khai theo môi trường (legacy/setup-vps.sh). Production: PENDING_PRODUCTION_APPROVAL
+  scripts/                    bootstrap_dev, devenv, dev_stack, infra/scripts/scaffold_service.py, infra/scripts/test_all.py
+tests/{arch,contract,integration,e2e}/   test xuyên service (test của một service nằm trong service đó)
+docs/{architecture,api,operations,handbook}/   docs/api/legacy = baseline OpenAPI cũ
+tasks/  .omp/                 prompt/backlog của chủ dự án; ngữ cảnh công cụ agent về hệ legacy — giữ nguyên
 ```
+
+**Quy tắc đặt chỗ:** backend có API/DB/event riêng → `services/`; giao diện/Tool chạy ở máy người dùng/website khác → `apps/`; mã tái sử dụng generic → `packages/`;
+hạ tầng/deploy/cấu hình môi trường → `infra/`; hệ cũ chưa gỡ → `legacy/`. Mỗi service/app **độc lập** (build, test, deploy riêng): thêm cái mới chỉ **thêm** thư mục + một mục registry, không sửa thư mục khác. Test `tests/arch/test_repo_layout.py` giữ chuẩn này.
 
 Mỗi service: module theo **chức năng** (xem `modules` trong registry). Mỗi module có docstring đầu `__init__.py` khai
 `module / service / phase / status / responsibility`. Mỗi service có chassis chuẩn: `/health/live|ready|version`,
@@ -72,7 +79,8 @@ Mỗi service: module theo **chức năng** (xem `modules` trong registry). Mỗ
 | Việc | Các bước |
 |---|---|
 | Thêm module | Sửa `modules` trong registry → `python infra/scripts/scaffold_service.py` → viết code + test trong module |
-| Thêm service | Thêm vào registry (`status: scaffold`, cổng/DB/package mới) → scaffold → thêm DB + user vào `initdb` → cập nhật `route-map.json` nếu có route legacy |
+| Thêm service | Thêm vào registry (`status: scaffold`, `path: services/<tên>`, cổng/DB/package mới) → scaffold (tạo đúng skeleton) → thêm DB + user vào `initdb` → cập nhật `route-map.json` nếu có route legacy → `render_nginx.py` |
+| Thêm app (frontend/Tool) | `apps/<tên>/` có README.md, package.json, `.env.example`, script `typecheck`/`test`/`build`; gọi hệ thống qua gateway/SDK; thêm bước vào `test_all.py` |
 | Thêm bảng | Thêm vào `owned_tables` của đúng service → migration `NNNN_ten.sql` (forward-only) trong `services/<s>/migrations/` |
 | Thêm event | Khai ở `emits` của service phát và `consumes` của service nhận; event có `id`, `type`, `data_version`; consumer idempotent theo `id` |
 | Thêm endpoint | Request/response schema, `error.code` ổn định, scope/role, idempotency (mutation), ví dụ, OpenAPI; test contract |
@@ -96,7 +104,7 @@ Mỗi service: module theo **chức năng** (xem `modules` trong registry). Mỗ
 pip install -r tests/arch/requirements.txt
 python infra/scripts/test_all.py            # tất cả (arch, contract, packages, từng service, integration)
 python infra/scripts/test_all.py --fast     # bỏ test tiến trình thật (~25s)
-python infra/scripts/test_all.py --legacy   # thêm test admin-server cũ
+python infra/scripts/test_all.py --legacy   # thêm test legacy/admin-server
 python infra/scripts/dev_stack.py up        # dựng cả stack bằng tiến trình thật (E2E: tests/e2e dùng DevStack)
 ```
 

@@ -31,7 +31,7 @@ chỉ chạm `analytics:*`, `-@dangerous`.
 **ADR-005 · Access token RS256 + JWKS, khoá private mã hoá Fernet trong DB.**
 Khoá giải mã (`IDENTITY_KEY_ENCRYPTION_KEY`) nằm ngoài DB (env). Dump DB không đủ để ký token. Đúng một khoá `active` (chỉ mục duy nhất một phần),
 khoá `retired` vẫn publish trong thời gian ân hạn. Xoay bằng `python -m identity_service.keys rotate`.
-Chế độ HS256 chỉ tồn tại để cùng sống với admin-server/reward legacy (`IDENTITY_ACCESS_TOKEN_ALG=HS256`); mặc định RS256 và KHÔNG có secret chung.
+Chế độ HS256 chỉ tồn tại để cùng sống với legacy/admin-server/reward legacy (`IDENTITY_ACCESS_TOKEN_ALG=HS256`); mặc định RS256 và KHÔNG có secret chung.
 
 **ADR-006 · Phiên (`sid`) và thu hồi.**
 Mỗi lần đăng nhập tạo `sessions`; access token mang `sid`. Đăng xuất / khoá tài khoản / đổi mật khẩu / đổi role thu hồi phiên NGAY tại Identity
@@ -62,3 +62,11 @@ Event `snapshot.committed` chỉ là tín hiệu; dữ liệu lấy từ `GET /i
 Kết quả lần chạy đầu: `pyjwt 2.14.0` (PYSEC-2026-4141, sửa ở 2.15.0) — lỗi nằm ở `PyJWKClient.get_signing_key_from_jwt`, **không dùng** trong dự án
 (verify bằng JWKS tự cài của `manager_sdk`); vẫn nâng ràng buộc lên `>=2.15.0`. `pytest 8.4.2` (PYSEC-2026-1845): chỉ ảnh hưởng thư mục `/tmp` trên UNIX, là dependency
 chỉ dùng cho test, máy dev là Windows ⇒ ghi ngoại lệ có thời hạn, không nâng major hàng loạt.
+
+## Cấu trúc thư mục
+
+**ADR-012 · Repo Layout v1 (`docs/architecture/repo-layout-v1.md`).**
+Chủ dự án yêu cầu dựng lại cấu trúc cho rõ ràng, không cần giữ nguyên cũ. Quyết định: `apps/` (manager-web, local-fallback-tool), `services/` (5 backend cùng skeleton, gồm reward-service), `legacy/` (admin-server đóng băng),
+`packages/`, `infra/{gateway,docker,compose,deploy,scripts}`, `tests/`, `docs/`; `tasks/` và `.omp/` giữ nguyên (bị tham chiếu bằng đường dẫn). Di chuyển bằng lệnh hệ điều hành (mang theo file ignore như `node_modules`, `admin-auth.db`); đổi tên thư mục
+nhưng **không** đổi tên package npm/Python hay khóa registry, và **không** sửa migration đã áp dụng (checksum). reward-service được chuẩn hóa thành `src/reward_service/` + `migrations/` ở gốc service (180 test là lưới an toàn).
+Workflow deploy (chỉ `workflow_dispatch`) được sửa đường dẫn trong repo; đường dẫn trên VPS (`/srv/admin`, `/srv/reward`) không đổi. Hệ quả: mọi tham chiếu đường dẫn bị cứng đã được cập nhật; `tests/arch/test_repo_layout.py` giữ chuẩn (gốc repo, skeleton service/app, legacy đóng băng, registry, compose).

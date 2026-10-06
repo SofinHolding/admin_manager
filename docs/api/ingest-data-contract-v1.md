@@ -11,7 +11,7 @@ hiển thị **đúng dữ liệu thực tế và mới nhất**.
 
 ## 1. Dữ liệu Dashboard thực sự cần (kiểm kê từ code hiện tại)
 
-Nguồn: `admin-server/stats_core.py` (docstring "Hình dạng input chuẩn hoá"), `admin-server/db.py:1722-1850`,
+Nguồn: `legacy/admin-server/stats_core.py` (docstring "Hình dạng input chuẩn hoá"), `legacy/admin-server/db.py:1722-1850`,
 `seed_qa_demo.py`. Chỉ **7 store** nuôi toàn bộ Dashboard. Mọi store khác của Tool không được Manager dùng.
 
 | Dashboard hiển thị | Dữ liệu đầu vào | Store hiện tại | Trường được đọc |

@@ -55,7 +55,7 @@ Sau bước 3, **không chạy `legacy_sync` nữa** (công cụ tự từ chố
 
 ## 3. Token trong giai đoạn chuyển tiếp
 
-identity-service hiện cấp JWT HS256 dùng **cùng secret** với admin-server/reward-service (đúng cửa sổ chuyển tiếp).
+identity-service hiện cấp JWT HS256 dùng **cùng secret** với legacy/admin-server/reward-service (đúng cửa sổ chuyển tiếp).
 Token hai bên dùng chéo được (test `test_tokens_issued_by_each_side_are_accepted_by_the_other`). Phase 1.4 thay bằng
 RS256 + JWKS, chấp nhận cả hai trong tối đa 15 phút (TTL access token), sau đó bỏ secret chung.
 

@@ -203,7 +203,7 @@ Không đổi payload cũ âm thầm.
 | `/v1/ops/batches*`, `/v1/ops/items*` | integration `/v1/integrations/jobs*` (phía admin) | |
 | `/v1/reward/*` | reward `/v1/rewards/*` | alias legacy giữ |
 
-**Cần xác minh ở Phase 0:** `scripts/setup-vps.sh` chỉ có 4 location (`/admin/`, `/v1/auth/`, `/v1/viewer/`,
+**Cần xác minh ở Phase 0:** `infra/deploy/legacy/setup-vps.sh` chỉ có 4 location (`/admin/`, `/v1/auth/`, `/v1/viewer/`,
 `/v1/admin-api/`), trong khi FE gọi `/v1/admin/...`, `/v1/ops`, `/v1/reward`. Có thể cấu hình thật khác repo.
 Phải lấy nginx thật từ VPS (chỉ đọc) trước khi dựng gateway.
 
@@ -311,7 +311,7 @@ xóa tài khoản phát `account.deleted` và back-channel logout đến mọi R
 
 ### 2.10 F13 — Redis Cache-Aside + Invalidation
 
-Hiện `admin-server/cache.py` đã làm Cache-Aside cho 5 endpoint viewer, với seal phiên bản nằm trong khóa
+Hiện `legacy/admin-server/cache.py` đã làm Cache-Aside cho 5 endpoint viewer, với seal phiên bản nằm trong khóa
 và Redis lỗi thì rơi về PostgreSQL. v2 giữ nguyên các nguyên tắc đó và đặt chúng vào ranh giới service.
 
 **Vị trí:** Redis là **cache thuần**, không phải nguồn sự thật. Outbox, change feed, idempotency key, snapshot

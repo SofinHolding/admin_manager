@@ -40,7 +40,7 @@ def top(api, who, **params) -> list[dict]:
 def test_manager_source_has_no_knowledge_of_the_new_tool():
     """Luật 4: không hardcode tên Tool. Tên/nền tảng của Mock Tool X không được xuất hiện trong mã nguồn Manager."""
     needles = ("toolx", "tool x", TOOL_PLATFORM)
-    roots = [ROOT / "services", ROOT / "admin-web" / "src", ROOT / "packages", ROOT / "reward-service", ROOT / "infra"]
+    roots = [ROOT / "services", ROOT / "apps" / "manager-web" / "src", ROOT / "packages", ROOT / "services" / "reward-service", ROOT / "infra"]
     offenders = []
     for base in roots:
         for p in base.rglob("*"):

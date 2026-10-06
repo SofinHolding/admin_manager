@@ -36,7 +36,7 @@ jsonschema/pyyaml cần cho `tests/arch` và `tests/contract` (nếu thiếu: `p
 - `start/stop/restart(name, **env)`, `overrides` (mô phỏng DB chết bằng DSN cổng 1, Redis chết…), `log_text(name)` đọc `.dev/logs/<name>.log`, `ready_status`.
 - DEV Identity (`IDENTITY_ENV=dev`) in token xác thực email ra log — E2E lấy token từ đó (`tests/e2e/conftest.py::Api.verify_email`).
 
-Khởi tạo user đầu tiên khi chưa có admin nào: seed một invite key thẳng vào `identity_db` (xem `Api.seed_invite_key`), đăng ký, xác thực email, đăng nhập. Không có lệnh "tạo admin" trong Identity (legacy có `admin-server/create_admin.py`).
+Khởi tạo user đầu tiên khi chưa có admin nào: seed một invite key thẳng vào `identity_db` (xem `Api.seed_invite_key`), đăng ký, xác thực email, đăng nhập. Không có lệnh "tạo admin" trong Identity (legacy có `legacy/admin-server/create_admin.py`).
 
 ## 6.3 Cách làm các thay đổi thường gặp
 

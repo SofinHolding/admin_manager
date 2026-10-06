@@ -1,7 +1,7 @@
 """Phát hành và verify access token.
 
 RS256 (mặc định): ký bằng khoá active trong DB, header mang `kid`, claims theo docs/api/service-auth-contract-v1.md.
-HS256 (chỉ khi IDENTITY_ACCESS_TOKEN_ALG=HS256): chế độ cùng tồn tại với admin-server/reward legacy, payload giữ nguyên legacy.
+HS256 (chỉ khi IDENTITY_ACCESS_TOKEN_ALG=HS256): chế độ cùng tồn tại với legacy/admin-server/reward legacy, payload giữ nguyên legacy.
 """
 
 from __future__ import annotations

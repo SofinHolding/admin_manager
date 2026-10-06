@@ -39,7 +39,7 @@ Shadow sync legacy→identity_db (`legacy_sync.py`) → parity → single-writer
 - Quay lui: route `/v1/analytics/*` về legacy; dữ liệu canonical giữ nguyên.
 
 ## 5. Reward (Phase 4)
-Di chuyển bảng `reward_*` từ DB chung sang `reward_db` (kế hoạch ở `reward-service/DEPLOY.md`); đặt `REWARD_DATABASE_URL`, `REWARD_IDENTITY_*`, `REWARD_IDENTITY_FEED_KEY`;
+Di chuyển bảng `reward_*` từ DB chung sang `reward_db` (kế hoạch ở `services/reward-service/DEPLOY.md`); đặt `REWARD_DATABASE_URL`, `REWARD_IDENTITY_*`, `REWARD_IDENTITY_FEED_KEY`;
 mang theo `manager_sdk` (`REWARD_SDK_PATH` hoặc `vendor/`). Gỡ `JWT_SECRET` chung khỏi reward. `deploy-reward.yml` cần viết lại theo mô hình mới (đang theo mô hình cũ).
 - Quay lui: dừng reward mới, bật reward cũ trên DB cũ (giữ nguyên bản sao DB cũ cho tới khi ổn định).
 

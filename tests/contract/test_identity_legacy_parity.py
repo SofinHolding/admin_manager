@@ -25,7 +25,7 @@ import pytest
 import pytest_asyncio
 
 ROOT = Path(__file__).resolve().parents[2]
-for p in (ROOT / "admin-server", ROOT / "services" / "identity-service" / "src",
+for p in (ROOT / "legacy" / "admin-server", ROOT / "services" / "identity-service" / "src",
           ROOT / "packages" / "observability" / "src", ROOT / "packages" / "contracts" / "python"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))

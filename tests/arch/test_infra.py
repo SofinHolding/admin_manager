@@ -144,7 +144,7 @@ SECRET_PATTERNS = [
 ]
 # Chỉ những chỗ CỐ Ý nhắc tới chuỗi cấm (tài liệu, test kiểm tra chính quy tắc này).
 # Lý do từng ngoại lệ: tài liệu/test nhắc chính chuỗi cấm; CI chạy Postgres dùng-một-lần trên runner GitHub.
-ALLOW_MENTION = {".github/workflows/deploy-reward.yml", "reward-service/scripts/check-env.py", "docs/operations/dev-agent-full-implementation-prompt.md",
+ALLOW_MENTION = {".github/workflows/deploy-reward.yml", "services/reward-service/scripts/check-env.py", "docs/operations/dev-agent-full-implementation-prompt.md",
                  "tasks/backlog/dev-agent-full-execution-master-prompt.md",
                  "tests/arch/test_infra.py", "infra/scripts/bootstrap_dev.py", "tests/arch/test_security_hygiene.py"}
 
@@ -152,7 +152,7 @@ ALLOW_MENTION = {".github/workflows/deploy-reward.yml", "reward-service/scripts/
 def test_no_secret_patterns_in_tracked_files():
     hits = []
     for rel in _tracked_files():
-        if rel in ALLOW_MENTION or rel.startswith(("docs/api/legacy/", "admin-web/node_modules/")):
+        if rel in ALLOW_MENTION or rel.startswith(("docs/api/legacy/", "apps/manager-web/node_modules/")):
             continue
         if rel.endswith((".png", ".ico", ".lock", ".html", ".svg", ".woff", ".woff2")) or "package-lock" in rel:
             continue

@@ -1,3 +1,6 @@
+> **Cập nhật đường dẫn (Repo Layout v1):** `admin-server/` → `legacy/admin-server/` · `admin-web/` → `apps/manager-web/` · `local-ops-hub/` → `apps/local-fallback-tool/` · `reward-service/` → `services/reward-service/` (nay có `src/reward_service/…` và `migrations/` ở gốc service) · `DEPLOY.md` → `docs/operations/legacy-vps-deploy.md` · `scripts/setup-vps.sh` → `infra/deploy/legacy/setup-vps.sh`.
+> Các tệp trong `.omp/` mô tả hệ legacy và giữ nguyên đường dẫn cũ trong nội dung; đọc kèm bảng ánh xạ này. Kiến trúc đích: `CLAUDE.md`, `docs/handbook/`.
+
 # Vibe Flow — Admin Manager
 
 Dashboard thống kê + quản trị **viewer** cho hệ thống **upload-facebook** ("Tool", repo riêng tại

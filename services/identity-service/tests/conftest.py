@@ -98,7 +98,7 @@ def settings() -> Settings:
 
 @pytest.fixture
 def settings_hs256(settings) -> Settings:
-    """Chế độ cùng tồn tại với admin-server/reward legacy: HS256 dùng chung secret."""
+    """Chế độ cùng tồn tại với legacy/admin-server/reward legacy: HS256 dùng chung secret."""
     from dataclasses import replace
     return replace(settings, access_token_alg="HS256", jwt_compat_secret=TEST_JWT_SECRET)
 

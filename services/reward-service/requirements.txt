@@ -1,0 +1,15 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+asyncpg>=0.29
+httpx
+websockets
+pyjwt>=2.15.0
+cryptography
+pydantic>=2.7
+openpyxl
+# manager_sdk (verify RS256/JWKS, FeedClient) KHÔNG phải gói PyPI: nằm ở packages/sdk-python trong monorepo.
+# Bản deploy phải đi kèm thư mục đó (đặt REWARD_SDK_PATH, hoặc sao chép vào services/reward-service/vendor/manager_sdk);
+# phụ thuộc runtime của nó đã nằm ở trên (httpx, pyjwt, cryptography, fastapi).
+# Dev/test:
+pytest
+pytest-asyncio

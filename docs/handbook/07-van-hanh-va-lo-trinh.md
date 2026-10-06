@@ -6,7 +6,7 @@
 |---|---|
 | Runbook chuyển production (từng bước + quay lui, **tất cả `PENDING_PRODUCTION_APPROVAL`**) | `docs/operations/production-cutover-runbook.md` |
 | Chuyển Identity (shadow sync → parity → single-writer) | `docs/operations/identity-migration-runbook.md` |
-| Kế hoạch chuyển DB Reward (`ufsync` → `reward_db`), vendoring SDK | `reward-service/DEPLOY.md` |
+| Kế hoạch chuyển DB Reward (`ufsync` → `reward_db`), vendoring SDK | `services/reward-service/DEPLOY.md` |
 | Hạ tầng DEV | `infra/docker/README.md` |
 | Báo cáo triển khai + số liệu test | `docs/operations/implementation-final-report.md` |
 
@@ -19,7 +19,7 @@ Lệnh vận hành đã có (đều là job riêng, không chạy tự động l
 | `python -m identity_service.oidc_clients seed-dev` | seed OIDC client `manager-web` (DEV) |
 | `python -m identity_service.feed_consumer replay` | replay dead-letter (consumer của Identity) |
 | `python -m integration_service.provisioning replay` | replay dead-letter provisioning |
-| `python -m identity_link.consumer replay` (trong `reward-service/`) | replay dead-letter của Reward |
+| `python -m identity_link.consumer replay` (trong `services/reward-service/`) | replay dead-letter của Reward |
 | `POST /v1/analytics/admin/{rebuild,reconcile,sync}`, `GET/POST …/admin/dead-letters[/replay]` | dựng lại / đối soát / đồng bộ / xử lý dead-letter của Analytics (cần admin) |
 | `python infra/gateway/render_nginx.py [--check\|--nginx-test]` | sinh/kiểm `nginx.conf` |
 
@@ -52,7 +52,7 @@ Mỗi mục: **bối cảnh → việc → nghiệm thu**. Không có mục nào
 | 15 | **Retention** | Outbox không xóa; `dead_letters`, `idempotency_keys`, `sessions` hết hạn chưa có job dọn | Job dọn có test; không phá `seq`/cursor |
 | 16 | **Registry/doc hygiene** | `status: scaffold` ở registry gây hiểu nhầm (xem 01 §1.6); `docs/architecture/architecture-assessment-v2.md` là bản thiết kế — đối chiếu lại các mục "đề xuất" với thực tế | Doc khớp mã |
 | 17 | **Phase 5 (push Redis Streams, tùy chọn)** | Chỉ làm nếu độ trễ của feed kéo không đủ; Postgres vẫn là nguồn bền | Test mất message/đảo thứ tự/Redis chết không mất event |
-| 18 | **Phase 6 (cần duyệt)** | `local-ops-hub` → machine credential + OIDC operator + jobs API qua `IntegrationClient`; chuyển vào `apps/local-fallback-tool`; retire legacy | Theo runbook |
+| 18 | **Phase 6 (cần duyệt)** | `local-ops-hub` → machine credential + OIDC operator + jobs API qua `IntegrationClient` (thư mục đã là `apps/local-fallback-tool`); retire legacy (`legacy/admin-server`) | Theo runbook |
 
 ## 7.4 Cách chọn việc và định nghĩa "xong"
 

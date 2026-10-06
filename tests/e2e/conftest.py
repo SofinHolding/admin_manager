@@ -198,8 +198,19 @@ def world(stack, api):
     clients = wait_for(lambda: api.http.get("/v1/integrations/clients", headers=owner["headers"]).json()["data"],
                        what="Integration client được provisioning từ feed của Identity")
     cid = clients[0]["client_id"]
-    r = api.http.post(f"/v1/integrations/clients/{cid}/credentials", headers=owner["headers"], json={})
-    assert r.status_code == 201, r.text
+    # Cấp credential cần Integration đã nhận event `account.verified` (consumer kéo feed theo chu kỳ) ⇒ chờ, không đoán thời gian.
+    holder: dict = {}
+
+    def issue():
+        r = api.http.post(f"/v1/integrations/clients/{cid}/credentials", headers=owner["headers"], json={})
+        if r.status_code == 201:
+            holder["r"] = r
+            return True
+        assert r.status_code == 403 and r.json()["error"]["code"] == "EMAIL_NOT_VERIFIED", r.text  # lỗi khác là lỗi thật
+        return False
+
+    wait_for(issue, timeout=30, what="Integration nhận email_verified của owner")
+    r = holder["r"]
     other = api.user("e2eother", api.seed_invite_key(role="viewer"))  # người dùng khác: không được thấy dữ liệu của owner
     return {"admin": admin, "owner": owner, "other": other, "client_id": cid, "client": clients[0],
             "tool": ToolX(stack.url("gateway"), r.json()["data"]["api_key"])}

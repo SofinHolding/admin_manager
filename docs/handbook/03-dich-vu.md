@@ -144,9 +144,10 @@ Pure ASGI reverse proxy (httpx, stream cả request lẫn response). **Không** 
 
 ---
 
-## 3.5 reward-service (`:8422`, `reward_db`, thư mục `reward-service/`, module phẳng — không có package)
+## 3.5 reward-service (`:8422`, `reward_db`, thư mục `services/reward-service`, package `reward_service`)
 
 Engine phân phối điểm thưởng qua Discord. **Chạy `--workers 1`** (engine giữ trạng thái job trong bộ nhớ).
+Skeleton chuẩn như mọi service: mã ở `src/reward_service/{api,domain,engine,discord,identity_link,store}` + `main.py/settings.py/security.py/crypto.py/sdk_path.py`, migration ở `migrations/` (001→004), `Dockerfile`, `README.md`. Chạy: `PYTHONPATH=src python -m uvicorn reward_service.main:app --workers 1`; migrate tay: `python -m reward_service.store.migrate`.
 
 **Env (`REWARD_`):** `REWARD_DATABASE_URL` (**bắt buộc**, cố ý KHÔNG fallback `DATABASE_URL` cũ), `REWARD_IDENTITY_URL`, `REWARD_IDENTITY_JWKS_URL`, `REWARD_ISSUER`, `REWARD_AUDIENCE`, `REWARD_IDENTITY_FEED_URL/KEY`,
 `REWARD_TOKEN_KEY` (Fernet — mã hóa token Discord; mất = mất credential), `REWARD_DB_MIGRATE_ON_BOOT`, `REWARD_MAX_CONCURRENT_JOBS`, `REWARD_SDK_PATH` (xem dưới), `REWARD_CORS_ORIGINS`, và nhóm `REWARD_*` timeout/Discord (`.env.example`). `JWT_SECRET` nếu còn trong env bị **bỏ qua**.
@@ -156,12 +157,12 @@ Engine phân phối điểm thưởng qua Discord. **Chạy `--workers 1`** (eng
 - `api/` (`admin.py`, `auth_proxy.py` — proxy mỏng `login/refresh/logout/me` tới `/v1/auth/*`, đánh dấu deprecated; `credentials.py`; `jobs.py`), `engine/` (`worker_manager`, `job_runner`, `reconcile`, `recovery`, `token_pool`, `confirmation`, `executor_slash`), `discord/`, `domain/`, `store/` (migrations `001→004`, `repositories/`).
 - Bảng: `reward_*` (+ `account_projection, account_denylist, feed_cursor, processed_events, dead_letters`). `reward_role_audit` ghi thêm `outcome` và `identity_status`.
 - Identity chết ⇒ grant/revoke/list/proxy trả `503 UNAVAILABLE + Retry-After`; request mang token còn hạn **vẫn được phục vụ** nếu JWKS đã cache (khởi động lạnh khi Identity chết ⇒ 401 — xem [07](07-van-hanh-va-lo-trinh.md)).
-- `manager_sdk` không phải gói PyPI: bản deploy phải mang theo (`REWARD_SDK_PATH` hoặc `vendor/`) — `sdk_path.py`, `DEPLOY.md`.
+- `manager_sdk` không phải gói PyPI: bản deploy phải mang theo (`REWARD_SDK_PATH` hoặc `vendor/`) — `sdk_path.py`, `docs/operations/legacy-vps-deploy.md`.
 - Hợp đồng thay đổi so với trước (web đã theo): `/admin/accounts` có `reward_access` (UI dựa vào đây thay vì `role==='discord'`); `revoke-discord` 409 nếu quyền chỉ là quyền ngầm của role; `health` bỏ `jwt_secret_fingerprint`, thêm `feed{enabled,cursor,last_error}`.
 
 ---
 
-## 3.6 manager-web (`admin-web/`)
+## 3.6 manager-web (`apps/manager-web/`)
 
 React + Vite + TypeScript. Dev: `npm run dev` (bind `127.0.0.1:5174`, proxy `/v1`, `/oauth`, `/.well-known` → gateway `:8400`). Cổng chất lượng: `npm run typecheck`, `npm test` (vitest), `npm run build` (+ `postbuild` quét bundle).
 

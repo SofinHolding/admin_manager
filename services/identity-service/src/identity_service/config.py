@@ -24,7 +24,7 @@ class Settings:
     log_level: str
     database_url: str
     env: str = "production"
-    # Khóa HS256 CHỈ để cùng tồn tại với admin-server/reward-service legacy trong giai đoạn Strangler
+    # Khóa HS256 CHỈ để cùng tồn tại với legacy/admin-server/reward-service legacy trong giai đoạn Strangler
     # (access_token_alg="HS256"). Mặc định hệ thống dùng RS256 + JWKS, KHÔNG cần secret chung.
     jwt_compat_secret: str = ""
     access_token_alg: str = "RS256"

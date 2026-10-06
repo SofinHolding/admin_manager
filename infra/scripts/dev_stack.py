@@ -29,7 +29,7 @@ SERVICE_DIRS = {
     "integration": ("services/integration-service", "integration_service"),
     "analytics": ("services/analytics-service", "analytics_service"),
     "gateway": ("services/api-gateway", "api_gateway"),
-    "reward": ("reward-service", None),
+    "reward": ("services/reward-service", "reward_service"),
 }
 MIGRATABLE = ("identity", "integration", "analytics")
 COMMON_PATHS = ["packages/observability/src", "packages/contracts/python", "packages/sdk-python"]
@@ -99,7 +99,7 @@ class DevStack:
 
     def _pythonpath(self, name: str) -> str:
         d, _ = SERVICE_DIRS[name]
-        paths = [str(ROOT / d / "src")] if name != "reward" else [str(ROOT / d)]
+        paths = [str(ROOT / d / "src")]
         paths += [str(ROOT / p) for p in COMMON_PATHS]
         return os.pathsep.join(paths)
 
@@ -144,7 +144,7 @@ class DevStack:
             return
         d, pkg = SERVICE_DIRS[name]
         if name == "reward":
-            cmd = [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(self.ports[name]),
+            cmd = [sys.executable, "-m", "uvicorn", f"{pkg}.main:app", "--host", "127.0.0.1", "--port", str(self.ports[name]),
                    "--workers", "1", "--log-level", "warning"]
         else:
             cmd = [sys.executable, "-m", "uvicorn", f"{pkg}.main:app", "--host", "127.0.0.1", "--port",

@@ -112,7 +112,7 @@ def pytest_suites(fast: bool, legacy: bool) -> list[tuple[str, Path]]:
         out.append(("integration", ROOT / "tests" / "integration"))
         out.append(("e2e", ROOT / "tests" / "e2e"))
     if legacy:
-        out.append(("legacy:admin-server", ROOT / "admin-server"))
+        out.append(("legacy:admin-server", ROOT / "legacy" / "admin-server"))
     return out
 
 
@@ -144,7 +144,7 @@ def run_cmd(label: str, cmd: list[str], cwd: Path) -> dict:
 
 
 def frontend_suites() -> list[tuple[str, list[str]]]:
-    web = ROOT / "admin-web"
+    web = ROOT / "apps" / "manager-web"
     if not (web / "package.json").is_file():
         return []
     steps = []
@@ -185,7 +185,7 @@ def main() -> int:
         if args.only and args.only not in label:
             continue
         log(f"… {label}")
-        r = run_pytest(label, target) if isinstance(target, Path) else run_cmd(label, target, ROOT / "admin-web")
+        r = run_pytest(label, target) if isinstance(target, Path) else run_cmd(label, target, ROOT / "apps" / "manager-web")
         results.append(r)
         if r["code"] != 0:
             print(r["output"][-2500:])

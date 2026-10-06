@@ -6,7 +6,7 @@
   python infra/scripts/scaffold_service.py --service identity-service
 
 Quy trình thêm module/service: (1) sửa registry, (2) chạy script này, (3) viết code và test trong module.
-Chỉ xử lý service có status = "scaffold". Service "legacy-in-place" (reward-service) không bị đụng.
+Chỉ xử lý service có status = "scaffold". Service `status: active` (vd reward-service: đã theo skeleton chuẩn nhưng không do scaffold sinh) không bị đụng.
 """
 
 from __future__ import annotations
