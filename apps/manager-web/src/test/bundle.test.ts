@@ -48,9 +48,17 @@ describe("không có secret trong mã nguồn / bundle", () => {
     expect(hits).toEqual([]);
   });
 
-  it("localStorage không bao giờ được dùng để lưu token/khoá trong mã nguồn (ngoại trừ xoá khoá legacy)", () => {
-    const hits = scanSource(/localStorage\.(setItem|getItem)/);
+  it("localStorage không bao giờ được dùng để lưu token/khoá trong mã nguồn (ngoại trừ xoá khoá legacy và tùy chọn hiển thị)", () => {
+    // Ngoại lệ DUY NHẤT, có chủ đích: lib/preferences.ts lưu sở thích hiển thị (sáng/tối, cỡ chữ) — không nhạy cảm.
+    const hits = scanSource(/localStorage\.(setItem|getItem)/).filter((p) => !p.endsWith(`${sep}lib${sep}preferences.ts`));
     expect(hits).toEqual([]);
+  });
+
+  it("tệp ngoại lệ preferences.ts chỉ chạm hai khoá hiển thị, không dính token/khoá/mật khẩu", () => {
+    const text = readFileSync(resolve(root, "src", "lib", "preferences.ts"), "utf8");
+    const keys = [...text.matchAll(/const \w+_KEY = "([^"]+)"/g)].map((m) => m[1]).sort();
+    expect(keys).toEqual(["manager.textSize", "manager.theme"]);
+    expect(text).not.toMatch(/token|secret|password|apikey/i);
   });
 });
 

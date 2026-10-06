@@ -1,32 +1,35 @@
 /**
- * Admin web — cùng hệ thiết kế với Electron app.
+ * manager-web — hệ thiết kế v1 (docs/architecture/ui-design-v1.md).
  *
- * Token màu copy 1:1 từ `ui/src/renderer/src/index.css`. Khác: dùng system font thay vì tự host
- * (admin web chạy trên VPS qua mạng, tải font riêng cho một trang dashboard là chậm vô ích).
+ * "Phòng điều khiển ban ngày": nền xanh sương, mực xanh lục đậm, MỘT màu nhấn hổ phách. Chữ Be Vietnam Pro tự host.
+ * Tên token giữ nguyên so với bản cũ (primary, surface-*, elev-*, chart-*, ...) để các trang chưa chuyển vẫn hiển thị đúng.
  */
 
+@import "@fontsource/be-vietnam-pro/latin-400.css";
+@import "@fontsource/be-vietnam-pro/latin-500.css";
+@import "@fontsource/be-vietnam-pro/latin-600.css";
+@import "@fontsource/be-vietnam-pro/latin-700.css";
+@import "@fontsource/be-vietnam-pro/vietnamese-400.css";
+@import "@fontsource/be-vietnam-pro/vietnamese-500.css";
+@import "@fontsource/be-vietnam-pro/vietnamese-600.css";
+@import "@fontsource/be-vietnam-pro/vietnamese-700.css";
 @import "tailwindcss";
 
-/* Tailwind 4 tự scan project root, nhưng khi `base` khác "/" hoặc cấu trúc thư mục lạ thì
-   auto-detect có thể bỏ sót. Khai báo rõ để chắc chắn. */
 @source "../src";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   TOKEN — sáng
-   ═══════════════════════════════════════════════════════════════════════════ */
-
+/* ═══ TOKEN — sáng ═══════════════════════════════════════════════════════════ */
 :root {
   --radius: 0.5rem;
 
-  --background: oklch(0.979 0.003 255);
+  --background: oklch(0.975 0.006 205);
   --surface-1: oklch(1 0 0);
-  --surface-2: oklch(0.963 0.004 255);
+  --surface-2: oklch(0.953 0.009 205);
   --surface-3: oklch(1 0 0);
 
-  --foreground: oklch(0.22 0.012 258);
-  --muted-foreground: oklch(0.468 0.014 258);
+  --foreground: oklch(0.24 0.035 215);
+  --muted-foreground: oklch(0.46 0.03 215);
 
   --card: var(--surface-1);
   --card-foreground: var(--foreground);
@@ -38,101 +41,81 @@
   --accent: var(--surface-2);
   --accent-foreground: var(--foreground);
 
-  --primary: oklch(0.505 0.185 254);
+  --primary: oklch(0.47 0.085 200);
   --primary-foreground: oklch(0.995 0 0);
-  --primary-text: oklch(0.475 0.19 254);
+  --primary-text: oklch(0.42 0.09 200);
 
-  --success: oklch(0.52 0.14 156);
-  --warning: oklch(0.545 0.14 74);
-  --destructive: oklch(0.545 0.21 27);
-  --destructive-solid: oklch(0.545 0.21 27);
-  --accent-2: oklch(0.55 0.11 218);
+  --success: oklch(0.47 0.12 150);
+  --warning: oklch(0.5 0.12 65);
+  --destructive: oklch(0.5 0.19 25);
+  --destructive-solid: oklch(0.5 0.19 25);
+  --accent-2: oklch(0.80 0.15 85);
+  --accent-2-foreground: oklch(0.28 0.06 80);
 
-  --border: oklch(0.22 0.012 258 / 13%);
-  --border-strong: oklch(0.22 0.012 258 / 22%);
+  --border: oklch(0.24 0.035 215 / 14%);
+  --border-strong: oklch(0.24 0.035 215 / 28%);
   --hairline: var(--border);
   --input: var(--border-strong);
-  --ring: oklch(0.505 0.185 254);
+  --ring: oklch(0.47 0.085 200);
 
-  --elev-1: oklch(0.22 0.012 258 / 4%);
-  --elev-2: oklch(0.22 0.012 258 / 8%);
+  --elev-1: oklch(0.24 0.035 215 / 3%);
+  --elev-2: oklch(0.24 0.035 215 / 8%);
 
-  --grad-from: oklch(0.505 0.185 254);
-  --grad-via: oklch(0.487 0.185 258);
-  --grad-to: oklch(0.470 0.175 262);
-  --glow: oklch(0.505 0.185 254 / 18%);
+  /* Giữ tên cũ; KHÔNG dùng gradient trang trí (xem ui-design-v1.md §3) */
+  --grad-from: var(--primary);
+  --grad-via: var(--primary);
+  --grad-to: var(--primary);
+  --glow: transparent;
 
-  --chart-1: oklch(0.505 0.185 254);
-  --chart-2: oklch(0.600 0.140 74);
-  --chart-3: oklch(0.545 0.100 186);
-  --chart-4: oklch(0.505 0.170 300);
-  --chart-5: oklch(0.520 0.140 156);
-  --chart-6: oklch(0.560 0.170 15);
+  --chart-1: oklch(0.5 0.09 200);
+  --chart-2: oklch(0.52 0.15 275);
+  --chart-3: oklch(0.7 0.14 80);
+  --chart-4: oklch(0.55 0.17 15);
+  --chart-5: oklch(0.55 0.12 150);
+  --chart-6: oklch(0.5 0.03 240);
 
-  --shadow-overlay: 0 16px 40px -16px oklch(0.22 0.05 258 / 28%), 0 2px 8px -2px oklch(0.22 0.05 258 / 12%);
+  --shadow-overlay: 0 18px 44px -18px oklch(0.24 0.06 215 / 32%), 0 2px 8px -2px oklch(0.24 0.06 215 / 14%);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   TOKEN — tối
-   ═══════════════════════════════════════════════════════════════════════════ */
-
+/* ═══ TOKEN — tối ════════════════════════════════════════════════════════════ */
 .dark {
-  --background: oklch(0.168 0.008 256);
-  --surface-1: oklch(0.212 0.009 256);
-  --surface-2: oklch(0.252 0.010 256);
-  --surface-3: oklch(0.278 0.011 256);
+  --background: oklch(0.19 0.02 215);
+  --surface-1: oklch(0.235 0.022 215);
+  --surface-2: oklch(0.275 0.024 215);
+  --surface-3: oklch(0.3 0.026 215);
 
-  --foreground: oklch(0.968 0.002 256);
-  --muted-foreground: oklch(0.735 0.012 256);
+  --foreground: oklch(0.955 0.008 205);
+  --muted-foreground: oklch(0.76 0.02 210);
 
-  --card: var(--surface-1);
-  --card-foreground: var(--foreground);
-  --popover: var(--surface-3);
-  --popover-foreground: var(--foreground);
-  --secondary: var(--surface-2);
-  --secondary-foreground: var(--foreground);
-  --muted: var(--surface-2);
-  --accent: var(--surface-2);
-  --accent-foreground: var(--foreground);
+  --primary: oklch(0.74 0.10 195);
+  --primary-foreground: oklch(0.2 0.03 215);
+  --primary-text: oklch(0.8 0.09 195);
 
-  --primary: oklch(0.565 0.185 253);
-  --primary-foreground: oklch(0.995 0 0);
-  --primary-text: oklch(0.755 0.135 250);
+  --success: oklch(0.76 0.14 152);
+  --warning: oklch(0.8 0.13 80);
+  --destructive: oklch(0.72 0.17 25);
+  --destructive-solid: oklch(0.58 0.19 25);
+  --accent-2: oklch(0.82 0.14 85);
+  --accent-2-foreground: oklch(0.25 0.05 80);
 
-  --success: oklch(0.735 0.145 158);
-  --warning: oklch(0.795 0.135 78);
-  --destructive: oklch(0.685 0.185 25);
-  --destructive-solid: oklch(0.565 0.200 27);
-  --accent-2: oklch(0.755 0.105 214);
-
-  --border: oklch(1 0 0 / 10%);
-  --border-strong: oklch(1 0 0 / 18%);
-  --hairline: var(--border);
-  --input: var(--border-strong);
-  --ring: oklch(0.665 0.165 252);
+  --border: oklch(1 0 0 / 11%);
+  --border-strong: oklch(1 0 0 / 24%);
+  --ring: oklch(0.78 0.1 195);
 
   --elev-1: oklch(1 0 0 / 4%);
-  --elev-2: oklch(1 0 0 / 8%);
+  --elev-2: oklch(1 0 0 / 9%);
 
-  --grad-from: oklch(0.565 0.185 253);
-  --grad-via: oklch(0.545 0.185 257);
-  --grad-to: oklch(0.525 0.175 261);
-  --glow: oklch(0.565 0.185 253 / 22%);
+  --chart-1: oklch(0.76 0.1 195);
+  --chart-2: oklch(0.74 0.13 280);
+  --chart-3: oklch(0.82 0.13 85);
+  --chart-4: oklch(0.74 0.14 15);
+  --chart-5: oklch(0.76 0.13 152);
+  --chart-6: oklch(0.72 0.03 240);
 
-  --chart-1: oklch(0.700 0.155 253);
-  --chart-2: oklch(0.795 0.135 78);
-  --chart-3: oklch(0.755 0.105 188);
-  --chart-4: oklch(0.700 0.150 300);
-  --chart-5: oklch(0.735 0.145 158);
-  --chart-6: oklch(0.720 0.150 15);
-
-  --shadow-overlay: 0 16px 40px -16px oklch(0 0 0 / 55%), 0 2px 8px -2px oklch(0 0 0 / 35%);
+  --shadow-overlay: 0 18px 44px -18px oklch(0 0 0 / 60%), 0 2px 8px -2px oklch(0 0 0 / 40%);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   ĐĂNG KÝ VỚI TAILWIND
-   ═══════════════════════════════════════════════════════════════════════════ */
-
+/* ═══ ĐĂNG KÝ VỚI TAILWIND ═══════════════════════════════════════════════════ */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -153,6 +136,7 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent-2: var(--accent-2);
+  --color-accent-2-foreground: var(--accent-2-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-solid: var(--destructive-solid);
   --color-success: var(--success);
@@ -169,22 +153,28 @@
   --color-grad-to: var(--grad-to);
 
   --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 10px;
-  --radius-2xl: 12px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 16px;
 
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   NỀN TẢNG
-   ═══════════════════════════════════════════════════════════════════════════ */
-
+/* ═══ NỀN TẢNG ═══════════════════════════════════════════════════════════════ */
 @layer base {
   * {
     border-color: var(--color-border);
+  }
+
+  html {
+    /* Cỡ chữ người dùng chọn (100% / 112.5% / 125%) đặt ở đây qua src/lib/preferences.ts; mọi `rem` co giãn theo. */
+    font-size: 100%;
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
   }
 
   html, body, #root {
@@ -195,21 +185,62 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
-    font-size: 0.875rem;
-    line-height: 1.5;
+    font-size: 1rem;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    font-variant-numeric: tabular-nums;
   }
 
-  /* Focus outline dùng chung */
+  h1 { font-size: 1.75rem; line-height: 1.2; font-weight: 700; letter-spacing: -0.015em; }
+  h2 { font-size: 1.25rem; line-height: 1.3; font-weight: 650; letter-spacing: -0.01em; }
+  h3 { font-size: 1.0625rem; line-height: 1.35; font-weight: 600; }
+
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
+    border-radius: 4px;
   }
 
-  /* Glass surface — nền đục + viền nhẹ, cùng kiểu Electron app */
+  ::selection {
+    background: var(--accent-2);
+    color: var(--accent-2-foreground);
+  }
+
+  /* Giữ lớp .glass cho các trang chưa chuyển: nền đục + viền, KHÔNG làm mờ/đổ bóng nữa */
   .glass {
     background-color: var(--surface-1);
     border: 1px solid var(--hairline);
+  }
+}
+
+@layer utilities {
+  /* Cột đọc: đoạn văn không dài quá ~72 ký tự */
+  .reading { max-width: 72ch; }
+  /* Số liệu lớn */
+  .figure { font-variant-numeric: tabular-nums; letter-spacing: -0.02em; font-weight: 700; }
+}
+
+/* Liên kết "Bỏ qua điều hướng" — chỉ hiện khi nhận focus bàn phím */
+.skip-link {
+  position: fixed;
+  left: 0.75rem;
+  top: 0.75rem;
+  z-index: 100;
+  transform: translateY(-200%);
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  padding: 0.5rem 0.9rem;
+  font-weight: 600;
+}
+.skip-link:focus { transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
