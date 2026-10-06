@@ -31,21 +31,48 @@ async def is_processed(conn: asyncpg.Connection, event_id: str) -> bool:
     return bool(await conn.fetchval("SELECT 1 FROM processed_events WHERE id = $1", event_id))
 
 
+def supersede_keys(type_: str, data: dict[str, Any] | None) -> tuple[str, list[str]]:
+    """Khóa ĐẶC TRƯNG của event để so thứ tự khi replay (subject của Identity chỉ là `acc:<id>`, không đủ phân biệt).
+
+    Trả `(khóa_của_event, các_khóa_của_event_mới_hơn_có_thể_thay_thế_nó)`:
+      * `account.permission_changed`: `(account, permission)`.
+      * `session.revoked`: `(account, sid)`; revoke toàn account (sid vắng) có khóa `account|*` và THAY THẾ mọi sid
+        cũ hơn, nhưng revoke một sid không thay thế được revoke toàn account.
+      * các loại còn lại (status/role/profile/...): theo account.
+    """
+    data = data or {}
+    account = str(data.get("account_id") or "")
+    if type_ == "account.permission_changed":
+        key = f"{account}|{data.get('permission') or ''}"
+        return key, [key]
+    if type_ == "session.revoked":
+        sid = str(data.get("sid") or "")
+        if not sid:
+            key = f"{account}|*"
+            return key, [key]
+        return f"{account}|{sid}", [f"{account}|{sid}", f"{account}|*"]
+    return account, [account]
+
+
 async def mark_processed(
     conn: asyncpg.Connection, *, event_id: str, type_: str, subject: str, seq: int | None,
+    subject_key: str = "",
 ) -> bool:
     """True nếu vừa đánh dấu lần đầu; False nếu đã có (event lặp)."""
     tag = await conn.execute(
-        "INSERT INTO processed_events (id, type, subject, seq) VALUES ($1, $2, $3, $4) "
-        "ON CONFLICT (id) DO NOTHING", event_id, type_, subject, seq)
+        "INSERT INTO processed_events (id, type, subject, seq, subject_key) VALUES ($1, $2, $3, $4, $5) "
+        "ON CONFLICT (id) DO NOTHING", event_id, type_, subject, seq, subject_key)
     return tag.endswith(" 1")
 
 
-async def superseded(conn: asyncpg.Connection, *, type_: str, subject: str, seq: int) -> bool:
-    """Đã xử lý một event CÙNG loại + chủ thể có `seq` lớn hơn? (replay dead-letter cũ không được ghi đè trạng thái mới)."""
+async def superseded(conn: asyncpg.Connection, *, type_: str, keys: list[str], seq: int) -> bool:
+    """Đã xử lý một event CÙNG loại + cùng khóa đặc trưng (xem `supersede_keys`) có `seq` lớn hơn?
+    (replay dead-letter cũ không được ghi đè trạng thái mới; khác khóa thì KHÔNG phải cùng một trạng thái)."""
+    if not keys or any(not k for k in keys):
+        return False
     return bool(await conn.fetchval(
-        "SELECT 1 FROM processed_events WHERE type = $1 AND subject = $2 AND seq > $3 LIMIT 1",
-        type_, subject, seq))
+        "SELECT 1 FROM processed_events WHERE type = $1 AND subject_key = ANY($2::text[]) AND seq > $3 LIMIT 1",
+        type_, keys, seq))
 
 
 async def add_dead_letter(

@@ -128,6 +128,18 @@ interface OidcTx { state: string; nonce: string; verifier: string; returnTo: str
 
 function saveTx(tx: OidcTx): void { sessionStorage.setItem(TX_KEY, JSON.stringify(tx)); }
 
+/** Đọc giao dịch KHÔNG tiêu thụ (để kiểm `?error=` mà không đốt giao dịch hợp lệ bằng callback giả). */
+function peekTx(): OidcTx | null {
+  const raw = sessionStorage.getItem(TX_KEY);
+  if (!raw) return null;
+  try {
+    const t = JSON.parse(raw) as OidcTx;
+    return typeof t.state === "string" && typeof t.verifier === "string" ? t : null;
+  } catch {
+    return null;
+  }
+}
+
 function takeTx(): OidcTx | null {
   const raw = sessionStorage.getItem(TX_KEY);
   sessionStorage.removeItem(TX_KEY); // một lần: xoá ngay dù thành công hay không
@@ -215,11 +227,16 @@ export async function completeLogin(
   search: string,
 ): Promise<{ tokens: OidcTokens; returnTo: string }> {
   const sp = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
-  const tx = takeTx();
   const providerError = sp.get("error");
   if (providerError) {
+    // Lỗi từ provider: chỉ tiêu giao dịch khi `state` khớp (lỗi thật của chính luồng này). Callback giả/thiếu state
+    // KHÔNG được đốt giao dịch đang chờ của người dùng.
+    const pending = peekTx();
+    const st = sp.get("state") ?? "";
+    if (pending && st && safeEqual(st, pending.state)) takeTx();
     throw new OidcError("provider_error", sp.get("error_description") || "Máy chủ đăng nhập từ chối yêu cầu");
   }
+  const tx = takeTx();
   if (!tx) throw new OidcError("missing_tx", "Không tìm thấy phiên đăng nhập đang chờ — hãy đăng nhập lại");
   const state = sp.get("state") ?? "";
   if (!state || !safeEqual(state, tx.state)) {

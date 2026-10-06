@@ -148,6 +148,23 @@ def test_query_redaction_is_bounded_and_clean():
     assert len(redact_query("note=" + "n" * 5000)) <= 80
 
 
+def test_invite_key_in_path_is_redacted():
+    """DELETE /v1/admin/keys/{key}: key dạng XXXX-XXXX (ngắn, không khớp mẫu secret dài) vẫn phải bị che."""
+    assert redact_path("/v1/admin/keys/AB12-CD34") == f"/v1/admin/keys/{REDACTED}"
+    assert redact_path("/v1/admin/keys/ab12-cd34") == f"/v1/admin/keys/{REDACTED}"
+    assert redact_path("/v1/admin/keys/lạ?khoá") == f"/v1/admin/keys/{REDACTED}"  # mọi segment sau /keys/
+    assert redact_path("/v1/admin/keys") == "/v1/admin/keys"
+    assert redact_path("/v1/admin/accounts/AB12-CD34/keys") == f"/v1/admin/accounts/{REDACTED}/keys"
+    assert redact_path("/v1/viewer/summary-report/ok") == "/v1/viewer/summary-report/ok"  # không che nhầm
+
+
+async def test_invite_key_path_not_in_access_log(make_gateway, ups, logs):
+    async with client_for(make_gateway()) as c:
+        await c.delete("/v1/admin/keys/ZQ9X-7KLM", headers={"Authorization": "Bearer x"})
+    assert "ZQ9X-7KLM" not in logs.text
+    assert "/v1/admin/keys/[REDACTED]" in logs.text
+
+
 def test_path_redaction():
     assert redact_path("/v1/viewer/groups/abc/members") == "/v1/viewer/groups/abc/members"
     assert redact_path("/v1/x/mpk_ID.SECRET/y") == f"/v1/x/{REDACTED}/y"

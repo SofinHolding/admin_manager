@@ -216,7 +216,7 @@ class FeedConsumer:
         async with self._pool.acquire() as conn:
             await feed_repo.mark_processed(
                 conn, event_id=event_id, type_=type_, subject=str(event.get("subject") or account_id),
-                seq=event.get("seq"))
+                seq=event.get("seq"), subject_key=feed_repo.supersede_keys(type_, data)[0])
 
     # ── Replay dead-letter ──────────────────────────────────────────────────────
 
@@ -233,8 +233,10 @@ class FeedConsumer:
                     result["skipped"] += 1
                     continue
                 seq = event.get("seq")
+                payload_data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                keys = feed_repo.supersede_keys(str(event.get("type")), payload_data)[1]
                 if seq is not None and await feed_repo.superseded(
-                        conn, type_=str(event.get("type")), subject=str(event.get("subject") or ""), seq=int(seq)):
+                        conn, type_=str(event.get("type")), keys=keys, seq=int(seq)):
                     await feed_repo.mark_replayed(conn, letter["id"])
                     result["skipped"] += 1
                     continue
@@ -249,7 +251,7 @@ class FeedConsumer:
         return result
 
 
-if __name__ == "__main__":  # `python -m identity_link.consumer replay` — replay dead-letter bằng tay (vận hành)
+if __name__ == "__main__":  # `python -m reward_service.identity_link.consumer replay` — replay dead-letter bằng tay (vận hành)
     import sys
 
     async def _main() -> None:

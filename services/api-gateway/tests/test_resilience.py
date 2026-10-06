@@ -204,3 +204,21 @@ async def test_upstreams_health_does_not_leak_urls(make_gateway, ups):
         r = await c.get("/health/upstreams")
     assert "http" not in r.text and ":8" not in r.text
     assert ups.all_calls() == [] or all(x["path"] == "/health/live" for x in ups.all_calls())
+
+
+async def test_slow_admin_route_read_timeout_does_not_open_breaker(make_gateway, ups):
+    """Rebuild/thao tác admin chậm ⇒ 504 nhưng KHÔNG đếm vào breaker (không làm mở mạch cả service)."""
+    gw = make_gateway(GATEWAY_READ_TIMEOUT_S="0.2", GATEWAY_BREAKER_THRESHOLD="2", GATEWAY_BREAKER_COOLDOWN_S="30")
+    async with client_for(gw) as c:
+        for _ in range(4):
+            assert (await c.get("/v1/admin/keys/__slow?s=2")).status_code == 504
+        assert gw.proxy.breakers["identity"].state == "closed"
+        assert (await c.post("/v1/auth/login", content=b"{}")).status_code != 503  # route thường của cùng service
+
+
+async def test_slow_non_admin_route_read_timeout_still_counts_toward_breaker(make_gateway, ups):
+    gw = make_gateway(GATEWAY_READ_TIMEOUT_S="0.2", GATEWAY_BREAKER_THRESHOLD="2", GATEWAY_BREAKER_COOLDOWN_S="30")
+    async with client_for(gw) as c:
+        for _ in range(2):
+            assert (await c.get("/v1/resources/__slow?s=2")).status_code == 504
+        assert gw.proxy.breakers["integration"].state == "open"

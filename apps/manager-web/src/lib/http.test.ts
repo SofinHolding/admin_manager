@@ -166,3 +166,43 @@ describe("apiFetch — lỗi, envelope, huỷ, timeout", () => {
     expect(f.calls[0].signal?.aborted).toBe(true);
   });
 });
+
+describe("apiFetch — refresh đang bay không được ghi lại token sau đăng xuất (epoch)", () => {
+  it("clearTokens trong lúc refresh bay -> bỏ kết quả refresh, token vẫn rỗng, không báo hết phiên", async () => {
+    setTokens("AT-old", "RT-old", true);
+    const gate = deferred<Response>();
+    installFetch(
+      (c) => c.path === "/v1/auth/refresh" ? gate.promise : undefined,
+      (c) => c.headers.get("Authorization") === "Bearer AT-old" ? jsonResponse({ detail: "hết hạn" }, { status: 401 }) : jsonResponse({ ok: true }),
+    );
+    const cb = vi.fn();
+    onSessionExpired(cb);
+    const p = apiFetch("/v1/data").catch((e) => e);
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2)); // request 401 + refresh đang chờ
+    clearTokens(); // người dùng đăng xuất
+    gate.resolve(jsonResponse({ access_token: "AT-new", refresh_token: "RT-new", expires_in: 900 }));
+    const err = await p;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(getAccessToken()).toBe("");
+    expect(getRefreshToken()).toBe("");
+    expect(sessionStorage.getItem("mp_refresh_token")).toBeNull();
+    expect(cb).not.toHaveBeenCalled();
+  });
+
+  it("đăng nhập phiên mới trong lúc refresh cũ bay -> refresh cũ không đè token mới", async () => {
+    setTokens("AT-old", "RT-old", false);
+    const gate = deferred<Response>();
+    installFetch(
+      (c) => c.path === "/v1/auth/refresh" ? gate.promise : undefined,
+      (c) => c.headers.get("Authorization") === "Bearer AT-old" ? jsonResponse({ detail: "hết hạn" }, { status: 401 }) : jsonResponse({ ok: true }),
+    );
+    const p = apiFetch("/v1/data").catch((e) => e);
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+    clearTokens();
+    setTokens("AT-B", "RT-B", false); // user khác đăng nhập
+    gate.resolve(jsonResponse({ access_token: "AT-stale", refresh_token: "RT-stale" }));
+    await p;
+    expect(getAccessToken()).toBe("AT-B");
+    expect(getRefreshToken()).toBe("RT-B");
+  });
+});

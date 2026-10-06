@@ -228,3 +228,27 @@ describe("safeReturnTo — chặn open redirect", () => {
     }
   });
 });
+
+describe("completeLogin — callback giả có ?error= không đốt giao dịch đang chờ", () => {
+  async function begin() {
+    let target = "";
+    await beginLogin(cfg, "/dashboard", (u) => { target = u; });
+    return new URL(target, "http://x").searchParams.get("state")!;
+  }
+
+  it("?error= không kèm state (callback giả) -> báo provider_error nhưng GIỮ giao dịch; callback thật sau đó vẫn thành công", async () => {
+    const state = await begin();
+    installFetch(() => jsonResponse({ access_token: "AT", refresh_token: "RT" }));
+    await expect(completeLogin(cfg, "?error=access_denied")).rejects.toMatchObject({ code: "provider_error" });
+    await expect(completeLogin(cfg, "?error=access_denied&state=SAI")).rejects.toMatchObject({ code: "provider_error" });
+    expect(sessionStorage.getItem("mp_oidc_tx")).not.toBeNull();
+    const ok = await completeLogin(cfg, `?code=C&state=${state}`);
+    expect(ok.tokens.access_token).toBe("AT");
+  });
+
+  it("?error= với state KHỚP (lỗi thật của luồng này) -> tiêu giao dịch", async () => {
+    const state = await begin();
+    await expect(completeLogin(cfg, `?error=access_denied&state=${state}`)).rejects.toMatchObject({ code: "provider_error" });
+    expect(sessionStorage.getItem("mp_oidc_tx")).toBeNull();
+  });
+});

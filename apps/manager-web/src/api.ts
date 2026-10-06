@@ -21,7 +21,7 @@ import {
 export {
   clearTokens, getAccessToken, getRefreshToken, hasAccessToken, setRefreshToken, setTokens,
 } from "./auth/tokenStore";
-export { apiFetch, apiFetchRaw, onSessionExpired, setRefreshStrategy } from "./lib/http";
+export { apiFetch, apiFetchRaw, apiFetchStream, onSessionExpired, setRefreshStrategy } from "./lib/http";
 export { ApiError, errorMessage, isAbortError, isUnavailableError } from "./lib/errors";
 
 type Opts = Pick<RequestOpts, "signal" | "timeoutMs">;

@@ -301,6 +301,77 @@ async def test_replay_skips_dead_letter_superseded_by_newer_event(client, db_con
     assert await _denials(db_conn, user["id"]) == []
 
 
+async def _dead_letter_revoke_then_other_permission(client, db_conn, identity, monkeypatch):
+    """Revoke `reward:access` vào dead-letter; sau đó event permission KHÁC (cùng subject `acc:<id>`) được xử lý."""
+    user = await insert_account(db_conn, role="viewer", perms=("reward:access", "reward:admin"))
+    real = proj.add_denial
+
+    async def broken(*a, **kw):
+        raise RuntimeError("hỏng")
+
+    monkeypatch.setattr("reward_service.identity_link.access.proj.add_denial", broken)
+    identity.revoke_permission(user["id"], "reward:access")
+    consumer = make_consumer(client, identity, max_attempts=1)
+    await consumer.poll_once()
+    monkeypatch.setattr("reward_service.identity_link.access.proj.add_denial", real)
+    return user, consumer
+
+
+async def test_replay_applies_revoke_even_if_other_permission_event_processed_later(
+        client, db_conn, identity, monkeypatch):
+    """Lỗi 1: so (type, subject) bỏ qua nhầm — permission khác cùng account KHÔNG thay thế thu quyền reward:access."""
+    user, consumer = await _dead_letter_revoke_then_other_permission(client, db_conn, identity, monkeypatch)
+    identity.revoke_permission(user["id"], "reward:admin")  # permission khác, seq lớn hơn, xử lý thành công
+    await consumer.poll_once()
+    assert await _denials(db_conn, user["id"]) == []
+    assert await consumer.replay_dead_letters() == {"replayed": 1, "skipped": 0, "failed": 0}
+    assert await _denials(db_conn, user["id"]) == ["permission_revoked"]
+
+
+async def test_replay_still_skips_when_same_permission_was_regranted(client, db_conn, identity, monkeypatch):
+    user, consumer = await _dead_letter_revoke_then_other_permission(client, db_conn, identity, monkeypatch)
+    identity.grant_permission(user["id"], "reward:access")
+    await consumer.poll_once()
+    assert await consumer.replay_dead_letters() == {"replayed": 0, "skipped": 1, "failed": 0}
+    assert await _denials(db_conn, user["id"]) == []
+
+
+async def _dead_letter_session_revoke(client, db_conn, identity, monkeypatch, sid):
+    user = await insert_account(db_conn, role="viewer", perms=("reward:access",))
+    real = proj.add_denial
+    calls = {"n": 0}
+
+    async def flaky(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("hỏng")
+        return await real(*a, **kw)
+
+    monkeypatch.setattr("reward_service.identity_link.consumer.proj.add_denial", flaky)
+    identity.emit("session.revoked", {"account_id": user["id"], "sid": sid})
+    consumer = make_consumer(client, identity, max_attempts=1)
+    await consumer.poll_once()
+    assert await db_conn.fetchval("SELECT count(*) FROM dead_letters WHERE replayed_at IS NULL") == 1
+    return user, consumer
+
+
+async def test_replay_session_revoke_not_skipped_by_other_sid(client, db_conn, identity, monkeypatch):
+    user, consumer = await _dead_letter_session_revoke(client, db_conn, identity, monkeypatch, "sidA")
+    identity.emit("session.revoked", {"account_id": user["id"], "sid": "sidB"})
+    await consumer.poll_once()
+    assert await consumer.replay_dead_letters() == {"replayed": 1, "skipped": 0, "failed": 0}
+    sids = sorted(r["sid"] for r in await db_conn.fetch(
+        "SELECT sid FROM account_denylist WHERE account_id = $1 AND reason = $2", user["id"], proj.SESSION_REASON))
+    assert sids == ["sidA", "sidB"]
+
+
+async def test_replay_session_revoke_superseded_by_whole_account_revoke(client, db_conn, identity, monkeypatch):
+    user, consumer = await _dead_letter_session_revoke(client, db_conn, identity, monkeypatch, "sidA")
+    identity.emit("session.revoked", {"account_id": user["id"]})  # revoke toàn account, mới hơn
+    await consumer.poll_once()
+    assert await consumer.replay_dead_letters() == {"replayed": 0, "skipped": 1, "failed": 0}
+
+
 async def test_malformed_events_go_straight_to_dead_letter_without_retries(client, db_conn, identity):
     identity.emit("account.permission_changed", {"permission": "reward:access", "granted": False})  # thiếu account_id
     identity.emit("account.permission_changed", {"account_id": "x", "permission": "reward:access"})  # thiếu granted

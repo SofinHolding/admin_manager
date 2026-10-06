@@ -61,12 +61,12 @@ Khoá feed do `infra/scripts/bootstrap_dev.py` sinh ở DEV (`IDENTITY_FEED_KEY_
   Thu quyền tài khoản role=discord (chỉ có quyền ngầm) trả `409` cho tới khi Identity chuyển nó sang permission tường minh.
 - Thu quyền/khoá/xoá/thu hồi phiên: Identity phát event → Reward ghi `account_denylist`, **tạm dừng ngay** job đang chạy của
   tài khoản đó và từ chối job mới (không đợi token hết hạn).
-- Dead-letter feed: `python -m identity_link.consumer replay` (chạy trong thư mục `reward-service`, cần env như service).
+- Dead-letter feed: `PYTHONPATH=src python -m reward_service.identity_link.consumer replay` (chạy trong thư mục `services/reward-service`, cần env như service; có `vendor/` thì thêm vào PYTHONPATH).
 
 ## 2b. Di chuyển dữ liệu từ `ufsync` sang `reward_db` (kế hoạch, làm TAY khi được duyệt)
 
 Các bảng `reward_*` hiện nằm trong `ufsync`. Cutover: dừng `ufreward` → `pg_dump --data-only -t 'reward_*'` từ `ufsync` →
-restore vào `reward_db` (đã `python -m store.migrate`) → đặt `.env` mới → start. Không cần dữ liệu `accounts`: `account_id` trong
+restore vào `reward_db` (đã `PYTHONPATH=src python -m reward_service.store.migrate`) → đặt `.env` mới → start. Không cần dữ liệu `accounts`: `account_id` trong
 `reward_*` là id tài khoản của Identity (giữ nguyên giá trị). `account_projection` tự dựng lại khi consumer replay feed từ 0.
 
 ## 3. nginx — thêm 1 location vào server block đang phục vụ admin_manager
@@ -100,11 +100,11 @@ location /v1/reward/ {
 
 Push `main` đụng `services/reward-service/**` → workflow chạy:
 
-1. **test**: cần Postgres có DB `reward_db` + user `reward_svc` (qua `REWARD_TEST_DATABASE_URL`), `pytest tests/ -q` — fail thì DỪNG. (Workflow CI hiện còn theo mô hình cũ — cần cập nhật riêng.)
-2. **deploy**: rsync `services/reward-service/` (trừ `.env`, `tests/`, `.venv`) lên `/srv/reward/`, rồi trên VPS:
+1. **test**: cần Postgres có DB `reward_db` + user `reward_svc` (qua `REWARD_TEST_DATABASE_URL`), `pytest tests/ -q` — fail thì DỪNG. Job test dùng `services: postgres` + `REWARD_TEST_DATABASE_URL` (không còn `JWT_SECRET`/`ADMIN_API_BASE`/`DATABASE_URL`). Trigger tự động đang TẮT (chỉ `workflow_dispatch`) cho tới Phase 6.
+2. **deploy**: rsync `services/reward-service/` (trừ `.env`, `tests/`, `.venv`, `vendor/`) lên `/srv/reward/`; rsync riêng `packages/sdk-python/manager_sdk` và `packages/contracts/python/manager_contracts` vào `/srv/reward/vendor/` (`sdk_path.py` tự tìm ở đó; `REWARD_SDK_PATH` chỉ cần khi đặt chỗ khác), rồi trên VPS:
    - `scripts/check-env.py` — preflight: Fernet hợp lệ, `REWARD_DATABASE_URL` kết nối được và **không** có bảng của
      Identity (tránh trỏ nhầm DB dùng chung), cấu hình Identity hợp lệ, JWKS lấy được (chỉ cảnh báo). **Fail → không restart**.
-   - `python -m store.migrate` — áp `reward_*` migration (idempotent, chỉ `CREATE IF NOT EXISTS`).
+   - `PYTHONPATH=src python -m reward_service.store.migrate` — áp `reward_*` migration (idempotent, chỉ `CREATE IF NOT EXISTS`).
    - `pm2 restart ufreward` (lần đầu: `pm2 start run.sh --name ufreward --interpreter bash`).
    - `curl /v1/reward/health` — smoke, fail → deploy coi như hỏng.
 

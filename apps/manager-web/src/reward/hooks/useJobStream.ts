@@ -9,8 +9,9 @@
  * GET /jobs/{id} + GET /jobs/{id}/items mỗi 2 giây, không cần trang gọi sửa lại.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { getAccessToken, jobsApi, type JobCounts, type JobItem } from "../api";
+import { useEffect, useState } from "react";
+import { apiFetchStream } from "../../api";
+import { jobsApi, type JobCounts, type JobItem } from "../api";
 
 export type StreamMode = "sse" | "poll" | "connecting";
 
@@ -31,6 +32,9 @@ export interface JobStreamState {
 
 const POLL_INTERVAL_MS = 2000;
 
+/** Trạng thái job đã kết thúc: không còn gì để theo dõi (không polling, không kết nối lại). */
+const TERMINAL_STATUSES = new Set(["completed", "stopped", "invalid"]);
+
 function parseSseBuffer(buffer: string, onEvent: (event: string, data: string) => void): string {
   const frames = buffer.split("\n\n");
   const remainder = frames.pop() ?? "";
@@ -46,30 +50,52 @@ function parseSseBuffer(buffer: string, onEvent: (event: string, data: string) =
   return remainder;
 }
 
+const INITIAL_STATE: JobStreamState = {
+  status: null,
+  counts: null,
+  lastItem: null,
+  itemTick: 0,
+  mode: "connecting",
+};
+
 export function useJobStream(jobId: string | undefined): JobStreamState {
-  const [state, setState] = useState<JobStreamState>({
-    status: null,
-    counts: null,
-    lastItem: null,
-    itemTick: 0,
-    mode: "connecting",
-  });
-  const abortRef = useRef<AbortController | null>(null);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
-  const stoppedRef = useRef(false);
+  const [state, setState] = useState<JobStreamState>(INITIAL_STATE);
 
   useEffect(() => {
-    stoppedRef.current = false;
+    // Mọi cờ/timer sống trong CLOSURE của đúng lần chạy effect này: handler của lần chạy cũ (đổi jobId, StrictMode
+    // mount-unmount-mount) không thể startPolling/ghi state cho job mới.
+    setState(INITIAL_STATE); // đổi job: không giữ dữ liệu của job cũ
     if (!jobId) return;
 
+    let cancelled = false;
+    let terminal = false; // job đã completed/stopped/invalid hoặc quyền bị thu hồi ⇒ không polling
+    let pollTimer: ReturnType<typeof setInterval> | undefined;
+    const controller = new AbortController();
+    let release: () => void = () => {};
+
+    const update = (fn: (s: JobStreamState) => JobStreamState) => {
+      if (!cancelled) setState(fn);
+    };
+
+    const stopPolling = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = undefined;
+      }
+    };
+
     const startPolling = () => {
-      if (pollTimerRef.current) return;
-      setState((s) => ({ ...s, mode: "poll" }));
+      if (cancelled || terminal || pollTimer) return;
+      update((s) => ({ ...s, mode: "poll" }));
       const tick = async () => {
         try {
           const job = await jobsApi.get(jobId);
-          if (stoppedRef.current) return;
-          setState((s) => ({
+          if (cancelled) return;
+          if (TERMINAL_STATUSES.has(job.status)) {
+            terminal = true;
+            stopPolling();
+          }
+          update((s) => ({
             ...s,
             status: job.status,
             counts: job.counts,
@@ -80,22 +106,19 @@ export function useJobStream(jobId: string | undefined): JobStreamState {
           // Bỏ qua một lần lỗi mạng, thử lại ở tick kế tiếp.
         }
       };
-      tick();
-      pollTimerRef.current = setInterval(tick, POLL_INTERVAL_MS);
+      void tick();
+      pollTimer = setInterval(tick, POLL_INTERVAL_MS);
     };
 
     const startSse = async () => {
-      const controller = new AbortController();
-      abortRef.current = controller;
       try {
-        const token = getAccessToken();
-        const r = await fetch(jobsApi.streamUrl(jobId), {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-          signal: controller.signal,
-        });
+        // Qua lõi http (Bearer + refresh 401 + gắn AbortController), KHÔNG fetch thô.
+        const opened = await apiFetchStream(jobsApi.streamUrl(jobId), undefined, { signal: controller.signal });
+        release = opened.release;
+        const r = opened.response;
         if (!r.ok || !r.body) throw new Error(`SSE lỗi ${r.status}`);
 
-        setState((s) => ({ ...s, mode: "sse" }));
+        update((s) => ({ ...s, mode: "sse" }));
         const reader = r.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -108,32 +131,37 @@ export function useJobStream(jobId: string | undefined): JobStreamState {
             try {
               const parsed = JSON.parse(data);
               if (event === "counts") {
-                setState((s) => ({ ...s, counts: parsed as JobCounts }));
+                update((s) => ({ ...s, counts: parsed as JobCounts }));
               } else if (event === "item") {
-                setState((s) => ({ ...s, lastItem: parsed as JobItem, itemTick: s.itemTick + 1 }));
+                update((s) => ({ ...s, lastItem: parsed as JobItem, itemTick: s.itemTick + 1 }));
               } else if (event === "job") {
-                setState((s) => ({ ...s, status: (parsed as JobStatusEvent).status }));
+                const st = (parsed as JobStatusEvent).status;
+                if (TERMINAL_STATUSES.has(st)) terminal = true;
+                update((s) => ({ ...s, status: st }));
+              } else if (event === "revoked") {
+                terminal = true; // quyền bị thu hồi giữa chừng: server đã đóng stream, polling chỉ ra 403
               }
             } catch {
               // Khung dữ liệu hỏng — bỏ qua, không làm chết stream.
             }
           });
         }
-        if (!stoppedRef.current) startPolling();
+        // Stream đóng bình thường: job đã xong/bị thu quyền thì dừng hẳn; còn lại (đóng do nghỉ lâu...) mới polling.
+        if (!cancelled && !terminal) startPolling();
       } catch {
-        if (!stoppedRef.current) startPolling();
+        if (!cancelled && !terminal) startPolling();
+      } finally {
+        release();
       }
     };
 
-    startSse();
+    void startSse();
 
     return () => {
-      stoppedRef.current = true;
-      abortRef.current?.abort();
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current);
-        pollTimerRef.current = undefined;
-      }
+      cancelled = true;
+      controller.abort();
+      release();
+      stopPolling();
     };
   }, [jobId]);
 

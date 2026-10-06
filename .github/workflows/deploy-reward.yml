@@ -4,6 +4,8 @@ name: Deploy Reward Service lên VPS
 # UI discord đã gộp vào admin-web → phần frontend do deploy.yml (paths apps/manager-web/**) lo;
 # workflow này CHỈ deploy backend reward-service. Paths filter services/reward-service/** đảm bảo
 # sửa backend reward KHÔNG restart admin-server và ngược lại.
+# Reward là package `reward_service` (src/) và cần `manager_sdk`/`manager_contracts` của monorepo: workflow rsync chúng
+# vào <DEPLOY_DIR>/vendor/ (sdk_path.py tìm ở đó; có thể đè bằng REWARD_SDK_PATH trong .env).
 # TẠM TẮT trigger tự động trong giai đoạn tái cấu trúc microservices (nhánh refactor/microservices).
 # Bật lại khi hoàn thiện (Phase 6): khôi phục khối `push` bên dưới.
 #   push:
@@ -28,7 +30,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ufsync_test
+          POSTGRES_DB: reward_test
         ports:
           - 5432:5432
         options: >-
@@ -48,12 +50,14 @@ jobs:
       - name: Chạy test
         working-directory: services/reward-service
         env:
-          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ufsync_test
-          JWT_SECRET: ci-test-secret
-          ADMIN_API_BASE: http://127.0.0.1:8421
+          # DB test RIÊNG của Reward (tests/conftest.py đọc REWARD_TEST_DATABASE_URL; thiếu thì test cần DB SKIP —
+          # SKIP không phải PASS). Không còn JWT_SECRET/ADMIN_API_BASE/DATABASE_URL: Reward xác thực bằng JWKS giả
+          # của fake Identity trong test và dùng REWARD_DATABASE_URL riêng.
+          REWARD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/reward_test
           REWARD_PORT: "8422"
           REWARD_TOKEN_KEY: -FbRU-EMyEVu0_cMu1oGTYXxL467krFp1zcp7WGhljA=
-        run: python -m pytest tests/ -q
+          PYTHONIOENCODING: utf-8
+        run: python -m pytest tests/ -q -p no:cacheprovider -rs
 
   deploy:
     name: Deploy backend
@@ -72,15 +76,28 @@ jobs:
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
       - name: Đẩy reward-service lên VPS
         run: |
+          # `--exclude=/vendor/`: rsync --delete KHÔNG được xóa vendor/ (bước dưới mới là nơi quản lý nó).
           rsync -az --delete \
-            --exclude='.env' \
-            --exclude='__pycache__/' \
-            --exclude='*.pyc' \
-            --exclude='.venv/' \
-            --exclude='.pytest_cache/' \
-            --exclude='tests/' \
-            services/reward-service/ \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.DEPLOY_DIR }}/
+             --exclude='.env' \
+             --exclude='__pycache__/' \
+             --exclude='*.pyc' \
+             --exclude='.venv/' \
+             --exclude='.pytest_cache/' \
+             --exclude='tests/' \
+             --exclude='/vendor/' \
+             services/reward-service/ \
+             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.DEPLOY_DIR }}/
+      - name: Đẩy manager_sdk + manager_contracts vào vendor/
+        run: |
+          # manager_sdk (verify RS256/JWKS, FeedClient) không phải gói PyPI; manager_contracts cần cho envelope lỗi.
+          # sdk_path.py tự thêm <DEPLOY_DIR>/vendor vào sys.path (không cần REWARD_SDK_PATH nếu dùng đúng chỗ này).
+          ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p ${{ env.DEPLOY_DIR }}/vendor"
+          rsync -az --delete --exclude='__pycache__/' --exclude='*.pyc' \
+             packages/sdk-python/manager_sdk/ \
+             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.DEPLOY_DIR }}/vendor/manager_sdk/
+          rsync -az --delete --exclude='__pycache__/' --exclude='*.pyc' \
+             packages/contracts/python/manager_contracts/ \
+             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.DEPLOY_DIR }}/vendor/manager_contracts/
       - name: Preflight, migrate & restart
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -94,8 +111,9 @@ jobs:
             .venv/bin/pip install -q --upgrade pip
             .venv/bin/pip install -q -r requirements.txt
             set -a; source .env; set +a
+            export PYTHONPATH="$PWD/src:$PWD/vendor${PYTHONPATH:+:$PYTHONPATH}"
             .venv/bin/python scripts/check-env.py
-            .venv/bin/python -m store.migrate
+            .venv/bin/python -m reward_service.store.migrate
             if pm2 list | grep -q ufreward; then
               pm2 restart ufreward
             else

@@ -10,7 +10,7 @@
  * - Thành công: nếu thân là envelope `{ok:true,data:...}` thì bóc `data`; legacy trả nguyên.
  */
 
-import { clearTokens, getAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from "../auth/tokenStore";
+import { clearTokens, getAccessToken, getAuthEpoch, getRefreshToken, setAccessToken, setRefreshToken } from "../auth/tokenStore";
 import { ApiError, errorFromResponse, isAbortError } from "./errors";
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -25,12 +25,13 @@ export interface RequestOpts {
 }
 
 export type SessionEndReason = "expired" | "revoked";
-type RefreshOutcome = "ok" | "revoked" | "rejected" | "unavailable";
+type RefreshOutcome = "ok" | "revoked" | "rejected" | "unavailable" | "stale";
 type RefreshResult = { access_token: string; refresh_token?: string };
 export type RefreshStrategy = (refreshToken: string, signal?: AbortSignal) => Promise<RefreshResult>;
 
 let sessionEndedCb: ((reason: SessionEndReason) => void) | null = null;
 let refreshing: Promise<RefreshOutcome> | null = null;
+let refreshingEpoch = -1;
 
 export function onSessionExpired(cb: ((reason: SessionEndReason) => void) | null): void {
   sessionEndedCb = cb;
@@ -106,25 +107,33 @@ export async function rawFetch(url: string, init: RequestInit = {}, opts: Reques
 async function tryRefresh(): Promise<RefreshOutcome> {
   const rt = getRefreshToken();
   if (!rt) return "rejected";
+  const epoch = getAuthEpoch();
   // Gộp nhiều request refresh đồng thời thành MỘT: refresh token xoay vòng, lần dùng thứ hai sẽ bị coi là tái sử dụng.
-  if (refreshing) return refreshing;
-  refreshing = (async (): Promise<RefreshOutcome> => {
+  // Chỉ gộp trong cùng một phiên (epoch): refresh của phiên cũ không được trả kết quả cho request của phiên mới.
+  if (refreshing && refreshingEpoch === epoch) return refreshing;
+  refreshingEpoch = epoch;
+  let mine: Promise<RefreshOutcome> | null = null;
+  mine = (async (): Promise<RefreshOutcome> => {
     try {
       const d = await refreshStrategy(rt);
+      // Đã đăng xuất / đăng nhập lại trong lúc refresh bay: BỎ kết quả, không ghi lại token của phiên cũ.
+      if (getAuthEpoch() !== epoch) return "stale";
       setAccessToken(d.access_token);
       if (d.refresh_token) setRefreshToken(d.refresh_token); // xoay vòng: thay token mới, giữ nguyên chế độ lưu
       return "ok";
     } catch (e) {
+      if (getAuthEpoch() !== epoch) return "stale";
       if (e instanceof ApiError) {
         if (e.code === "AUTH_REVOKED") return "revoked";
         if (e.status === 401 || e.status === 400 || e.status === 403) return "rejected";
       }
       return "unavailable"; // mạng/5xx: KHÔNG đăng xuất, để UI báo không khả dụng
     } finally {
-      refreshing = null;
+      if (refreshing === mine) refreshing = null;
     }
   })();
-  return refreshing;
+  refreshing = mine;
+  return mine;
 }
 
 // ── Fetch có xác thực ───────────────────────────────────────────────────────────────────────
@@ -155,6 +164,7 @@ async function authedFetch(url: string, init: RequestInit, opts: RequestOpts): P
   }
   pending.done();
   const outcome = await tryRefresh();
+  if (outcome === "stale") throw new ApiError("Phiên đã kết thúc", { status: 401, code: "AUTH_INVALID" }); // đã đăng xuất: không báo "hết hạn"
   if (outcome === "revoked") { endSession("revoked"); throw new ApiError("Phiên đã bị thu hồi", { status: 401, code: "AUTH_REVOKED" }); }
   if (outcome === "rejected") { endSession("expired"); throw new ApiError("Phiên đã hết hạn", { status: 401, code: "AUTH_INVALID" }); }
   if (outcome === "unavailable") throw new ApiError("Không làm mới được phiên — dịch vụ tạm thời không khả dụng", { status: 503, code: "UNAVAILABLE" });
@@ -221,9 +231,21 @@ export async function apiFetchRaw(url: string, init?: RequestInit, opts: Request
   return response;
 }
 
+/**
+ * Mở luồng dài (SSE) có Bearer + refresh 401. KHÔNG timeout tổng, và liên kết `opts.signal` với kết nối cho tới khi
+ * caller gọi `release()` (khác `apiFetchRaw`: nó gỡ liên kết huỷ ngay khi có header nên không huỷ được thân stream).
+ */
+export async function apiFetchStream(
+  url: string, init?: RequestInit, opts: RequestOpts = {},
+): Promise<{ response: Response; release: () => void }> {
+  const { response, done } = await authedFetch(url, init ?? {}, { ...opts, timeoutMs: 0 });
+  return { response, release: done };
+}
+
 /** Test seam: trạng thái gộp refresh đang chạy. */
 export function __resetHttpForTests(): void {
   refreshing = null;
+  refreshingEpoch = -1;
   sessionEndedCb = null;
   refreshStrategy = passwordRefresh;
 }

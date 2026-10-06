@@ -47,6 +47,14 @@ logger = logging.getLogger("reward.jobs")
 
 _RUNNABLE_STATUSES = ("validated", "paused", "stopped")
 
+# SSE: kiểm lại quyền/denylist định kỳ (token còn hạn nhưng vừa bị thu quyền/khóa phải bị ngắt NGAY, không chờ job xong);
+# job không chạy (paused/validated...) thì poll thưa hơn và tự đóng sau một thời gian không đổi để không giữ kết nối vô hạn
+# (client tự rơi về polling/mở lại khi cần).
+SSE_POLL_ACTIVE_S = 0.5
+SSE_POLL_IDLE_S = 2.0
+SSE_AUTH_RECHECK_S = 3.0
+SSE_IDLE_CLOSE_S = 300.0
+
 
 def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
@@ -301,6 +309,8 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
             last_event_id = 0
             last_ping = 0.0
             loop = asyncio.get_event_loop()
+            last_auth_check = loop.time()
+            last_change = loop.time()
             while True:
                 async with pool.acquire() as conn:
                     job = await jobs_repo.get_job(conn, job_id)
@@ -308,8 +318,19 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
                         break
                     counts = await items_repo.counts(conn, job_id)
                     new_events = await events_repo.list_events(conn, job_id, after_id=last_event_id)
+                    denied = None
+                    if loop.time() - last_auth_check >= SSE_AUTH_RECHECK_S:
+                        last_auth_check = loop.time()
+                        denied = await projection_repo.is_denied(
+                            conn, account_id=ctx.account_id, sid=ctx.sid, iat=ctx.iat)
+                if denied:
+                    # Bị thu quyền/khóa/thu hồi phiên giữa chừng: báo rồi đóng stream, không rò thêm dữ liệu job.
+                    yield f"event: revoked\ndata: {json.dumps({'reason': denied})}\n\n"
+                    break
+                changed = False
                 if counts != last_counts:
                     last_counts = counts
+                    changed = True
                     yield f"event: counts\ndata: {json.dumps(counts)}\n\n"
                     # Counts đổi = có item vừa đổi trạng thái. Phát thêm `item` để trang chi tiết
                     # refetch bảng item + job — nếu chỉ dựa vào 4 loại event bên dưới thì bảng item
@@ -318,9 +339,11 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
                     yield f"event: item\ndata: {json.dumps({'type': 'counts_changed'}, default=str)}\n\n"
                 if job["status"] != last_status:
                     last_status = job["status"]
+                    changed = True
                     yield f"event: job\ndata: {json.dumps({'status': job['status']})}\n\n"
                 for ev in new_events:
                     last_event_id = max(last_event_id, ev["id"])
+                    changed = True
                     if ev["type"] in (
                         "auto_pause", "operator_resolve", "stopped", "recovery", "token_disabled",
                         "reconcile", "retry_unknown",
@@ -330,10 +353,16 @@ def make_router(security: Security, pool: Pool, worker_manager: WorkerManager) -
                     yield ": bye\n\n"
                     break
                 now = loop.time()
+                if changed:
+                    last_change = now
+                running = job["status"] == "running"
+                if not running and now - last_change >= SSE_IDLE_CLOSE_S:
+                    yield ": idle\n\n"
+                    break
                 if now - last_ping >= 15.0:
                     last_ping = now
                     yield ": ping\n\n"
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(SSE_POLL_ACTIVE_S if running else SSE_POLL_IDLE_S)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 

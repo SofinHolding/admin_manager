@@ -34,6 +34,14 @@ class UpstreamAborted(Exception):
     """Upstream đứt giữa chừng khi đã gửi một phần phản hồi: buộc đóng kết nối để client không thấy cụt-như-hoàn-chỉnh."""
 
 
+# Route có thể chạy lâu hợp lệ: timeout đọc ở đây không làm mở circuit breaker.
+_LONG_RUNNING_PREFIXES = ("/v1/admin/",)
+
+
+def _is_long_running_path(path: str) -> bool:
+    return any(path.startswith(p) for p in _LONG_RUNNING_PREFIXES)
+
+
 class _BodyAbort(Exception):
     pass
 
@@ -135,7 +143,10 @@ class Proxy:
             if not isinstance(exc, Exception):
                 raise
             timed_out = isinstance(exc, httpx.TimeoutException)
-            breaker.record_failure()
+            # Timeout ĐỌC ở route quản trị (vd. analytics rebuild chạy lâu) là bình thường, không phải upstream hỏng:
+            # không tính vào breaker, kẻo một thao tác admin chậm làm mở mạch cả service. Lỗi kết nối vẫn tính.
+            if not (isinstance(exc, httpx.ReadTimeout) and _is_long_running_path(forward_path.decode("latin-1"))):
+                breaker.record_failure()
             info.outcome = "upstream_timeout" if timed_out else "upstream_unreachable"
             info.error = type(exc).__name__
             await send_error(send, 504 if timed_out else 502, "UNAVAILABLE",

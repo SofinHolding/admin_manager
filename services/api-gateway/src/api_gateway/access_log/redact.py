@@ -16,6 +16,9 @@ _SENSITIVE_KEY = re.compile(
 _SECRET_VALUE = re.compile(
     r"(?:^eyJ[\w-]{5,})|(?:\bmpk_[\w.-]+)|(?:\bBearer\s+\S+)|(?:^[A-Za-z0-9_\-]{40,}$)|(?:^[0-9a-fA-F]{32,}$)")
 _SECRET_SEGMENT = re.compile(r"^(?:eyJ[\w-]+(?:\.[\w-]+)*|mpk_[\w.-]+|[A-Za-z0-9_\-]{40,})$")
+# Invite key đăng ký `XXXX-XXXX` (chữ + số, xem identity registration_keys) xuất hiện TRONG path: DELETE /v1/admin/keys/{key}.
+_INVITE_KEY_SEGMENT = re.compile(r"^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$")
+_KEYS_PREFIX = ("", "v1", "admin", "keys")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _MAX_VALUE = 64
 _MAX_PAIRS = 20
@@ -27,8 +30,14 @@ def _clean(text: str, limit: int) -> str:
 
 def redact_path(path: str) -> str:
     segments = []
-    for seg in path.split("/"):
-        segments.append(REDACTED if _SECRET_SEGMENT.match(seg) else _clean(seg, 128))
+    raw = path.split("/")
+    # Mọi segment SAU `/v1/admin/keys/` đều là khoá đăng ký (che luôn dù hình dạng lạ); nơi khác che theo mẫu.
+    under_keys = tuple(raw[:4]) == _KEYS_PREFIX
+    for i, seg in enumerate(raw):
+        if (seg and under_keys and i >= 4) or _SECRET_SEGMENT.match(seg) or _INVITE_KEY_SEGMENT.match(seg):
+            segments.append(REDACTED)
+        else:
+            segments.append(_clean(seg, 128))
     return _clean("/".join(segments), 512)
 
 

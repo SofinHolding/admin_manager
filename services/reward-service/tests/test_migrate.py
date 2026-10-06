@@ -104,15 +104,15 @@ async def test_002_moves_legacy_token_into_tokens_table(db_conn):
 
 
 async def test_all_migrations_apply_on_empty_database_without_identity_tables(db_conn):
-    """Dựng lại từ DB RỖNG (xoá mọi bảng trong reward_db — DB dành riêng cho Reward): 001→004 áp được mà không cần
-    bảng `accounts`; sau đó không có bảng Identity nào và migration cuối là 004."""
+    """Dựng lại từ DB RỖNG (xoá mọi bảng trong reward_db — DB dành riêng cho Reward): 001→005 áp được mà không cần
+    bảng `accounts`; sau đó không có bảng Identity nào và migration cuối là 005."""
     names = [r["tablename"] for r in await db_conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public'")]
     for name in names:
         await db_conn.execute(f'DROP TABLE IF EXISTS "{name}" CASCADE')
     pool = Pool(TEST_DATABASE_URL)
     await pool.open()
     try:
-        assert await migrate.run(pool) == LATEST == "004_reward_identity_link"
+        assert await migrate.run(pool) == LATEST == "005_reward_feed_subject_key"
         assert await _identity_tables_present(db_conn) == []
         for table in REWARD_TABLES + BOOKKEEPING_TABLES:
             assert await db_conn.fetchval("SELECT to_regclass($1) IS NOT NULL", f"public.{table}"), table

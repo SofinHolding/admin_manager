@@ -18,6 +18,9 @@ export const LEGACY_REFRESH_KEY = "admin_refresh_token";
 
 let accessToken = "";
 let refreshToken = "";
+/** Thế hệ phiên: tăng mỗi khi xoá/đặt lại token (đăng xuất, đăng nhập mới). Refresh đang bay ghi nhận epoch lúc bắt
+ *  đầu và BỎ kết quả nếu epoch đã đổi — tránh ghi lại token của phiên cũ sau khi đã đăng xuất. */
+let authEpoch = 0;
 const listeners = new Set<() => void>();
 
 function safeSession(): Storage | null {
@@ -47,6 +50,10 @@ function emit() {
 export function subscribeTokens(cb: () => void): () => void {
   listeners.add(cb);
   return () => { listeners.delete(cb); };
+}
+
+export function getAuthEpoch(): number {
+  return authEpoch;
 }
 
 export function getAccessToken(): string {
@@ -79,6 +86,7 @@ export function setRefreshToken(token: string, persist?: boolean): void {
 }
 
 export function setTokens(access: string, refresh: string, persist = true): void {
+  authEpoch++;
   accessToken = access;
   setRefreshToken(refresh, persist);
   emit();
@@ -95,6 +103,7 @@ export function loadPersistedRefreshToken(): string {
 
 /** Xoá SẠCH mọi thứ liên quan phiên (bộ nhớ + storage + khoá legacy). */
 export function clearTokens(): void {
+  authEpoch++;
   accessToken = "";
   refreshToken = "";
   try { safeSession()?.removeItem(REFRESH_KEY); } catch { /* noop */ }

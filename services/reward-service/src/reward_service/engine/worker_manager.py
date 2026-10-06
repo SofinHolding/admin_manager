@@ -222,6 +222,21 @@ class WorkerManager:
                             conn, job_id=job_id, type="auto_pause", actor="system",
                             payload={"reason": "WORKER_ERROR"})
                         await lock_repo.release(conn, job_id=job_id)
+                except asyncio.CancelledError:
+                    # Task bị huỷ cưỡng bức (quá hạn dừng/tắt service): CancelledError là BaseException nên không lọt
+                    # vào `except Exception`. `JobRunner.run` chỉ nhả lock ở `finally`, KHÔNG đặt lại trạng thái ⇒
+                    # job kẹt `running` dù không còn task. Đặt `paused` (item còn lại giữ pending) rồi huỷ tiếp.
+                    logger.warning("[Reward] Job %s: task bị huỷ cưỡng bức — đặt paused, nhả lock", job_id)
+                    try:
+                        async with self._pool.acquire() as conn:
+                            await jobs_repo.set_status(conn, job_id, "paused")
+                            await events_repo.add_event(
+                                conn, job_id=job_id, type="auto_pause", actor="system",
+                                payload={"reason": "WORKER_CANCELLED"})
+                            await lock_repo.release(conn, job_id=job_id)
+                    except Exception:  # noqa: BLE001 — dọn dẹp lỗi thì recovery lúc boot/lock hết hạn sẽ xử lý
+                        logger.exception("[Reward] Job %s: không đặt lại trạng thái sau khi bị huỷ", job_id)
+                    raise
                 finally:
                     await tokens.close()
                     await http_client.aclose()
