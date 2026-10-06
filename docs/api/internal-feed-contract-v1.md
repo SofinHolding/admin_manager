@@ -62,9 +62,11 @@ Analytics **không đọc DB Integration và không đọc payload thô**. Nó k
 - Mỗi bản ghi canonical có `revision` (bigint toàn cục, gán **lúc commit snapshot**, cùng transaction). Bản ghi bị loại (vắng mặt trong snapshot
   full / đánh dấu xoá) có `removed: true` (lịch sử giữ lại).
 - Chỉ trả dữ liệu của snapshot **đã commit**. Snapshot building/failed/abandoned không bao giờ xuất hiện.
-- `GET /internal/v1/canonical/summary` → `{head_revision, counts{kind:{total,active}}, checksum{kind: "<sha256 hex>"}}` để Analytics đối soát.
+- `GET /internal/v1/canonical/summary` → `{head_revision, counts{kind:{total,active}}, checksum{kind: "<sha256 hex>"}, checksum_algorithm}` để Analytics đối soát.
+  `checksum[kind]` = sha256 (UTF-8) của các dòng sort theo byte nối bằng LF; mỗi dòng `<khoá tự nhiên>|<revision>|<0/1 removed>[|<số liệu hiển thị>]` với khoá tự nhiên KHÔNG dùng id nội bộ:
+  `projects owner|project_key` · `resources owner|platform|resource_type|external_id` · `content owner|platform|resource_type|resource_external_id|external_id` + `|views,reactions,comments` · `metrics owner|platform|resource_type|resource_external_id|YYYY-MM-DD` + `|views` · `events owner|platform|resource_type|resource_external_id|external_id` (null viết `n`).
 - Trường canonical theo `docs/api/ingest-data-contract-v1.md` mục 4, thêm: `owner_account_id`, `client_id`, `platform`, `project_keys` (resources),
-  `resource_id`/`resource_external_id`, `observed_at`, `revision`, `removed`.
+  `resource_id`/`resource_external_id`/`resource_type` (content, metrics, events — `resource_type` của resource cha, additive), `observed_at`, `revision`, `removed`.
 
 Analytics: đọc feed để **biết có gì mới** (event `snapshot.committed`), rồi kéo `canonical/*` từ `after_revision` đã lưu. Mất event cũng không
 sao vì cuối cùng vẫn đồng bộ theo revision (backfill = đặt revision về 0).

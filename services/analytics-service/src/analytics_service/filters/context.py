@@ -11,7 +11,7 @@ from fastapi import Query
 from manager_contracts import ApiError, ErrorCode
 from manager_sdk import Principal
 
-from analytics_service.dates import DEFAULT_RANGE_DAYS, parse_iso_date
+from analytics_service.dates import DEFAULT_RANGE_DAYS, MAX_RANGE_DAYS, MAX_YEAR, MIN_YEAR, parse_iso_date
 
 
 class FilterQuery:
@@ -79,14 +79,27 @@ def build_filter_context(query: FilterQuery, principal: Principal, *, today: dat
     - admin/dash_admin: xem mọi owner, hoặc owner chỉ định;
     - người khác: luôn bị ép về chính mình (`sub`), bất kể `owner_account_id` gửi lên."""
     date_to = query.date_to or today.isoformat()
-    if parse_iso_date(date_to) is None:
-        raise ApiError(ErrorCode.REQUEST_VALIDATION_FAILED, "date_to phải có dạng YYYY-MM-DD", status_code=422)
+    to_day = parse_iso_date(date_to)
+    if to_day is None:
+        raise ApiError(ErrorCode.REQUEST_VALIDATION_FAILED,
+                       f"date_to phải có dạng YYYY-MM-DD, năm {MIN_YEAR}-{MAX_YEAR}", status_code=422)
     if query.date_from:
         date_from = query.date_from
-        if parse_iso_date(date_from) is None:
-            raise ApiError(ErrorCode.REQUEST_VALIDATION_FAILED, "date_from phải có dạng YYYY-MM-DD", status_code=422)
+        from_day = parse_iso_date(date_from)
+        if from_day is None:
+            raise ApiError(ErrorCode.REQUEST_VALIDATION_FAILED,
+                           f"date_from phải có dạng YYYY-MM-DD, năm {MIN_YEAR}-{MAX_YEAR}", status_code=422)
     else:
-        date_from = (date.fromisoformat(date_to) - timedelta(days=DEFAULT_RANGE_DAYS - 1)).isoformat()
+        from_day = to_day - timedelta(days=DEFAULT_RANGE_DAYS - 1)
+        if from_day.year < MIN_YEAR:
+            from_day = date(MIN_YEAR, 1, 1)
+        date_from = from_day.isoformat()
+    # Khoảng đảo hoặc quá dài không được trả 200 toàn số 0 (người dùng tưởng "không có dữ liệu"): 422 rõ ràng.
+    if from_day > to_day:
+        raise ApiError(ErrorCode.REQUEST_VALIDATION_FAILED, "date_from không được sau date_to", status_code=422)
+    if (to_day - from_day).days > MAX_RANGE_DAYS:
+        raise ApiError(ErrorCode.REQUEST_VALIDATION_FAILED,
+                       f"Khoảng ngày tối đa {MAX_RANGE_DAYS + 1} ngày", status_code=422)
 
     if principal.is_admin:
         owner: str | None = query.owner_account_id or None

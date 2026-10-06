@@ -32,7 +32,15 @@ class PermanentEventError(Exception):
         self.code = code
 
 
-async def apply_event(conn: asyncpg.Connection, clients: ClientService, event: dict, now: datetime) -> None:
+def _seq(event: dict) -> int:
+    seq = event.get("seq")
+    return seq if isinstance(seq, int) and not isinstance(seq, bool) and seq > 0 else 0
+
+
+async def apply_event(conn: asyncpg.Connection, clients: ClientService, event: dict, now: datetime, *,
+                      replay: bool = False) -> None:
+    """`replay=True`: áp lại event dead-letter (có thể CŨ hơn trạng thái hiện tại). Khi đó `account.registered` chỉ điền
+    chỗ trống của projection và `account.status_changed` bị bỏ nếu `seq` <= `status_seq` đã ghi (event mới hơn đã đặt status)."""
     etype, data = event["type"], event.get("data") or {}
     account_id = data.get("account_id")
     if etype not in HANDLED_TYPES:
@@ -40,18 +48,19 @@ async def apply_event(conn: asyncpg.Connection, clients: ClientService, event: d
     if not isinstance(account_id, str) or not account_id:
         raise PermanentEventError("EVENT_INVALID", "thiếu account_id")
     if etype == "account.registered":
-        await _registered(conn, clients, data, account_id, now)
+        await _registered(conn, clients, data, account_id, now, seq=_seq(event), replay=replay)
     elif etype == "account.verified":
         await _verified(conn, account_id, now)
     elif etype == "account.status_changed":
-        await _status_changed(conn, clients, data, account_id, now)
+        await _status_changed(conn, clients, data, account_id, now, seq=_seq(event))
     elif etype == "account.deleted":
-        await _deleted(conn, clients, account_id, now)
+        await _deleted(conn, clients, account_id, now, seq=_seq(event))
 
 
-async def _registered(conn, clients: ClientService, data: dict, account_id: str, now: datetime) -> None:
+async def _registered(conn, clients: ClientService, data: dict, account_id: str, now: datetime, *, seq: int = 0,
+                      replay: bool = False) -> None:
     await repository.upsert_projection(conn, account_id, now=now, username=data.get("username"),
-                                       status=data.get("status"), email_verified=None)
+                                       status=data.get("status"), email_verified=None, status_seq=seq, fill_only=replay)
     prov = data.get("provisioning")
     if not prov:
         return
@@ -96,11 +105,15 @@ async def _verified(conn, account_id: str, now: datetime) -> None:
             await events.client_provisioned(conn, client_id=client["id"], account_id=account_id, status="active")
 
 
-async def _status_changed(conn, clients: ClientService, data: dict, account_id: str, now: datetime) -> None:
+async def _status_changed(conn, clients: ClientService, data: dict, account_id: str, now: datetime, *,
+                          seq: int = 0) -> None:
     status = data.get("status")
     if status not in ("pending", "active", "suspended"):
         raise PermanentEventError("EVENT_INVALID", "status không hợp lệ")
-    proj = await repository.upsert_projection(conn, account_id, now=now, status=status)
+    current = await repository.get_projection(conn, account_id)
+    if seq and current is not None and seq <= current.get("status_seq", 0):
+        return   # event cũ hơn trạng thái đã ghi (replay dead-letter sau khi event mới hơn đã áp): không đảo ngược
+    proj = await repository.upsert_projection(conn, account_id, now=now, status=status, status_seq=seq)
     for client in await repository.by_owner(conn, account_id, lock=True):
         if status == "suspended" and client["status"] in ("active", "pending_email_verification"):
             await clients.change_status(conn, client, "suspended", by="account")
@@ -109,8 +122,8 @@ async def _status_changed(conn, clients: ClientService, data: dict, account_id: 
             await repository.set_status(conn, client["id"], restored, None, now)
 
 
-async def _deleted(conn, clients: ClientService, account_id: str, now: datetime) -> None:
-    await repository.upsert_projection(conn, account_id, now=now, status="deleted")
+async def _deleted(conn, clients: ClientService, account_id: str, now: datetime, *, seq: int = 0) -> None:
+    await repository.upsert_projection(conn, account_id, now=now, status="deleted", status_seq=seq)   # xoá là trạng thái cuối
     for client in await repository.by_owner(conn, account_id, lock=True):
         if client["status"] != "deleted":
             await clients.change_status(conn, client, "deleted", by="account")

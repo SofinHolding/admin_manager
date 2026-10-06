@@ -110,7 +110,7 @@ def compare(ds: Dataset, sel: Selection, date_from: str, date_to: str, dimension
                 add(k, proj.name if proj else k, ek)
         elif dimension == "group":
             for g in ds.groups.values():
-                if ek[2] in g.members:
+                if ds.group_applies(g, ek[0], ek[2]):
                     add(g.id, g.name, ek, {"owner_account_id": g.account_id})
 
     items = []

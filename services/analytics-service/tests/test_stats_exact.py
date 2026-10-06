@@ -110,11 +110,13 @@ async def test_viewer_is_forced_to_self_even_when_asking_for_someone_else(seeded
         assert "pgB" not in str(body) and body["filter"]["owner_account_id"] == OWN_A
 
 
-async def test_invalid_range_is_empty_not_an_error(seeded):
-    inverted = (await seeded.get("/v1/analytics/summary", date_from="2026-10-03", date_to="2026-10-01")).json()
-    assert inverted["total_views"] == 0 and inverted["days_in_range"] == 0 and inverted["videos_posted"] == 0
-    too_long = (await seeded.get("/v1/analytics/traffic", date_from="2024-01-01", date_to="2026-10-01")).json()
-    assert too_long["days"] == [] and too_long["totals"]["views"] == 0
+async def test_invalid_range_is_422_not_a_silent_zero(seeded):
+    """ĐÃ ĐỔI có chủ đích (lỗi #I): trước đây khoảng đảo / quá 400 ngày trả 200 toàn số 0 khiến người dùng tưởng "không có
+    dữ liệu"; nay là 422 rõ ràng (chi tiết từng ca ở tests/test_filters.py). `days_between` thuần vẫn trả rỗng (test_units)."""
+    inverted = await seeded.get("/v1/analytics/summary", date_from="2026-10-03", date_to="2026-10-01")
+    assert inverted.status_code == 422 and inverted.json()["error"]["code"] == "REQUEST_VALIDATION_FAILED"
+    too_long = await seeded.get("/v1/analytics/traffic", date_from="2024-01-01", date_to="2026-10-01")
+    assert too_long.status_code == 422 and too_long.json()["error"]["code"] == "REQUEST_VALIDATION_FAILED"
     bad = await seeded.get("/v1/analytics/summary", date_from="khong-phai-ngay")
     assert bad.status_code == 422
 

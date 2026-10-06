@@ -117,6 +117,7 @@ def to_row(kind: str, item: dict) -> dict:
     elif kind == "content":
         metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
         row.update(platform=_text(item, "platform", required=True, limit=40),
+                   resource_type=_text(item, "resource_type", limit=40),
                    resource_external_id=_text(item, "resource_external_id", required=True, limit=200),
                    external_id=_text(item, "external_id", required=True, limit=300),
                    published_date=_date(item, "published_date"), views=_metric(metrics, "views"),
@@ -126,12 +127,13 @@ def to_row(kind: str, item: dict) -> dict:
         metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
         views = _metric(metrics, "views")
         row.update(platform=_text(item, "platform", required=True, limit=40),
+                   resource_type=_text(item, "resource_type", limit=40),
                    resource_external_id=_text(item, "resource_external_id", required=True, limit=200),
                    metric_date=_date(item, "date"), views=views,
                    metrics={k: v for k, v in metrics.items() if isinstance(v, int) and not isinstance(v, bool)})
     elif kind == "events":
         row.update(external_id=_text(item, "external_id", required=True, limit=300),
-                   platform=_text(item, "platform", limit=40),
+                   platform=_text(item, "platform", limit=40), resource_type=_text(item, "resource_type", limit=40),
                    resource_external_id=_text(item, "resource_external_id", limit=200),
                    kind=_text(item, "kind", required=True, limit=60), occurred_date=_date(item, "occurred_date"),
                    project_key=_text(item, "project_key", limit=100))
@@ -141,19 +143,22 @@ def to_row(kind: str, item: dict) -> dict:
 
 
 def natural_key(kind: str, row: dict) -> str:
-    """Khoá tự nhiên dạng chuỗi (dùng cho checksum đối soát và dead-letter id)."""
+    """Khoá tự nhiên dạng chuỗi (dùng cho checksum đối soát và dead-letter id), khớp UNIQUE của Integration:
+    resources (owner, platform, resource_type, external_id); content/events (…resource_type, resource_external_id,
+    external_id); metrics (…resource_type, resource_external_id, date). Phần tử vắng viết rỗng."""
     o = row["owner_account_id"]
     if kind == "projects":
         parts = (o, row["project_key"])
     elif kind == "resources":
-        parts = (o, row["platform"], row["external_id"])
+        parts = (o, row["platform"], row["resource_type"], row["external_id"])
     elif kind == "content":
-        parts = (o, row["platform"], row["resource_external_id"], row["external_id"])
+        parts = (o, row["platform"], row["resource_type"], row["resource_external_id"], row["external_id"])
     elif kind == "metrics":
         md = row["metric_date"]
-        parts = (o, row["platform"], row["resource_external_id"], md.isoformat() if isinstance(md, date) else str(md))
+        parts = (o, row["platform"], row["resource_type"], row["resource_external_id"],
+                 md.isoformat() if isinstance(md, date) else str(md))
     else:
-        parts = (o, row["external_id"])
+        parts = (o, row["platform"], row["resource_type"], row["resource_external_id"], row["external_id"])
     return "|".join(parts)
 
 

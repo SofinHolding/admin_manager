@@ -137,14 +137,17 @@ class SnapshotService:
         canonical_ids: dict[str, str] = {}
         if kind != "resources" and staged:
             wanted = sorted({s.payload["resource_external_id"] for s in staged})
-            canonical_ids = await merge.resolve_resource_ids(conn, ctx.owner_account_id, platform, wanted)
+            canonical_ids, ambiguous = await merge.resolve_resources(conn, ctx.owner_account_id, platform, wanted)
             in_snapshot = await repository.staged_external_ids(conn, snapshot_id, "resources", wanted)
             unknown = set(wanted) - set(canonical_ids) - in_snapshot
             if unknown:
                 for s in staged:
-                    if s.payload["resource_external_id"] in unknown:
-                        rejections.append(Rejection(s.index, s.external_id, ErrorCode.RESOURCE_UNKNOWN.value,
-                                                    "resource_external_id chưa có trong snapshot hay kho (gửi resource trước)",
+                    ext = s.payload["resource_external_id"]
+                    if ext in unknown:
+                        why = ("resource_external_id khớp nhiều resource_type còn sống (không xác định được resource)"
+                               if ext in ambiguous else
+                               "resource_external_id chưa có trong snapshot hay kho, hoặc đã removed (gửi resource trước)")
+                        rejections.append(Rejection(s.index, s.external_id, ErrorCode.RESOURCE_UNKNOWN.value, why,
                                                     s.item_key))
                 staged = [s for s in staged if s.payload["resource_external_id"] not in unknown]
 
@@ -300,7 +303,7 @@ class SnapshotService:
         stats: dict[str, merge.MergeStats] = {}
         stats["resources"] = await merge.merge_resources(
             conn, owner=owner, client_id=client_id, platform=platform, items=staged["resources"],
-            snapshot_id=snapshot_id, now=now)
+            snapshot_id=snapshot_id, now=now, origin="tool")
         referenced = sorted({s.payload["resource_external_id"] for k in ("content", "metrics", "events")
                              for s in staged[k]})
         resource_ids = await merge.resolve_resource_ids(conn, owner, platform, referenced)
@@ -319,14 +322,14 @@ class SnapshotService:
             if scope.get("resources") and "resources" not in superseded:
                 removed["resources"] = await merge.infer_removed_resources(
                     conn, owner=owner, client_id=client_id, platform=platform,
-                    present_ids=stats["resources"].present_ids, stats=stats["resources"])
+                    present_ids=stats["resources"].present_ids, stats=stats["resources"], as_of=snap["observed_at"])
             for key, kind in (("content_window", "content"), ("metrics_window", "metrics"), ("events_window", "events")):
                 window = scope.get(key)
                 if window and kind not in superseded:
                     removed[kind] = await merge.infer_removed_children(
                         conn, merge.SPECS[kind], owner=owner, client_id=client_id, platform=platform,
                         window=(date.fromisoformat(window["from"]), date.fromisoformat(window["to"])),
-                        present_ids=stats[kind].present_ids, stats=stats[kind])
+                        present_ids=stats[kind].present_ids, stats=stats[kind], as_of=snap["observed_at"])
         warnings = []
         covered = {kind for key, kind in _SCOPE_KIND.items() if (snap["scope"] or {}).get(key)}
         if snap["snapshot_type"] == "full" and covered & superseded:

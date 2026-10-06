@@ -70,12 +70,28 @@ async def get_projection(conn: asyncpg.Connection, account_id: str) -> dict | No
 
 
 async def upsert_projection(conn: asyncpg.Connection, account_id: str, *, now: datetime, username: str | None = None,
-                            status: str | None = None, email_verified: bool | None = None) -> dict:
+                            status: str | None = None, email_verified: bool | None = None,
+                            status_seq: int | None = None, fill_only: bool = False) -> dict:
+    """Ghi `account_projection`.
+
+    `status_seq`: seq của event đặt `status` (chỉ tăng, GREATEST) — để replay event cũ nhận ra mình đã bị vượt.
+    `fill_only` (replay `account.registered`): chỉ TẠO hàng nếu chưa có / điền username còn rỗng; KHÔNG ghi đè `status`
+    hay `email_verified` mà event mới hơn đã đặt."""
+    if fill_only:
+        row = await conn.fetchrow(
+            "INSERT INTO account_projection (account_id, username, status, email_verified, updated_at, status_seq) "
+            "VALUES ($1, COALESCE($2, ''), COALESCE($3, 'active'), COALESCE($4, false), $5, COALESCE($6, 0)) "
+            "ON CONFLICT (account_id) DO UPDATE SET username = CASE WHEN account_projection.username = '' "
+            "THEN COALESCE($2, '') ELSE account_projection.username END, updated_at = $5 RETURNING *",
+            account_id, username, status, email_verified, now, status_seq)
+        return dict(row)
     row = await conn.fetchrow(
-        "INSERT INTO account_projection (account_id, username, status, email_verified, updated_at) "
-        "VALUES ($1, COALESCE($2, ''), COALESCE($3, 'active'), COALESCE($4, false), $5) "
+        "INSERT INTO account_projection (account_id, username, status, email_verified, updated_at, status_seq) "
+        "VALUES ($1, COALESCE($2, ''), COALESCE($3, 'active'), COALESCE($4, false), $5, COALESCE($6, 0)) "
         "ON CONFLICT (account_id) DO UPDATE SET username = COALESCE($2, account_projection.username), "
         "status = COALESCE($3, account_projection.status), "
-        "email_verified = COALESCE($4, account_projection.email_verified), updated_at = $5 RETURNING *",
-        account_id, username, status, email_verified, now)
+        "email_verified = COALESCE($4, account_projection.email_verified), updated_at = $5, "
+        "status_seq = CASE WHEN $3::text IS NOT NULL THEN GREATEST(account_projection.status_seq, COALESCE($6, 0)) "
+        "ELSE account_projection.status_seq END RETURNING *",
+        account_id, username, status, email_verified, now, status_seq)
     return dict(row)

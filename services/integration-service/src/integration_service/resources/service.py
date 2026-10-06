@@ -42,7 +42,8 @@ class ResourceService:
         for platform in sorted({s.payload["platform"] for s in staged}):
             group = [s for s in staged if s.payload["platform"] == platform]
             stats = await merge.merge_resources(conn, owner=ctx.owner_account_id, client_id=ctx.client_id,
-                                                platform=platform, items=group, snapshot_id=None, now=now)
+                                                platform=platform, items=group, snapshot_id=None, now=now,
+                                                origin="tool")
             await merge.emit_resource_changes(conn, ctx.owner_account_id, platform, stats)
             for key in totals:
                 totals[key] += getattr(stats, key)

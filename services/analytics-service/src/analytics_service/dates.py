@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta, timezone
 
+MIN_YEAR, MAX_YEAR = 2000, 2100     # ngày ngoài khoảng này không có nghĩa nghiệp vụ (và year 1/9999 làm tràn số học ngày)
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MAX_RANGE_DAYS = 400
 DEFAULT_RANGE_DAYS = 30
 
@@ -35,10 +38,15 @@ def iso_utc(value: datetime | None) -> str | None:
 
 
 def parse_iso_date(value: str) -> date | None:
-    try:
-        return date.fromisoformat(value)
-    except (TypeError, ValueError):
+    """CHỈ nhận `YYYY-MM-DD` (ASCII) trong [MIN_YEAR, MAX_YEAR]. `fromisoformat` còn nhận `20261006`, `2026-W41-1`...
+    — dạng phụ làm phân mảnh khoá cache và lọt qua kiểm tra — nên dùng regex chặt trước."""
+    if not isinstance(value, str) or not _ISO_DATE.fullmatch(value) or not value.isascii():
         return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if MIN_YEAR <= parsed.year <= MAX_YEAR else None
 
 
 def parse_ts(value) -> datetime | None:

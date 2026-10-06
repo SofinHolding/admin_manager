@@ -138,7 +138,7 @@ class ProvisioningConsumer:
             payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
             try:
                 async with self._db.transaction() as conn:
-                    await handlers.apply_event(conn, self._clients, payload, self._now())
+                    await handlers.apply_event(conn, self._clients, payload, self._now(), replay=True)
                     await conn.execute("INSERT INTO processed_events (id, type) VALUES ($1, $2) ON CONFLICT DO NOTHING",
                                        payload["id"], payload["type"])
                     await conn.execute("UPDATE dead_letters SET resolved_at = $2 WHERE id = $1", row["id"], self._now())

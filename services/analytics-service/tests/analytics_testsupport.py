@@ -84,6 +84,8 @@ class FakeFeedServer:
         self.down = False
         self.request_count = 0
         self.duplicate_next = False   # giao hàng at-least-once: trả trùng event
+        self.ignore_type_filter = False   # nguồn lỗi: bỏ qua `types=` và trả mọi event (kể cả event hỏng)
+        self.raw_inject: list = []        # phần tử THÔ (kể cả không phải event hợp lệ) chèn vào trang kế tiếp một lần
         self.app = FastAPI()
         self._routes()
 
@@ -96,12 +98,15 @@ class FakeFeedServer:
         async def feed(after: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=500), types: str = Query(""),
                        x_service_key: str = Header("")) -> dict:
             self._auth(x_service_key)
-            wanted = {t for t in types.split(",") if t}
-            rows = [e for e in self.events if e["seq"] > after and (not wanted or e["type"] in wanted)]
+            wanted = {t for t in types.split(",") if t} if not self.ignore_type_filter else set()
+            rows = [e for e in self.events if e["seq"] > after and (not wanted or e.get("type") in wanted)]
             page = rows[:limit]
             if self.duplicate_next and page:
                 page = page + page[:1]
-            return {"events": page, "next_cursor": page[-1]["seq"] if page else after,
+            cursor = page[-1]["seq"] if page else after
+            if self.raw_inject:
+                page, self.raw_inject = page + self.raw_inject, []
+            return {"events": page, "next_cursor": cursor,
                     "has_more": len(rows) > limit, "head": self.seq}
 
     def emit(self, type_: str, data: dict, *, subject: str = "x:1", event_id: str | None = None) -> dict:
@@ -109,6 +114,14 @@ class FakeFeedServer:
         event = {"seq": self.seq, "id": event_id or "evt_" + uuid.uuid4().hex, "type": type_, "subject": subject,
                  "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "data_version": 1,
                  "data": data}
+        self.events.append(event)
+        return event
+
+    def emit_raw(self, **fields) -> dict:
+        """Event THÔ (không qua chuẩn hoá): để mô phỏng nguồn gửi event thiếu/sai `type`..."""
+        self.seq += 1
+        event = {"seq": self.seq, "id": "evt_" + uuid.uuid4().hex, "time": "2026-10-05T09:00:00Z", "data_version": 1,
+                 "data": {}, **fields}
         self.events.append(event)
         return event
 
@@ -141,13 +154,14 @@ class FakeIntegration(FakeFeedServer):
         o = it["owner_account_id"]
         if kind == "projects":
             return f"{o}|{it['project_key']}"
+        rt = it.get("resource_type") or ""
         if kind == "resources":
-            return f"{o}|{it['platform']}|{it['external_id']}"
+            return f"{o}|{it['platform']}|{rt}|{it['external_id']}"
         if kind == "content":
-            return f"{o}|{it['platform']}|{it['resource_external_id']}|{it['external_id']}"
+            return f"{o}|{it['platform']}|{rt}|{it['resource_external_id']}|{it['external_id']}"
         if kind == "metrics":
-            return f"{o}|{it['platform']}|{it['resource_external_id']}|{it['date']}"
-        return f"{o}|{it['external_id']}"
+            return f"{o}|{it['platform']}|{rt}|{it['resource_external_id']}|{it['date']}"
+        return f"{o}|{it['platform']}|{rt}|{it['resource_external_id']}|{it['external_id']}"
 
     @classmethod
     def line_of(cls, kind: str, i: dict) -> str:

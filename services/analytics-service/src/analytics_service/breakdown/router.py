@@ -16,10 +16,17 @@ compare_router = APIRouter(tags=["analytics"])   # chỉ có ở đường dẫn
 
 
 def _build_breakdown(ds, ctx, sel, extra) -> dict:
+    by_ext: dict[str, list] = {}
+    for e in ds.entities.values():
+        by_ext.setdefault(e.ext_id, []).append(e)
     tags: dict[str, set[str]] = {}
     for g in ds.groups.values():
         for ref, m in g.members.items():
-            if m["platform_tag"]:
+            if not m["platform_tag"]:
+                continue
+            owners = by_ext.get(ref)
+            # ref chưa có kênh nào: giữ như cũ (đếm theo ref); ref trùng external_id của kênh owner KHÁC: không tính
+            if owners is None or any(ds.group_applies(g, e.owner, e.ext_id) for e in owners):
                 tags.setdefault(m["platform_tag"], set()).add(ref)
     return channel_breakdown(ds, sel, tags)
 

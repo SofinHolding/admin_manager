@@ -75,7 +75,7 @@ Migration: `0001_init` · `0002_tokens_permissions_outbox` · `0003_oidc` · `00
 
 **Bảng sở hữu (31):** `integration_clients, integration_credentials, installations, platform_registry, metric_registry, projects, resources, resource_project_bindings, snapshots, snapshot_items, content_items, daily_metrics, activity_events, idempotency_keys, jobs, audit_log, account_projection, outbox, feed_cursor, processed_events, dead_letters` + nhóm `legacy_ingest`:
 `documents, user_meta, account_links, link_codes, platform_policies, resource_sources, resource_assignments, operation_batches, operation_items, operation_audit_log`.
-Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` (schema `legacy_ingest`, dùng chính user `integration_svc` — **không** có role mới).
+Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` (schema `legacy_ingest`, dùng chính user `integration_svc` — **không** có role mới) · `0004_projection_status_seq` (`account_projection.status_seq`).
 
 **Endpoint (máy, `Authorization: Bearer mpk_…`):** `POST /v1/integrations/handshake`, `PUT /projects/{key}`, `POST /resources/batch`, `POST /snapshots`, `POST /snapshots/{id}/{resources|content|metrics|events|commit}`, `GET /snapshots/{id}`,
 `POST /jobs/claim`, `/jobs/{id}/{complete|fail|heartbeat}`.
@@ -88,7 +88,11 @@ Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` (schema `legacy_in
 - Tạo credential cần `email_verified` của owner (`account_projection`; thiếu projection = coi chưa xác thực) ⇒ `EMAIL_NOT_VERIFIED`. Đây là lý do E2E phải xác thực email trước khi lấy API key.
 - `seq` (outbox) và `revision` (canonical) cấp dưới **advisory lock lấy trước khi cấp, giữ tới commit**; khóa advisory phải lấy **trước** khóa dòng (đã từng deadlock giữa đường Tool và đường legacy).
 - Trang `canonical/{kind}` không được cắt ngang một revision (có thể dài hơn `limit`); mỗi item phải có `owner_account_id` và `platform`.
-- Checksum `canonical/summary` = sha256 các dòng đã sort `<khóa tự nhiên>|<revision>|<removed 0/1>` (+ số liệu hiển thị) — **Analytics đối soát theo đúng công thức này; đổi là phá reconcile**.
+- Checksum `canonical/summary` = sha256 các dòng đã sort (byte, `COLLATE "C"`) `<khóa tự nhiên>|<revision>|<removed 0/1>` (+ số liệu hiển thị); khóa tự nhiên **gồm `resource_type`** (xem §4.4) — **Analytics đối soát theo đúng công thức này; đổi là phá reconcile**. Integration tính bằng SQL trên cột của chính nó (không dùng `id` nội bộ); test xuyên hai service `tests/contract/test_integration_analytics_reconcile.py` chạy dữ liệu Integration thật qua consumer thật rồi `reconcile` phải `ok`.
+- Snapshot `full` chỉ suy luận `removed` cho bản ghi có `observed_at` **<= observed_at của snapshot** (bản ghi mới hơn do batch/delta ghi trong lúc snapshot đang building là bằng chứng Tool còn thấy nó). Bản ghi con (content/metrics/events) không gắn được vào resource đã `removed` (`RESOURCE_UNKNOWN`: gửi lại resource để hồi sinh) và không đoán khi nhiều `resource_type` cùng `external_id` còn sống.
+- Tool đẩy một khóa resource ⇒ Tool **tiếp quản** (`origin='tool'`, kể cả resource nhập tay trước đó và kể cả dữ liệu y hệt): Legacy chỉ thấy/sửa `origin<>'tool'` nên không còn ghi đè dữ liệu Tool.
+- Xoay/thu hồi credential: chỉ chủ client hoặc role `admin` (`dash_admin` chỉ xem ⇒ 403 `SCOPE_DENIED`).
+- Replay dead-letter của provisioning: `account.registered` cũ chỉ điền chỗ trống của `account_projection`; `account.status_changed` cũ bị bỏ nếu `status_seq` đã mới hơn (migration `0004`).
 - Snapshot `full` cũ hơn snapshot đã commit chỉ bỏ phần suy luận `removed` (warning `SNAPSHOT_SUPERSEDED`), không lật `current` lùi. Resource nhập tay (`origin<>'tool'`) không bị snapshot `full` của Tool xóa.
 - Mã lỗi riêng của service khai ở `integration_service/errors.py::Extra` (chưa có trong `manager_contracts.ErrorCode`): `PAYLOAD_TOO_LARGE, EMAIL_NOT_VERIFIED, CLIENT_NOT_ACTIVE, ACCOUNT_INACTIVE, CLIENT_NOT_FOUND, CREDENTIAL_NOT_FOUND, LIMIT_EXCEEDED, SNAPSHOT_NOT_WRITABLE, SNAPSHOT_COMMIT_IN_PROGRESS, UNSUPPORTED_ENCODING, JOB_INVALID_STATE, JOB_NOT_ELIGIBLE`.
 - OpenAPI đóng băng ở `docs/api/openapi/integration-service.v1.json`; **thêm path = additive OK; đổi/xóa = breaking ⇒ contract version mới** (test `tests/contract/test_integration_openapi_frozen.py`).
@@ -109,7 +113,7 @@ Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` (schema `legacy_in
 | `readmodels` | `canonical`, `repository`, `apply`, `dataset`, `aggregate`, `channels`, `query` |
 | `kpi`, `traffic`, `breakdown`, `country_comparison`, `groups`, `country_config`, `freshness`, `cache` | các endpoint tương ứng |
 
-**Bảng:** `read_resources, read_content, read_daily_metrics, read_events, read_projects, agg_daily (chưa dùng), channel_groups, channel_group_members, country_aliases, country_canonicals, feed_cursor, processed_events, dead_letters, sync_state, account_projection`. Migration `0001_read_models`.
+**Bảng:** `read_resources, read_content, read_daily_metrics, read_events, read_projects, agg_daily (chưa dùng), channel_groups, channel_group_members, country_aliases, country_canonicals, feed_cursor, processed_events, dead_letters, sync_state, account_projection`. Migration `0001_init` · `0002_read_model_keys` (khóa chính khớp khóa tự nhiên của Integration: thêm `resource_type`, events thêm khóa resource; đặt lại con trỏ `canonical.*` để kéo lại) · `0003_processed_events_subject`.
 
 **Endpoint:** `/v1/analytics/{summary,traffic,top-channels,views-by-country,channel-breakdown,country-tags,platform-tags,metrics,freshness,compare/{dimension},groups[...],admin/{rebuild,reconcile,sync,dead-letters[/replay],cache/flush,country-aliases,country-canonicals}}`;
 alias legacy `/v1/viewer/*` và `/v1/admin/country-*`, `/v1/admin/cache/flush`. Mọi response dữ liệu có `filter` + `freshness`; header `X-Cache: HIT|MISS|OFF`.
@@ -124,7 +128,9 @@ Lỗi: envelope ở `/v1/analytics/*`, `{"detail":…}` ở `/v1/viewer/*` và `
 - Biểu đồ so sánh quốc gia (`views-by-country`, `country-tags`, `compare/country`) **không** bị thu hẹp bởi `country`; response có `ignored_filters:["country"]`. Hai endpoint danh mục (`country-tags`, `platform-tags`) cố ý nhận tham số thu hẹp.
 - `rebuild` kéo hết trước rồi thay thế nguyên tử; nguồn chết thì không đổi gì.
 - Không seed alias quốc gia mặc định: admin phải nhập hoặc di chuyển từ DB cũ.
-
+- **Nhóm kênh khoá theo (owner của nhóm, `channel_ref`)**: nhóm/override quốc gia của owner A không tác động kênh cùng `external_id` của owner B khi admin xem toàn bộ. Ngoại lệ có chủ đích: nhóm do admin/dash_admin tạo (role theo `account_projection`) áp xuyên owner. Giới hạn đã biết: dataset gộp hai `resource_type` cùng `(owner, platform, external_id)` thành MỘT kênh khi hiển thị (kho `read_resources` giữ cả hai); `POST /groups/{id}/members` không kiểm kênh thuộc người gọi (thành viên không thuộc owner của nhóm là vô hiệu, không rò rỉ).
+- Khoảng ngày: chỉ `YYYY-MM-DD` năm 2000-2100; đảo, quá 401 ngày ⇒ 422 (không còn 200 toàn số 0).
+- Event feed hỏng (thiếu `type`/`seq` nguyên) ⇒ dead-letter, không làm kẹt consumer; replay dead-letter của Identity không ghi đè cột đã có event mới hơn (so `seq` theo `(account, cột)`, cần `processed_events.subject`).
 ---
 
 ## 3.4 api-gateway (`:8400`, không DB, package `api_gateway`)

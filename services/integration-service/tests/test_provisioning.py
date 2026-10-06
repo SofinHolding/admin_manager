@@ -274,6 +274,53 @@ async def test_replay_dead_letter_after_fixing_the_cause(env, fake_feed, consume
     assert await c.replay_dead_letters() == {"replayed": 0, "failed": 0}
 
 
+async def test_replaying_an_old_registered_does_not_revert_newer_projection_state(env, fake_feed, consumer_factory):
+    """`registered` (provisioning lỗi vì platform chưa có) vào dead-letter; verified + suspended đã áp sau đó. Replay
+    `registered` (cũ) trước đây đặt lại status='pending' — đảo ngược trạng thái mới hơn."""
+    acc = uuid.uuid4().hex
+    p = prov(platforms=["threads"])
+    fake_feed.add("account.registered", registered(acc, p))                  # seq 1 -> dead-letter
+    fake_feed.add("account.verified", {"account_id": acc})                   # seq 2
+    fake_feed.add("account.status_changed", {"account_id": acc, "status": "suspended"})   # seq 3
+    c = consumer_factory()
+    await c.poll_once()
+    proj = (await env.rows("SELECT status, email_verified, username FROM account_projection WHERE account_id = $1", acc))[0]
+    assert proj["status"] == "suspended" and proj["email_verified"] is True and proj["username"] == ""
+    await env.rows("INSERT INTO platform_registry (key, display_name) VALUES ('threads', 'Threads')")
+    assert await c.replay_dead_letters() == {"replayed": 1, "failed": 0}
+    proj = (await env.rows("SELECT status, email_verified, username, status_seq FROM account_projection WHERE account_id = $1",
+                           acc))[0]
+    assert proj["status"] == "suspended" and proj["email_verified"] is True      # KHÔNG bị đưa về 'pending'
+    assert proj["username"].startswith("user_")                                  # chỗ trống thì được điền
+    assert proj["status_seq"] == 3
+
+
+async def test_replaying_an_old_status_change_does_not_override_a_newer_one(env, fake_feed, consumer_factory, monkeypatch):
+    acc = uuid.uuid4().hex
+    fake_feed.add("account.registered", registered(acc, None, status="active"))      # seq 1
+    old = fake_feed.add("account.status_changed", {"account_id": acc, "status": "suspended"})   # seq 2 (lỗi tạm thời)
+    fake_feed.add("account.status_changed", {"account_id": acc, "status": "active"})            # seq 3 (mới hơn)
+    real = handlers._status_changed
+
+    async def flaky(conn, clients, data, account_id, now, **kw):
+        if data.get("status") == "suspended":
+            raise RuntimeError("lỗi tạm thời")
+        return await real(conn, clients, data, account_id, now, **kw)
+
+    monkeypatch.setattr(handlers, "_status_changed", flaky)
+    c = consumer_factory(provisioning_max_attempts=1)
+    await c.poll_once()
+    assert [d["id"] for d in await env.rows("SELECT id FROM dead_letters")] == [old["id"]]
+    assert (await env.rows("SELECT status FROM account_projection WHERE account_id = $1", acc))[0]["status"] == "active"
+    monkeypatch.setattr(handlers, "_status_changed", real)
+    assert await c.replay_dead_letters() == {"replayed": 1, "failed": 0}
+    assert (await env.rows("SELECT status FROM account_projection WHERE account_id = $1", acc))[0]["status"] == "active"
+    # event suspended MỚI HƠN thì vẫn áp bình thường
+    fake_feed.add("account.status_changed", {"account_id": acc, "status": "suspended"})        # seq 4
+    await c.poll_once()
+    assert (await env.rows("SELECT status FROM account_projection WHERE account_id = $1", acc))[0]["status"] == "suspended"
+
+
 # ── Identity chết ───────────────────────────────────────────────────────────────
 
 async def test_identity_down_keeps_cursor_and_raises_feed_error_without_side_effects(env, fake_feed, consumer_factory):

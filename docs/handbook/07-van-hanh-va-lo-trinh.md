@@ -19,7 +19,7 @@ Lệnh vận hành đã có (đều là job riêng, không chạy tự động l
 | `python -m identity_service.oidc_clients seed-dev` | seed OIDC client `manager-web` (DEV) |
 | `python -m identity_service.feed_consumer replay` | replay dead-letter (consumer của Identity) |
 | `python -m integration_service.provisioning replay` | replay dead-letter provisioning |
-| `python -m identity_link.consumer replay` (trong `services/reward-service/`) | replay dead-letter của Reward |
+| `PYTHONPATH=src python -m reward_service.identity_link.consumer replay` (trong `services/reward-service/`) | replay dead-letter của Reward |
 | `POST /v1/analytics/admin/{rebuild,reconcile,sync}`, `GET/POST …/admin/dead-letters[/replay]` | dựng lại / đối soát / đồng bộ / xử lý dead-letter của Analytics (cần admin) |
 | `python infra/gateway/render_nginx.py [--check\|--nginx-test]` | sinh/kiểm `nginx.conf` |
 

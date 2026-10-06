@@ -11,6 +11,8 @@ Bảo đảm:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import random
 from collections.abc import Callable
@@ -144,6 +146,7 @@ class FeedConsumer:
             page = await self._call(self.identity.feed(after=cursor, limit=self.settings.feed_page_size,
                                                        types=list(IDENTITY_TYPES)))
             events = self._events(page)
+            await self._dead_letter_bad_events("identity", page)
             for event in events:
                 result = await self._process_identity_event(event)
                 handled += result == "ok"
@@ -196,6 +199,7 @@ class FeedConsumer:
             page = await self._call(self.integration.feed(after=feed_cursor, limit=self.settings.feed_page_size,
                                                           types=list(INTEGRATION_TYPES)))
             batch = self._events(page)
+            await self._dead_letter_bad_events("integration", page)
             events += batch
             new_cursor = self._cursor(page, feed_cursor)
             progressed = new_cursor != feed_cursor
@@ -350,7 +354,9 @@ class FeedConsumer:
             await asyncpg_lock(conn)
             changed = False
             if source == "identity":
-                changed = await apply_identity_event(conn, payload)
+                seq = payload.get("seq") if isinstance(payload.get("seq"), int) else 0
+                newer = await repo.newer_processed_types(conn, "identity", repo.subject_of("identity", payload), seq)
+                changed = await apply_identity_event(conn, payload, newer_types=newer)   # không ghi đè cột đã có bản MỚI hơn
                 await repo.mark_processed(conn, "identity", [payload])
             elif source == "integration":
                 validate_integration_event(payload)
@@ -405,9 +411,18 @@ class FeedConsumer:
             await repo.put_dead_letter(conn, dl_id=event["id"], source=source, seq=int(event.get("seq") or 0),
                                        type_=str(event.get("type") or "?"), error=error, attempts=attempts, payload=event)
 
+    async def _dead_letter_bad_events(self, source: str, page) -> None:
+        """Event không có `seq` nguyên (không sắp thứ tự/đặt con trỏ được) KHÔNG được bỏ im lặng: vào dead-letter."""
+        for event in self._bad_events(page):
+            await self._dead_letter_malformed(source, event, "event thiếu `seq` nguyên hợp lệ")
+
     async def _dead_letter_malformed(self, source: str, event: dict, error: str) -> str:
         seq = event.get("seq") if isinstance(event, dict) else None
-        dl_id = f"bad:{source}:{seq}"
+        if isinstance(seq, int) and not isinstance(seq, bool):
+            dl_id = f"bad:{source}:{seq}"
+        else:   # không có seq nguyên: định danh theo nội dung để các event hỏng khác nhau không đè nhau
+            raw = json.dumps(event, sort_keys=True, default=str, ensure_ascii=False)
+            dl_id = f"bad:{source}:{hashlib.sha1(raw.encode('utf-8')).hexdigest()[:16]}"  # noqa: S324 — không phải mật mã
         async with self.db.transaction() as conn:
             await repo.put_dead_letter(conn, dl_id=dl_id, source=source, seq=seq if isinstance(seq, int) else None,
                                        type_=str((event or {}).get("type") or "?") if isinstance(event, dict) else "?",
@@ -424,6 +439,14 @@ class FeedConsumer:
             if isinstance(e, dict) and isinstance(e.get("seq"), int) and not isinstance(e.get("seq"), bool):
                 out.append(e)
         return sorted(out, key=lambda e: e["seq"])
+
+    @staticmethod
+    def _bad_events(page) -> list:
+        events = page.get("events") if isinstance(page, dict) else None
+        if not isinstance(events, list):
+            return []
+        return [e for e in events if not (isinstance(e, dict) and isinstance(e.get("seq"), int)
+                                          and not isinstance(e.get("seq"), bool))]
 
     @staticmethod
     def _cursor(page: dict, current: int) -> int:

@@ -17,6 +17,7 @@ from datetime import date, datetime
 import asyncpg
 
 KHAC = "Khác"
+ADMIN_ROLES = frozenset({"admin", "dash_admin"})
 
 EntityKey = tuple  # (owner, platform, external_id)
 
@@ -117,6 +118,17 @@ class Dataset:
     def project_of(self, entity: Entity, key: str) -> ProjectInfo | None:
         return self.projects.get((entity.owner, key))
 
+    def group_owner_is_admin(self, account_id: str) -> bool:
+        return (self.accounts.get(account_id) or {}).get("role") in ADMIN_ROLES
+
+    def group_applies(self, group: GroupInfo, owner: str, ext_id: str) -> bool:
+        """Nhóm áp lên kênh `(owner, ext_id)` khi kênh là thành viên VÀ nhóm thuộc đúng owner của kênh.
+
+        `channel_ref` chỉ là external_id nên hai owner có thể trùng; nhóm của A không được tác động lên kênh của B (khi admin
+        xem toàn bộ). Ngoại lệ có chủ đích: nhóm do admin/dash_admin tạo (theo `account_projection`) là nhóm quản trị,
+        áp lên mọi owner như hành vi cũ."""
+        return ext_id in group.members and (group.account_id == owner or self.group_owner_is_admin(group.account_id))
+
 
 def normalize_country(raw: str | None, aliases: dict[str, str]) -> str:
     """Quốc gia thô -> tên chuẩn qua `country_aliases` (tra theo lower-case); không khớp thì giữ bản đã trim."""
@@ -140,23 +152,30 @@ async def load_dataset(conn: asyncpg.Connection, owner_scope: list[str] | None, 
         r["project_key"], r["name"] or r["project_key"], r["enabled"], normalize_country(r["country"], aliases))
         for r in prow}
 
+    accounts = {r["account_id"]: dict(r) for r in await conn.fetch(
+        "SELECT account_id, username, role, status, deleted FROM account_projection")}
+
     grows = await conn.fetch(
         "SELECT g.id, g.account_id, g.name, m.channel_ref, m.platform_tag, m.country_override"
         " FROM channel_groups g LEFT JOIN channel_group_members m ON m.group_id = g.id"
         " WHERE ($1::text[] IS NULL OR g.account_id = ANY($1)) ORDER BY m.created_at, m.channel_ref", owner_scope)
     groups: dict[str, GroupInfo] = {}
-    overrides: dict[str, str] = {}
+    overrides: dict[tuple[str, str], str] = {}     # (account_id của nhóm, channel_ref) -> quốc gia
+    admin_overrides: dict[str, str] = {}           # nhóm của admin/dash_admin: áp lên mọi owner theo channel_ref
     for r in grows:
         g = groups.setdefault(r["id"], GroupInfo(r["id"], r["account_id"], r["name"]))
         if r["channel_ref"] is not None:
             g.members[r["channel_ref"]] = {"platform_tag": r["platform_tag"], "country_override": r["country_override"]}
             if r["country_override"]:
-                overrides[r["channel_ref"]] = normalize_country(r["country_override"], aliases)  # sau cùng thắng
+                value = normalize_country(r["country_override"], aliases)   # sau cùng thắng
+                if (accounts.get(r["account_id"]) or {}).get("role") in ADMIN_ROLES:
+                    admin_overrides[r["channel_ref"]] = value
+                overrides[(r["account_id"], r["channel_ref"])] = value
 
     rrows = await conn.fetch(
         "SELECT owner_account_id, platform, external_id, display_name, username, country, state, projects, managed,"
         " active, observed_at, removed FROM read_resources WHERE ($1::text[] IS NULL OR owner_account_id = ANY($1))"
-        " ORDER BY owner_account_id, platform, external_id", owner_scope)
+        " ORDER BY owner_account_id, platform, external_id, resource_type", owner_scope)
     entities: dict[EntityKey, Entity] = {}
     removed_keys: set[EntityKey] = set()
     for r in rrows:
@@ -164,8 +183,11 @@ async def load_dataset(conn: asyncpg.Connection, owner_scope: list[str] | None, 
         if r["removed"]:
             removed_keys.add(key)
             continue
+        if key in entities:     # hai resource_type cùng external_id: kênh hiển thị gộp một (giữ bản đầu theo thứ tự ổn định)
+            continue
         bindings = [Binding(b["project_key"], b.get("enabled", True)) for b in (r["projects"] or [])]
-        country = overrides.get(r["external_id"]) or normalize_country(r["country"], aliases)
+        country = (overrides.get((r["owner_account_id"], r["external_id"])) or admin_overrides.get(r["external_id"])
+                   or normalize_country(r["country"], aliases))
         if not country:
             for b in bindings:
                 proj = projects.get((r["owner_account_id"], b.project_key))
@@ -175,6 +197,8 @@ async def load_dataset(conn: asyncpg.Connection, owner_scope: list[str] | None, 
         entities[key] = Entity(key, r["owner_account_id"], r["platform"], r["external_id"],
                                r["display_name"] or r["username"] or r["external_id"], country, r["state"], bindings,
                                r["managed"], r["active"], r["observed_at"])
+
+    removed_keys -= set(entities)   # một resource_type bị gỡ không được che resource_type khác còn sống cùng external_id
 
     # Event có thể không mang `platform`: suy từ kênh cùng owner + external_id (nếu có).
     by_owner_ext: dict[tuple[str, str], str] = {}
@@ -216,8 +240,6 @@ async def load_dataset(conn: asyncpg.Connection, owner_scope: list[str] | None, 
                 events.append(EventRow(key[0], key[1], key[2], r["kind"], r["occurred_date"].isoformat(),
                                        r["project_key"]))
 
-    accounts = {r["account_id"]: dict(r) for r in await conn.fetch(
-        "SELECT account_id, username, role, status, deleted FROM account_projection")}
     return Dataset(entities, projects, content, daily, events, groups, aliases, accounts,
                    {e.platform for e in entities.values()})
 
@@ -267,14 +289,15 @@ def select_entities(ds: Dataset, ctx, *, ignore_country: bool = False) -> Select
     native = natives[0] if natives else ""
 
     if free_tag:
-        tag_refs = {ref for g in ds.groups.values() for ref, m in g.members.items() if m["platform_tag"] == free_tag}
-        chosen = {k for k in chosen if ds.entities[k].ext_id in tag_refs}
+        chosen = {k for k in chosen if any(
+            ds.group_applies(g, ds.entities[k].owner, ds.entities[k].ext_id)
+            and g.members[ds.entities[k].ext_id]["platform_tag"] == free_tag for g in ds.groups.values())}
         narrowed = needs_entity_info = True
 
     if ctx.group_id:
         group = ds.groups.get(ctx.group_id)   # chỉ có nhóm thuộc phạm vi owner (đã lọc lúc nạp)
-        refs = set(group.members) if group else set()
-        chosen = {k for k in chosen if ds.entities[k].ext_id in refs}
+        chosen = {k for k in chosen if group is not None
+                  and ds.group_applies(group, ds.entities[k].owner, ds.entities[k].ext_id)}
         narrowed = needs_entity_info = True
 
     if ctx.project:

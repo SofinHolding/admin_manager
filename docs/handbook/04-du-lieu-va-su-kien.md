@@ -67,7 +67,8 @@ Nhận dạng platform/metric/project **không có trong code**: `platform_regis
 
 ## 4.4 Hợp đồng đối soát Integration ↔ Analytics (đừng phá)
 
-- `canonical/summary` trả `head_revision`, `counts` (`active` = `removed=false`) và `checksum[kind]` = sha256 các dòng đã sort `<khóa tự nhiên>|<revision>|<removed 0/1>` (+ số liệu hiển thị views/reactions/comments cho `content`/`metrics`).
+- `canonical/summary` trả `head_revision`, `counts` (`active` = `removed=false`) và `checksum[kind]` = sha256 các dòng đã sort (byte) `<khóa tự nhiên>|<revision>|<removed 0/1>` (+ số liệu hiển thị views/reactions/comments cho `content`, views cho `metrics`; null viết `n`).
+  Khóa tự nhiên (**gồm `resource_type`**, khớp UNIQUE của Integration): `projects owner|project_key` · `resources owner|platform|resource_type|external_id` · `content owner|platform|resource_type|resource_external_id|external_id` · `metrics …|YYYY-MM-DD` · `events owner|platform|resource_type|resource_external_id|external_id`. Item canonical của content/metrics/events mang thêm `resource_type` (additive). Hai bên tính độc lập; test xuyên hai service chống lệch.
 - Mỗi item canonical phải có `owner_account_id` và `platform`; kênh không có chủ đề (như YouTube) phải gửi `managed`/`active`; metric theo ngày dùng trường `date`.
 - Một trang `canonical/{kind}` không được cắt ngang một revision (có thể dài hơn `limit`).
 - Checksum **không phủ** tên/quốc gia của resource (giới hạn đã biết).

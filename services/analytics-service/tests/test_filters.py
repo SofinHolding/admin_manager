@@ -244,3 +244,38 @@ async def test_other_owners_group_settings_never_leak_into_my_numbers(seeded):
         "total_views"] == 0
     groups = (await seeded.get("/v1/analytics/compare/group", sub=OWN_A, **RANGE)).json()["items"]
     assert groups == []
+
+
+# ── Khoảng ngày hợp lệ (422, không phải 200 toàn số 0 hay 500) ─────────────────────────
+
+ENDPOINTS = ("summary", "traffic", "top-channels", "views-by-country", "channel-breakdown", "country-tags")
+
+
+@pytest.mark.parametrize("params,why", [
+    ({"date_from": "2026-10-03", "date_to": "2026-10-01"}, "đảo"),
+    ({"date_from": "2025-01-01", "date_to": "2026-10-01"}, "quá 400 ngày"),
+    ({"date_from": "0001-01-01", "date_to": "2026-10-01"}, "năm 1 (từng gây OverflowError => 500)"),
+    ({"date_from": "2026-10-01", "date_to": "9999-12-31"}, "năm 9999"),
+    ({"date_from": "1999-12-31", "date_to": "2000-01-05"}, "trước 2000"),
+    ({"date_from": "20261001", "date_to": "2026-10-03"}, "ISO basic (phân mảnh cache)"),
+    ({"date_from": "2026-10-01", "date_to": "20261003"}, "ISO basic date_to"),
+    ({"date_from": "2026-W40-4", "date_to": "2026-10-03"}, "ISO tuần"),
+])
+async def test_invalid_date_ranges_are_422_on_every_endpoint_and_alias(seeded, params, why):
+    for ep in ENDPOINTS:
+        r = await seeded.get("/v1/analytics/" + ep, **params)
+        assert r.status_code == 422, (ep, why, r.status_code, r.text[:200])
+        assert r.json()["error"]["code"] == "REQUEST_VALIDATION_FAILED", (ep, why)
+    legacy = await seeded.get("/v1/viewer/summary", **params)           # alias legacy: lỗi dạng {detail}
+    assert legacy.status_code == 422 and set(legacy.json()) == {"detail"}, why
+
+
+async def test_boundary_date_ranges_still_work(seeded):
+    ok = await seeded.get("/v1/analytics/summary", date_from="2025-08-27", date_to="2026-10-01")   # 401 ngày: biên trên
+    assert ok.status_code == 200 and ok.json()["days_in_range"] == 401
+    one = await seeded.get("/v1/analytics/summary", date_from="2026-10-01", date_to="2026-10-01")
+    assert one.status_code == 200 and one.json()["days_in_range"] == 1
+    early = await seeded.get("/v1/analytics/summary", date_from="2000-01-01", date_to="2000-01-31")
+    assert early.status_code == 200 and early.json()["total_views"] == 0
+    default = await seeded.get("/v1/analytics/summary")                                           # mặc định 30 ngày
+    assert default.status_code == 200

@@ -78,16 +78,27 @@ async def fetch_resources(conn: asyncpg.Connection, owner: str, platform: str,
     return {(r["resource_type"], r["external_id"]): dict(r) for r in rows}
 
 
+async def resolve_resources(conn: asyncpg.Connection, owner: str, platform: str,
+                            external_ids: list[str]) -> tuple[dict[str, str], set[str]]:
+    """external_id -> id của resource CÒN SỐNG (chưa removed), và tập external_id MƠ HỒ.
+
+    Bản ghi con (content/metrics/events) chỉ khai `resource_external_id`, không có `resource_type`, nên:
+      * resource đã `removed` không được nhận bản ghi con (muốn gắn: gửi lại resource để hồi sinh — hợp đồng ingest §6
+        `RESOURCE_UNKNOWN`: "chưa có trong snapshot hay kho");
+      * nếu nhiều resource_type còn sống cùng external_id thì KHÔNG đoán (tránh gắn nhầm loại): trả về trong `ambiguous`."""
+    if not external_ids:
+        return {}, set()
+    rows = await conn.fetch(
+        "SELECT external_id, array_agg(id ORDER BY id) AS ids FROM resources WHERE owner_account_id = $1 AND platform = $2 "
+        "AND external_id = ANY($3::text[]) AND NOT removed GROUP BY external_id", owner, platform, external_ids)
+    resolved = {r["external_id"]: r["ids"][0] for r in rows if len(r["ids"]) == 1}
+    return resolved, {r["external_id"] for r in rows if len(r["ids"]) > 1}
+
+
 async def resolve_resource_ids(conn: asyncpg.Connection, owner: str, platform: str,
                                external_ids: list[str]) -> dict[str, str]:
-    """external_id -> resource id (ưu tiên bản chưa removed, rồi bản mới cập nhật gần nhất)."""
-    if not external_ids:
-        return {}
-    rows = await conn.fetch(
-        "SELECT DISTINCT ON (external_id) external_id, id FROM resources WHERE owner_account_id = $1 AND platform = $2 "
-        "AND external_id = ANY($3::text[]) ORDER BY external_id, removed, updated_at DESC, id", owner, platform,
-        external_ids)
-    return {r["external_id"]: r["id"] for r in rows}
+    """external_id -> resource id còn sống và duy nhất (xem `resolve_resources`)."""
+    return (await resolve_resources(conn, owner, platform, external_ids))[0]
 
 
 async def _ensure_projects(conn: asyncpg.Connection, owner: str, client_id: str, platform: str, keys: set[str],
@@ -114,8 +125,10 @@ async def _ensure_projects(conn: asyncpg.Connection, owner: str, client_id: str,
 async def merge_resources(conn: asyncpg.Connection, *, owner: str, client_id: str, platform: str,
                           items: list[Staged], snapshot_id: str | None, now: datetime, origin: str | None = None,
                           execution_mode: str | None = None) -> MergeStats:
-    """`origin`/`execution_mode` (tuỳ chọn) đặt cột tương ứng — dùng bởi Legacy ACL cho resource nhập từ web; Tool không
-    truyền (None => giữ giá trị mặc định/hiện có)."""
+    """`origin`/`execution_mode` (tuỳ chọn) đặt cột tương ứng. Legacy ACL truyền `web_manual` khi TẠO resource nhập tay (và
+    None khi sửa => giữ nguyên). Đường Tool (snapshot, /resources/batch) PHẢI truyền `origin="tool"`: Tool đẩy một khoá thì
+    Tool tiếp quản resource đó (kể cả resource nhập tay trước đó, kể cả khi dữ liệu y hệt) để Legacy (chỉ thấy/sửa
+    `origin <> 'tool'`) không còn ghi đè dữ liệu Tool cung cấp."""
     stats = MergeStats()
     keys = [(s.payload["resource_type"], s.payload["external_id"]) for s in items]
     existing = await fetch_resources(conn, owner, platform, keys)
@@ -128,6 +141,8 @@ async def merge_resources(conn: asyncpg.Connection, *, owner: str, client_id: st
             stats.stale_ignored += 1
             stats.present_ids.append(row["id"])  # type: ignore[index]
             stats.outcomes.append((s.index, row["id"], "stale_ignored"))  # type: ignore[index]
+        elif verdict == "unchanged" and origin and row["origin"] != origin:  # type: ignore[index]
+            plan.append(("updated", s, row, data))   # tiếp quản dù dữ liệu y hệt: đổi origin cần revision + resource.changed
         elif verdict == "unchanged":
             stats.unchanged += 1
             stats.present_ids.append(row["id"])  # type: ignore[index]
@@ -316,19 +331,23 @@ async def merge_children(conn: asyncpg.Connection, spec: ChildSpec, *, owner: st
 # ── Suy luận `removed` (snapshot full + scope) ─────────────────────────────────────
 
 async def infer_removed_resources(conn: asyncpg.Connection, *, owner: str, client_id: str, platform: str,
-                                  present_ids: list[str], stats: MergeStats) -> int:
+                                  present_ids: list[str], stats: MergeStats, as_of: datetime) -> int:
+    """R5: vắng mặt trong snapshot full => removed, CHỈ với bản ghi có `observed_at <= as_of` (observed_at của snapshot).
+    Bản ghi mới hơn (do batch/delta/legacy ghi trong lúc snapshot đang building) cho thấy Tool còn thấy nó: giữ nguyên."""
     rows = await conn.fetch(
         "SELECT id FROM resources WHERE owner_account_id = $1 AND client_id = $2 AND platform = $3 AND NOT removed "
-        "AND NOT (id = ANY($4::text[]))", owner, client_id, platform, present_ids)
+        "AND observed_at <= $5 AND NOT (id = ANY($4::text[]))", owner, client_id, platform, present_ids, as_of)
     return await _mark_removed(conn, "resources", [r["id"] for r in rows], stats)
 
 
 async def infer_removed_children(conn: asyncpg.Connection, spec: ChildSpec, *, owner: str, client_id: str, platform: str,
-                                 window: tuple[date, date], present_ids: list[str], stats: MergeStats) -> int:
+                                 window: tuple[date, date], present_ids: list[str], stats: MergeStats,
+                                 as_of: datetime) -> int:
+    """Như `infer_removed_resources`: chỉ bản ghi trong cửa sổ ngày VÀ có `observed_at <= as_of`."""
     rows = await conn.fetch(
         f"SELECT id FROM {spec.table} WHERE owner_account_id = $1 AND client_id = $2 AND platform = $3 AND NOT removed "
-        f"AND {spec.date_col} BETWEEN $4 AND $5 AND NOT (id = ANY($6::text[]))",
-        owner, client_id, platform, window[0], window[1], present_ids)
+        f"AND {spec.date_col} BETWEEN $4 AND $5 AND observed_at <= $7 AND NOT (id = ANY($6::text[]))",
+        owner, client_id, platform, window[0], window[1], present_ids, as_of)
     return await _mark_removed(conn, spec.table, [r["id"] for r in rows], stats)
 
 

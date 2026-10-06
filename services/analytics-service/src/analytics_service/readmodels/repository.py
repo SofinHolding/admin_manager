@@ -25,7 +25,7 @@ _UPSERT = {
         "INSERT INTO read_resources (owner_account_id, platform, external_id, resource_type, client_id, display_name,"
         " username, url, country, state, projects, managed, active, observed_at, revision, removed)"
         " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16)"
-        " ON CONFLICT (owner_account_id, platform, external_id) DO UPDATE SET resource_type=EXCLUDED.resource_type,"
+        " ON CONFLICT (owner_account_id, platform, resource_type, external_id) DO UPDATE SET"
         " client_id=EXCLUDED.client_id, display_name=EXCLUDED.display_name, username=EXCLUDED.username,"
         " url=EXCLUDED.url, country=EXCLUDED.country, state=EXCLUDED.state, projects=EXCLUDED.projects,"
         " managed=EXCLUDED.managed, active=EXCLUDED.active, observed_at=EXCLUDED.observed_at,"
@@ -33,33 +33,33 @@ _UPSERT = {
         ("owner_account_id", "platform", "external_id", "resource_type", "client_id", "display_name", "username",
          "url", "country", "state", "projects", "managed", "active", "observed_at", "revision", "removed")),
     "content": (
-        "INSERT INTO read_content (owner_account_id, platform, resource_external_id, external_id, published_date,"
-        " views, reactions, comments, state, observed_at, revision, removed)"
-        " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
-        " ON CONFLICT (owner_account_id, platform, resource_external_id, external_id) DO UPDATE SET"
+        "INSERT INTO read_content (owner_account_id, platform, resource_type, resource_external_id, external_id,"
+        " published_date, views, reactions, comments, state, observed_at, revision, removed)"
+        " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
+        " ON CONFLICT (owner_account_id, platform, resource_type, resource_external_id, external_id) DO UPDATE SET"
         " published_date=EXCLUDED.published_date, views=EXCLUDED.views, reactions=EXCLUDED.reactions,"
         " comments=EXCLUDED.comments, state=EXCLUDED.state, observed_at=EXCLUDED.observed_at,"
         " revision=EXCLUDED.revision, removed=EXCLUDED.removed WHERE read_content.revision <= EXCLUDED.revision",
-        ("owner_account_id", "platform", "resource_external_id", "external_id", "published_date", "views",
-         "reactions", "comments", "state", "observed_at", "revision", "removed")),
+        ("owner_account_id", "platform", "resource_type", "resource_external_id", "external_id", "published_date",
+         "views", "reactions", "comments", "state", "observed_at", "revision", "removed")),
     "metrics": (
-        "INSERT INTO read_daily_metrics (owner_account_id, platform, resource_external_id, metric_date, views,"
-        " metrics, observed_at, revision, removed) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)"
-        " ON CONFLICT (owner_account_id, platform, resource_external_id, metric_date) DO UPDATE SET"
+        "INSERT INTO read_daily_metrics (owner_account_id, platform, resource_type, resource_external_id, metric_date,"
+        " views, metrics, observed_at, revision, removed) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10)"
+        " ON CONFLICT (owner_account_id, platform, resource_type, resource_external_id, metric_date) DO UPDATE SET"
         " views=EXCLUDED.views, metrics=EXCLUDED.metrics, observed_at=EXCLUDED.observed_at,"
         " revision=EXCLUDED.revision, removed=EXCLUDED.removed WHERE read_daily_metrics.revision <= EXCLUDED.revision",
-        ("owner_account_id", "platform", "resource_external_id", "metric_date", "views", "metrics", "observed_at",
-         "revision", "removed")),
+        ("owner_account_id", "platform", "resource_type", "resource_external_id", "metric_date", "views", "metrics",
+         "observed_at", "revision", "removed")),
     "events": (
-        "INSERT INTO read_events (owner_account_id, external_id, platform, resource_external_id, kind,"
-        " occurred_date, project_key, observed_at, revision, removed) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
-        " ON CONFLICT (owner_account_id, external_id) DO UPDATE SET platform=EXCLUDED.platform,"
-        " resource_external_id=EXCLUDED.resource_external_id, kind=EXCLUDED.kind,"
+        "INSERT INTO read_events (owner_account_id, external_id, platform, resource_type, resource_external_id, kind,"
+        " occurred_date, project_key, observed_at, revision, removed) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+        " ON CONFLICT (owner_account_id, platform, resource_type, resource_external_id, external_id) DO UPDATE SET"
+        " kind=EXCLUDED.kind,"
         " occurred_date=EXCLUDED.occurred_date, project_key=EXCLUDED.project_key,"
         " observed_at=EXCLUDED.observed_at, revision=EXCLUDED.revision, removed=EXCLUDED.removed"
         " WHERE read_events.revision <= EXCLUDED.revision",
-        ("owner_account_id", "external_id", "platform", "resource_external_id", "kind", "occurred_date",
-         "project_key", "observed_at", "revision", "removed")),
+        ("owner_account_id", "external_id", "platform", "resource_type", "resource_external_id", "kind",
+         "occurred_date", "project_key", "observed_at", "revision", "removed")),
 }
 
 _TABLE = {"projects": "read_projects", "resources": "read_resources", "content": "read_content",
@@ -67,10 +67,10 @@ _TABLE = {"projects": "read_projects", "resources": "read_resources", "content":
 
 _KEY_COLUMNS = {
     "projects": "owner_account_id, project_key",
-    "resources": "owner_account_id, platform, external_id",
-    "content": "owner_account_id, platform, resource_external_id, external_id, views, reactions, comments",
-    "metrics": "owner_account_id, platform, resource_external_id, metric_date, views",
-    "events": "owner_account_id, external_id",
+    "resources": "owner_account_id, platform, resource_type, external_id",
+    "content": "owner_account_id, platform, resource_type, resource_external_id, external_id, views, reactions, comments",
+    "metrics": "owner_account_id, platform, resource_type, resource_external_id, metric_date, views",
+    "events": "owner_account_id, platform, resource_type, resource_external_id, external_id",
 }
 
 
@@ -140,16 +140,34 @@ async def processed_ids(conn: asyncpg.Connection, ids: list[str]) -> set[str]:
     return {r["id"] for r in await conn.fetch("SELECT id FROM processed_events WHERE id = ANY($1::text[])", ids)}
 
 
+def subject_of(source: str, event: dict) -> str | None:
+    """Đối tượng của event để so thứ tự khi replay: Identity -> account_id; nguồn khác -> `subject` của event."""
+    data = event.get("data")
+    if source == "identity" and isinstance(data, dict) and isinstance(data.get("account_id"), str):
+        return data["account_id"].strip() or None
+    subject = event.get("subject")
+    return subject if isinstance(subject, str) and subject else None
+
+
 async def mark_processed(conn: asyncpg.Connection, source: str, events: list[dict]) -> int:
     """Ghi event đã xử lý; trả về SỐ event mới (trùng id = no-op)."""
     if not events:
         return 0
     rows = await conn.fetch(
-        "INSERT INTO processed_events (id, source, seq, type) SELECT * FROM unnest($1::text[], $2::text[],"
-        " $3::bigint[], $4::text[]) ON CONFLICT (id) DO NOTHING RETURNING id",
+        "INSERT INTO processed_events (id, source, seq, type, subject) SELECT * FROM unnest($1::text[], $2::text[],"
+        " $3::bigint[], $4::text[], $5::text[]) ON CONFLICT (id) DO NOTHING RETURNING id",
         [e["id"] for e in events], [source] * len(events), [int(e["seq"]) for e in events],
-        [e["type"] for e in events])
+        [e["type"] for e in events], [subject_of(source, e) for e in events])
     return len(rows)
+
+
+async def newer_processed_types(conn: asyncpg.Connection, source: str, subject: str | None, seq: int) -> frozenset[str]:
+    """Các `type` event ĐÃ ÁP cùng đối tượng với seq lớn hơn `seq` (để replay không ghi đè bằng giá trị cũ)."""
+    if not subject:
+        return frozenset()
+    rows = await conn.fetch(
+        "SELECT DISTINCT type FROM processed_events WHERE source = $1 AND subject = $2 AND seq > $3", source, subject, seq)
+    return frozenset(r["type"] for r in rows)
 
 
 async def put_dead_letter(conn: asyncpg.Connection, *, dl_id: str, source: str, seq: int | None, type_: str,

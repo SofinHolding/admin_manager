@@ -106,7 +106,7 @@ class CredentialService:
     async def rotate(self, principal: Principal, client_id: str, key_id: str, *, grace_seconds: int) -> dict:
         now = self._now()
         async with self._db.transaction() as conn:
-            client = await self._clients.load_visible(conn, client_id, principal, lock=True)
+            client = await self._clients.load_manageable(conn, client_id, principal, lock=True)
             await self._require_issuable(conn, client)
             old = await repository.get(conn, client_id, key_id, lock=True)
             if old is None:
@@ -139,7 +139,7 @@ class CredentialService:
         """Thu hồi tức thì. Gọi lại trên khoá đã thu hồi là no-op (không phát lại sự kiện)."""
         now = self._now()
         async with self._db.transaction() as conn:
-            await self._clients.load_visible(conn, client_id, principal, lock=True)
+            await self._clients.load_manageable(conn, client_id, principal, lock=True)
             if await repository.get(conn, client_id, key_id, lock=True) is None:
                 raise not_found(Extra.CREDENTIAL_NOT_FOUND, "Không tìm thấy credential")
             changed = await repository.revoke(conn, client_id, key_id, "revoked_by_user", now)

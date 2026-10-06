@@ -349,6 +349,77 @@ async def test_malformed_event_and_bad_canonical_item_are_dead_lettered_not_bloc
     assert [x["account_id"] for x in await world.fetch("SELECT account_id FROM account_projection")] == ["ok-1"]
 
 
+async def test_integration_event_without_valid_type_is_dead_lettered_and_does_not_wedge_the_consumer(world):
+    """Event Integration thiếu/sai `type` từng làm `mark_processed` ném KeyError ở bước áp dụng nguyên tử => rollback vô hạn,
+    consumer kẹt mãi ở event đó. Phải: event hỏng vào dead_letters, event hợp lệ vẫn được áp, con trỏ tiến."""
+    world.integration.ignore_type_filter = True
+    world.integration.commit(owner=OWN_A, platform="facebook",
+                             resources=[res("pg1", "P", platform="facebook", managed=True, active=True)],
+                             content=[post("c1", "pg1", "2026-10-01", 5)])             # seq 1: snapshot.committed hợp lệ
+    bad_missing = world.integration.emit_raw(subject="x:1")                            # seq 2: thiếu `type`
+    bad_type = world.integration.emit_raw(type=123, subject="x:2")                     # seq 3: type không phải chuỗi
+    good = world.integration.emit("resource.changed", {"resource_id": "r", "revision": 1})   # seq 4: hợp lệ
+    r = await world.sync()
+    assert r["integration"]["ok"] is True and r["integration"]["dead"] == 2 and r["integration"]["events"] == 2
+    dead = {d["id"] for d in await world.fetch("SELECT id FROM dead_letters WHERE source = 'integration'")}
+    assert dead == {bad_missing["id"], bad_type["id"]}
+    done = {d["id"] for d in await world.fetch("SELECT id FROM processed_events WHERE source = 'integration'")}
+    assert good["id"] in done and bad_missing["id"] not in done
+    assert (await world.fetch("SELECT seq FROM feed_cursor WHERE source = 'integration'"))[0]["seq"] == 4
+    assert (await summary(world))["total_views"] == 5                                  # dữ liệu hợp lệ vẫn được áp
+    again = await world.sync()                                                         # vòng sau: không kẹt, không lặp
+    assert again["integration"]["ok"] is True and again["integration"]["dead"] == 0 and again["integration"]["events"] == 0
+
+
+async def test_events_without_integer_seq_are_dead_lettered_not_silently_dropped(world):
+    world.integration.commit(owner=OWN_A, platform="facebook",
+                             resources=[res("pg1", "P", platform="facebook", managed=True, active=True)],
+                             content=[post("c1", "pg1", "2026-10-01", 5)])
+    world.identity_feed.account("ok-1")
+    world.integration.raw_inject = [{"seq": "7", "id": "evt_strseq", "type": "snapshot.committed", "data": {}},
+                                    {"seq": None, "id": "evt_noseq", "type": "resource.changed", "data": {}}, "khong-phai-object"]
+    world.identity_feed.raw_inject = [{"seq": 2.5, "id": "evt_floatseq", "type": "account.registered", "data": {}}]
+    r = await world.sync()
+    assert r["integration"]["ok"] and r["identity"]["ok"]
+    dead = await world.fetch("SELECT id, source, seq, error FROM dead_letters ORDER BY source, id")
+    assert len(dead) == 4 and all(d["id"].startswith("bad:") for d in dead)          # id khác nhau: không đè nhau
+    assert {d["source"] for d in dead} == {"integration", "identity"} and all("seq" in d["error"] for d in dead)
+    assert (await summary(world))["total_views"] == 5                                 # event/dữ liệu hợp lệ vẫn áp
+    assert [x["account_id"] for x in await world.fetch("SELECT account_id FROM account_projection")] == ["ok-1"]
+
+
+async def test_replaying_an_old_identity_event_never_overwrites_a_newer_value(world, monkeypatch):
+    """Dead-letter của event CŨ được replay sau khi event MỚI hơn cùng account đã áp: không đảo ngược cột đã mới hơn;
+    cột khác của cùng event vẫn áp (không bỏ cả event)."""
+    import analytics_service.feed_consumer.consumer as mod
+    real = mod.apply_identity_event
+    poison: set[str] = set()
+
+    async def flaky(conn, event, **kw):
+        if event["id"] in poison:
+            raise RuntimeError("lỗi tạm thời")
+        return await real(conn, event, **kw)
+
+    monkeypatch.setattr(mod, "apply_identity_event", flaky)
+    acc = "c" * 32
+    first = world.identity_feed.account(acc, "account.registered", username="ten-moi", role="viewer", status="active")
+    poison.add(first["id"])
+    world.identity_feed.account(acc, "account.role_changed", role="admin")                 # seq 2: áp
+    stale_status = world.identity_feed.account(acc, "account.status_changed", status="suspended")
+    poison.add(stale_status["id"])
+    world.identity_feed.account(acc, "account.status_changed", status="active")            # seq 4: áp, MỚI hơn seq 3
+    await world.sync()
+    row = (await world.fetch("SELECT username, role, status FROM account_projection WHERE account_id = $1", acc))[0]
+    assert (row["role"], row["status"], row["username"]) == ("admin", "active", "")          # registered/suspended chưa áp
+    monkeypatch.setattr(mod, "apply_identity_event", real)
+    out = await world.consumer.replay_dead_letters()
+    assert out["replayed"] == 2 and out["failed"] == 0
+    row = (await world.fetch("SELECT username, role, status FROM account_projection WHERE account_id = $1", acc))[0]
+    assert row["status"] == "active"                       # `suspended` (seq 3) cũ hơn `active` (seq 4): KHÔNG áp lại
+    assert row["role"] == "admin"                          # `registered` (role=viewer) cũ hơn role_changed: không đảo
+    assert row["username"] == "ten-moi"                    # nhưng cột chưa ai ghi (username) vẫn được điền
+
+
 async def test_database_outage_does_not_dead_letter_or_lose_events(world, monkeypatch):
     world.identity_feed.account("acc-1")
     import asyncpg

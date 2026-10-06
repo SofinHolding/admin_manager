@@ -146,6 +146,45 @@ async def test_only_owner_can_issue_even_admin_cannot(env):
         assert r.status_code == 404 and r.json()["error"]["code"] == "CLIENT_NOT_FOUND"
 
 
+async def test_dash_admin_can_view_but_not_rotate_or_revoke_other_owners_credentials(env):
+    """`dash_admin` chỉ XEM (is_admin gồm cả hai role). Xoay credential trả API key plaintext mới => chỉ chủ client hoặc
+    role `admin`; thu hồi cũng vậy. Người lạ vẫn nhận 404 (không lộ sự tồn tại)."""
+    tool = await env.tool()
+    dash = await env.verified_user(role="dash_admin")
+    stranger = await env.verified_user()
+    cred = f"{BASE}/clients/{tool.client_id}/credentials/{tool.key_id}"
+    assert (await env.http.get(f"{BASE}/clients/{tool.client_id}", headers=dash["headers"])).status_code == 200   # xem được
+    r = await env.http.post(f"{cred}/rotate", headers=dash["headers"], json={"grace_seconds": 0})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "SCOPE_DENIED" and "api_key" not in r.text
+    r = await env.http.delete(cred, headers=dash["headers"])
+    assert r.status_code == 403 and r.json()["error"]["code"] == "SCOPE_DENIED"
+    for call in (env.http.post(f"{cred}/rotate", headers=stranger["headers"], json={}),
+                 env.http.delete(cred, headers=stranger["headers"])):
+        r = await call
+        assert r.status_code == 404 and r.json()["error"]["code"] == "CLIENT_NOT_FOUND"
+    # không có gì đổi: credential vẫn active, không có credential mới
+    assert await env.scalar("SELECT status FROM integration_credentials WHERE key_id = $1", tool.key_id) == "active"
+    assert await env.scalar("SELECT count(*) FROM integration_credentials") == 1
+
+
+async def test_admin_and_owner_can_rotate_and_revoke(env):
+    tool = await env.tool()
+    admin = await env.verified_user(role="admin")
+    r = await env.http.post(f"{BASE}/clients/{tool.client_id}/credentials/{tool.key_id}/rotate", headers=admin["headers"],
+                            json={"grace_seconds": 0})
+    assert r.status_code == 201 and r.json()["data"]["api_key"].startswith("mpk_")
+    new_key = r.json()["data"]["key_id"]
+    r = await env.http.delete(f"{BASE}/clients/{tool.client_id}/credentials/{new_key}", headers=admin["headers"])
+    assert r.status_code == 200 and r.json()["data"]["status"] == "revoked"
+    owner = env.user(sub=tool.owner)
+    r = await env.http.post(f"{BASE}/clients/{tool.client_id}/credentials", headers=owner["headers"], json={})
+    assert r.status_code == 201
+    k2 = r.json()["data"]["key_id"]
+    assert (await env.http.post(f"{BASE}/clients/{tool.client_id}/credentials/{k2}/rotate", headers=owner["headers"],
+                                json={"grace_seconds": 0})).status_code == 201
+    assert (await env.http.delete(f"{BASE}/clients/{tool.client_id}/credentials/{k2}", headers=owner["headers"])).status_code == 200
+
+
 async def test_requested_scopes_cannot_exceed_client_scopes(env):
     u = await env.verified_user()
     cid = (await create_client(env, u)).json()["data"]["client_id"]

@@ -61,6 +61,15 @@ class ClientService:
             raise not_found(Extra.CLIENT_NOT_FOUND, "Không tìm thấy client")
         return row
 
+    async def load_manageable(self, conn: asyncpg.Connection, client_id: str, principal: Principal, *,
+                              lock: bool = False) -> dict:
+        """Client mà người gọi được phép THAY ĐỔI (xoay/thu hồi credential): chủ client hoặc role `admin`.
+        `dash_admin` chỉ được XEM (load_visible) => 403 SCOPE_DENIED (không phải 404: họ thấy client được). Người khác => 404."""
+        row = await self.load_visible(conn, client_id, principal, lock=lock)
+        if row["owner_account_id"] != principal.sub and principal.role != "admin":
+            raise forbidden(ErrorCode.SCOPE_DENIED, "Chỉ chủ client hoặc quản trị viên cao nhất mới được thao tác credential")
+        return row
+
     # ── Use case ──────────────────────────────────────────────────────────────────
     async def create(self, principal: Principal, *, tool_name: str, client_kind: str, platforms: list[str]) -> dict:
         now = self._now()

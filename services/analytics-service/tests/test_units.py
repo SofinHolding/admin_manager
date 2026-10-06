@@ -144,8 +144,19 @@ def test_checksum_is_order_independent_and_sensitive():
     bumped = [checksum_line("events", {**rows[0], "revision": 99})] + lines[1:]
     flagged = [checksum_line("events", {**rows[0], "removed": True})] + lines[1:]
     assert len({checksum_lines(lines), checksum_lines(bumped), checksum_lines(flagged)}) == 3
-    assert natural_key("events", rows[0]) == f"{A}|e1"
-    content = to_row("content", {"owner_account_id": A, "platform": "fb", "resource_external_id": "r", "external_id": "p",
-                                 "published_date": "2026-10-01", "metrics": {"views": None, "reactions": 2}, "revision": 1})
-    assert checksum_line("content", content) == f"{A}|fb|r|p|1|0|n,2,n"
+    # khoá tự nhiên khớp UNIQUE của Integration (migration 0002): events gồm platform/resource_type/resource; vắng => rỗng
+    assert natural_key("events", rows[0]) == f"{A}||||e1"
+    full = to_row("events", {"owner_account_id": A, "platform": "fb", "resource_type": "page", "resource_external_id": "r",
+                             "external_id": "e1", "kind": "post_ok", "occurred_date": "2026-10-01", "revision": 1})
+    assert natural_key("events", full) == f"{A}|fb|page|r|e1"
+    content = to_row("content", {"owner_account_id": A, "platform": "fb", "resource_type": "page",
+                                 "resource_external_id": "r", "external_id": "p", "published_date": "2026-10-01",
+                                 "metrics": {"views": None, "reactions": 2}, "revision": 1})
+    assert checksum_line("content", content) == f"{A}|fb|page|r|p|1|0|n,2,n"
+    res = to_row("resources", {"owner_account_id": A, "platform": "fb", "resource_type": "page", "external_id": "x",
+                               "revision": 3})
+    assert checksum_line("resources", res) == f"{A}|fb|page|x|3|0"
+    met = to_row("metrics", {"owner_account_id": A, "platform": "yt", "resource_type": "channel",
+                             "resource_external_id": "c", "date": "2026-10-02", "metrics": {"views": 0}, "revision": 4})
+    assert checksum_line("metrics", met) == f"{A}|yt|channel|c|2026-10-02|4|0|0"
     assert set(KINDS) == {"projects", "resources", "content", "metrics", "events"}

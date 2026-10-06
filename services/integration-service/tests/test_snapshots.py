@@ -310,6 +310,34 @@ async def test_removal_never_touches_records_owned_by_another_client_or_owner(en
     assert removed == set()                                              # a không xoá được bản ghi của a2 hay b
 
 
+async def test_full_snapshot_never_removes_records_observed_after_it(env):
+    """R5 chỉ suy luận `removed` cho bản ghi có observed_at <= observed_at của snapshot full: bản ghi MỚI HƠN (do snapshot
+    delta/batch ghi trong lúc full đang building) là bằng chứng Tool còn nhìn thấy nó, không được xoá."""
+    tool = await env.tool()
+    await ingest_full(tool, resources=[res("r1"), res("old")], content=[post("p1"), post("p_old")],
+                      metrics=[daily("r1", "2026-10-01")], events=[event("e_old")], obs=0)
+    full = await new_snapshot(tool, obs=10, scope=FULL_SCOPE,
+                              expected={"resources": 1, "content": 1, "metrics": 1})
+    # trong lúc F(T1=+10) đang building: ghi X và nội dung mới ở T2=+30 (delta commit + batch trực tiếp)
+    await ingest_full(tool, type="delta", obs=30, resources=[res("X", obs=30)],
+                      content=[post("pX", res_ext="X", obs=30)], metrics=[daily("X", "2026-10-02", obs=30)])
+    r = await tool.post("/v1/integrations/resources/batch", {"items": [
+        {"platform": "facebook", "resource_type": "page", "external_id": "Y", "observed_at": ts(31)}]})
+    assert r.status_code == 200, r.text
+    await push(tool, full, "resources", [res("r1", obs=10)])
+    await push(tool, full, "content", [post("p1", obs=10)])
+    await push(tool, full, "metrics", [daily("r1", "2026-10-01", obs=10)])
+    out = await commit(tool, full)
+    assert out["removed"] == {"resources": 1, "content": 1, "metrics": 0, "events": 1}     # chỉ old / p_old / e_old
+    res_items = by_ext((await canonical(env, "resources"))["items"])
+    assert res_items["X"]["removed"] is False and res_items["Y"]["removed"] is False
+    assert res_items["old"]["removed"] is True and res_items["r1"]["removed"] is False
+    content = by_ext((await canonical(env, "content"))["items"])
+    assert content["pX"]["removed"] is False and content["p_old"]["removed"] is True
+    metrics = (await canonical(env, "metrics"))["items"]
+    assert [m["removed"] for m in metrics if m["resource_external_id"] == "X"] == [False]
+
+
 async def test_older_full_snapshot_is_superseded_and_cannot_remove_or_override_newer_data(env):
     tool = await env.tool()
     older = await new_snapshot(tool, obs=0, scope={"resources": True}, expected={"resources": 1})
@@ -324,6 +352,42 @@ async def test_older_full_snapshot_is_superseded_and_cannot_remove_or_override_n
     assert out["is_current"] is False                  # con trỏ current không lùi về snapshot cũ
     cur = await env.rows("SELECT id FROM snapshots WHERE is_current")
     assert len(cur) == 1 and cur[0]["id"] != older
+
+
+# ── Tham chiếu resource của content/metrics/events ───────────────────────────────────
+
+async def test_children_cannot_attach_to_a_removed_resource_until_it_is_resent(env):
+    tool = await env.tool()
+    await ingest_full(tool, resources=[res("r1"), res("r2")], obs=0)
+    await ingest_full(tool, resources=[res("r1", obs=5)], obs=5)                  # r2 bị removed
+    assert by_ext((await canonical(env, "resources"))["items"])["r2"]["removed"] is True
+    sid = await new_snapshot(tool, type="delta", obs=6, scope=None)
+    out = await push(tool, sid, "content", [post("pz", res_ext="r2", obs=6), post("pa", res_ext="r1", obs=6)])
+    assert out["rejected"] == 1 and out["rejections"][0]["code"] == "RESOURCE_UNKNOWN"
+    assert out["rejections"][0]["external_id"] == "pz"
+    await commit(tool, sid, accept_partial=True)
+    assert {i["external_id"] for i in (await canonical(env, "content"))["items"]} == {"pa"}   # pz KHÔNG gắn vào r2 đã removed
+    # gửi lại resource (hồi sinh) CÙNG snapshot với nội dung => hợp lệ và gắn đúng
+    out = await ingest_full(tool, type="delta", obs=9, resources=[res("r2", obs=9)], content=[post("pz", res_ext="r2", obs=9)])
+    assert by_ext((await canonical(env, "resources"))["items"])["r2"]["removed"] is False
+    c = by_ext((await canonical(env, "content"))["items"])
+    assert c["pz"]["resource_external_id"] == "r2" and c["pz"]["removed"] is False
+
+
+async def test_children_pick_the_live_resource_and_reject_ambiguous_resource_types(env):
+    tool = await env.tool()
+    await ingest_full(tool, resources=[res("dup", rtype="page"), res("dup", rtype="profile")], obs=0, scope=None)
+    sid = await new_snapshot(tool, type="delta", obs=1, scope=None)
+    out = await push(tool, sid, "content", [post("c1", res_ext="dup", obs=1)])
+    # hai resource_type cùng external_id đều còn sống và payload con không có resource_type => KHÔNG đoán
+    assert out["rejected"] == 1 and out["rejections"][0]["code"] == "RESOURCE_UNKNOWN"
+    # gỡ bản `page` (full snapshot chỉ còn profile) => bản sống duy nhất là `profile`, dù `page` mới cập nhật hơn
+    await ingest_full(tool, resources=[res("dup", rtype="profile", obs=5)], obs=5)
+    rows = {(i["resource_type"], i["removed"]) for i in (await canonical(env, "resources"))["items"]}
+    assert rows == {("page", True), ("profile", False)}
+    out = await ingest_full(tool, type="delta", obs=6, content=[post("c2", res_ext="dup", obs=6)])
+    c = (await canonical(env, "content"))["items"]
+    assert [(i["external_id"], i["resource_type"]) for i in c] == [("c2", "profile")]
 
 
 # ── current pointer / outbox / revision ──────────────────────────────────────────

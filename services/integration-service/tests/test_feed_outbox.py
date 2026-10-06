@@ -149,9 +149,29 @@ async def test_canonical_item_fields_follow_the_contract(env):
     assert p["project_key"] == "itl" and p["country_code"] == "BR" and p["owner_account_id"] == tool.owner
 
 
-def checksum(items: list[dict]) -> str:
-    lines = sorted(f"{i['id']}:{i['revision']}:{1 if i['removed'] else 0}" for i in items)
-    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+def _n(v):
+    return "n" if v is None else str(v)
+
+
+def _line(kind: str, i: dict) -> str:
+    """Dòng checksum theo HỢP ĐỒNG ĐỐI SOÁT (khoá tự nhiên, không phải id nội bộ) — viết độc lập với service."""
+    o, p = i["owner_account_id"], i.get("platform")
+    tail = f"|{i['revision']}|{1 if i['removed'] else 0}"
+    if kind == "projects":
+        return f"{o}|{i['project_key']}{tail}"
+    if kind == "resources":
+        return f"{o}|{p}|{i['resource_type']}|{i['external_id']}{tail}"
+    base = f"{o}|{p}|{i['resource_type']}|{i['resource_external_id']}"
+    if kind == "content":
+        m = i["metrics"]
+        return f"{base}|{i['external_id']}{tail}|{_n(m.get('views'))},{_n(m.get('reactions'))},{_n(m.get('comments'))}"
+    if kind == "metrics":
+        return f"{base}|{i['date']}{tail}|{_n(i['metrics'].get('views'))}"
+    return f"{base}|{i['external_id']}{tail}"
+
+
+def checksum(kind: str, items: list[dict]) -> str:
+    return hashlib.sha256("\n".join(sorted(_line(kind, i) for i in items)).encode()).hexdigest()
 
 
 async def test_summary_counts_and_checksum_let_a_consumer_reconcile(env):
@@ -166,7 +186,7 @@ async def test_summary_counts_and_checksum_let_a_consumer_reconcile(env):
     for kind in ("projects", "resources", "content", "metrics", "events"):
         items = (await canonical(env, kind))["items"]
         assert s["counts"][kind] == {"total": len(items), "active": len([i for i in items if not i["removed"]])}, kind
-        assert s["checksum"][kind] == checksum(items), kind
+        assert s["checksum"][kind] == checksum(kind, items), kind
     every = []
     for k in ("projects", "resources", "content", "metrics", "events"):
         every += [i["revision"] for i in (await canonical(env, k))["items"]]

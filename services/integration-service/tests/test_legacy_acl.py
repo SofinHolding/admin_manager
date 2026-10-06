@@ -568,3 +568,55 @@ async def test_import_is_all_or_nothing(lg, env, monkeypatch):
         "SELECT count(*) FROM outbox WHERE type = 'resource.changed'") == 0
     monkeypatch.undo()
     assert (await lg.call("POST", f"{RES}/import", u, json=body)).json()["created_count"] == 4
+
+
+# ── Tool tiếp quản resource nhập tay ────────────────────────────────────────────────────
+
+async def test_tool_push_takes_over_a_manually_entered_resource(lg, env):
+    """Nhập tay (origin web_manual) rồi Tool đẩy CÙNG khoá: Tool tiếp quản (origin='tool'). Legacy không còn thấy/sửa nó
+    (404), dữ liệu Tool cung cấp (extensions/managed/active/projects) nguyên vẹn; Legacy không tạo đè (409)."""
+    u = await lg.user()
+    src = await lg.source(u)
+    web = await lg.resource(u, src, "takeover-ext", display_name="Tay")
+    before = await lg.canon(web["id"])
+    assert before["origin"] == "web_manual"
+    tool = await env.tool(user=u)
+    r = await tool.post("/v1/integrations/resources/batch", {"items": [{
+        "platform": "facebook", "resource_type": before["resource_type"], "external_id": before["external_id"],
+        "display_name": "Do Tool", "observed_at": ts(5), "managed": True, "active": True,
+        "projects": [{"project_key": "tool_proj", "enabled": True}], "extensions": {"facebook": {"fans": 12}}}]})
+    assert r.status_code == 200, r.text
+    after = await lg.canon(web["id"])
+    assert after["origin"] == "tool"
+    # Legacy: không còn thấy trong danh sách, PATCH/DELETE bị 404, tạo đè bị 409
+    assert (await lg.call("GET", RES, u)).json() == {"items": []}
+    r = await lg.call("PATCH", f"{RES}/{web['id']}", u, expect=404, json={"display_name": "Tay sua"})
+    assert r.json() == {"detail": "Không tìm thấy resource"}
+    await lg.call("DELETE", f"{RES}/{web['id']}", u, expect=404)
+    await lg.call("POST", RES, u, expect=409, json={"source_instance_id": src["id"], "platform": "facebook",
+                                                    "input_ref": "takeover-ext"})
+    # Dữ liệu Tool nguyên vẹn
+    item = [i for i in (await canonical(env, "resources"))["items"] if i["id"] == web["id"]][0]
+    assert item["removed"] is False and item["origin"] == "tool" and item["display_name"] == "Do Tool"
+    assert item["managed"] is True and item["active"] is True
+    assert item["extensions"].get("facebook") == {"fans": 12} and item["project_keys"] == ["tool_proj"]
+
+
+async def test_tool_push_with_identical_data_still_takes_over(lg, env):
+    """Tool đẩy đúng dữ liệu đang có (verdict 'unchanged') vẫn phải tiếp quản, không để Legacy còn sửa được."""
+    u = await lg.user()
+    web = await lg.resource(u, await lg.source(u), "same-data")
+    row = await lg.canon(web["id"])
+    tool = await env.tool(user=u)
+    payload = {"platform": "facebook", "resource_type": row["resource_type"], "external_id": row["external_id"],
+               "observed_at": ts(5)}
+    # đưa dữ liệu hiện có (kể cả extensions.legacy) y nguyên qua đường Tool
+    payload.update(display_name=row["data"]["display_name"], state=row["state"],
+                   extensions=row["data"].get("extensions", {}))
+    for k in ("username", "url", "country", "projects", "managed", "active"):
+        if row["data"].get(k) is not None:
+            payload[k] = row["data"][k]
+    r = await tool.post("/v1/integrations/resources/batch", {"items": [payload]})
+    assert r.status_code == 200, r.text
+    assert (await lg.canon(web["id"]))["origin"] == "tool"
+    await lg.call("PATCH", f"{RES}/{web['id']}", u, expect=404, json={"display_name": "x"})
