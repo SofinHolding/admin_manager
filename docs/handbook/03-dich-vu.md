@@ -75,7 +75,7 @@ Migration: `0001_init` · `0002_tokens_permissions_outbox` · `0003_oidc` · `00
 
 **Bảng sở hữu (31):** `integration_clients, integration_credentials, installations, platform_registry, metric_registry, projects, resources, resource_project_bindings, snapshots, snapshot_items, content_items, daily_metrics, activity_events, idempotency_keys, jobs, audit_log, account_projection, outbox, feed_cursor, processed_events, dead_letters` + nhóm `legacy_ingest`:
 `documents, user_meta, account_links, link_codes, platform_policies, resource_sources, resource_assignments, operation_batches, operation_items, operation_audit_log`.
-Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` (schema `legacy_ingest`, dùng chính user `integration_svc` — **không** có role mới) · `0004_projection_status_seq` (`account_projection.status_seq`).
+Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` · `0004_projection_status_seq` (schema `legacy_ingest`, dùng chính user `integration_svc` — **không** có role mới) · `0004_projection_status_seq` (`account_projection.status_seq`).
 
 **Endpoint (máy, `Authorization: Bearer mpk_…`):** `POST /v1/integrations/handshake`, `PUT /projects/{key}`, `POST /resources/batch`, `POST /snapshots`, `POST /snapshots/{id}/{resources|content|metrics|events|commit}`, `GET /snapshots/{id}`,
 `POST /jobs/claim`, `/jobs/{id}/{complete|fail|heartbeat}`.
