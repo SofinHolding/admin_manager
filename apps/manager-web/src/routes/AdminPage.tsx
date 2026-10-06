@@ -985,7 +985,7 @@ function CountryAliasesTab() {
 
       <Section title="Gộp cách viết khác về tên chuẩn" description="Công cụ ở các máy khác nhau có thể gõ cùng một nước theo nhiều cách (BR, brasil...). Gộp về một tên để biểu đồ không bị tách đôi.">
         <form className="flex max-w-2xl flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); void handleAdd(); }}>
-          <Field label="Cách viết khác" hint="Công cụ gõ ra. Không phân biệt hoa thường." className="min-w-0 flex-1 basis-48">
+          <Field label="Cách viết khác" className="min-w-0 flex-1 basis-48">
             {(p) => <Input {...p} value={alias} onChange={(e) => setAlias(e.target.value)} maxLength={100} placeholder="Ví dụ: BR, brasil" />}
           </Field>
           <Field label="Gộp về tên chuẩn" className="min-w-0 flex-1 basis-48">
@@ -1003,7 +1003,7 @@ function CountryAliasesTab() {
         <p className="mt-3 text-sm text-muted-foreground">
           {canonicals.length === 0
             ? "Chưa có tên chuẩn nào. Hãy tạo tên chuẩn ở phần trên trước."
-            : "Áp dụng ngay cho mọi biểu đồ theo quốc gia, không cần sửa gì bên công cụ."}
+            : "Ô đầu là cách viết do công cụ gõ ra (không phân biệt hoa thường). Áp dụng ngay cho mọi biểu đồ theo quốc gia, không cần sửa gì bên công cụ."}
         </p>
       </Section>
 

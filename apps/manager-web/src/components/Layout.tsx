@@ -204,7 +204,7 @@ export function Layout() {
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
 
-      <main id="main" ref={main} tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 pb-28 pt-6 outline-none md:px-8 md:pt-8 lg:pb-12">
+      <main id="main" ref={main} tabIndex={-1} className="mx-auto w-full max-w-[84rem] px-4 pb-28 pt-6 outline-none md:px-8 md:pt-8 lg:pb-12">
         <Outlet />
       </main>
 
