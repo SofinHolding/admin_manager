@@ -85,7 +85,7 @@ class SnapshotService:
                         {"snapshot_id": snap["id"], "status": status})
 
     async def _load(self, conn: asyncpg.Connection, ctx: MachineContext, snapshot_id: str, *, lock: bool) -> dict:
-        snap = await repository.get_for_client(conn, snapshot_id, ctx.owner_account_id, ctx.client_id, lock=lock)
+        snap = await repository.get_for_client(conn, snapshot_id, ctx.effective_owner, ctx.client_id, lock=lock)
         if snap is None:
             raise not_found(ErrorCode.SNAPSHOT_NOT_FOUND, "Không tìm thấy snapshot")
         await self.ensure_platform(conn, ctx, snap["platform"])
@@ -99,7 +99,7 @@ class SnapshotService:
             ZoneInfo(body.report_timezone)
         except (ZoneInfoNotFoundError, ValueError, TypeError, OSError):
             raise invalid("report_timezone không phải múi giờ IANA hợp lệ") from None
-        previous = await repository.last_timezone(conn, ctx.owner_account_id, ctx.client_id, body.platform)
+        previous = await repository.last_timezone(conn, ctx.effective_owner, ctx.client_id, body.platform)
         if previous is not None and previous != body.report_timezone:
             raise conflict(ErrorCode.TIMEZONE_CHANGED, "report_timezone khác snapshot trước của cùng Tool",
                            {"previous": previous})
@@ -111,7 +111,7 @@ class SnapshotService:
             installation_id = None
         scope = body.scope.model_dump(mode="json", by_alias=True, exclude_none=True) if body.scope else None
         snap = await repository.insert(
-            conn, id=new_id("snp"), owner=ctx.owner_account_id, client_id=ctx.client_id,
+            conn, id=new_id("snp"), owner=ctx.effective_owner, client_id=ctx.client_id,
             installation_id=installation_id, platform=body.platform, snapshot_type=body.snapshot_type,
             observed_at=body.observed_at, report_timezone=body.report_timezone, scope=scope,
             expected_counts=body.expected_counts.model_dump(exclude_none=True), now=self._now())
@@ -137,7 +137,7 @@ class SnapshotService:
         canonical_ids: dict[str, str] = {}
         if kind != "resources" and staged:
             wanted = sorted({s.payload["resource_external_id"] for s in staged})
-            canonical_ids, ambiguous = await merge.resolve_resources(conn, ctx.owner_account_id, platform, wanted)
+            canonical_ids, ambiguous = await merge.resolve_resources(conn, ctx.effective_owner, platform, wanted)
             in_snapshot = await repository.staged_external_ids(conn, snapshot_id, "resources", wanted)
             unknown = set(wanted) - set(canonical_ids) - in_snapshot
             if unknown:
@@ -176,7 +176,7 @@ class SnapshotService:
         in_stage = await repository.staged_map(conn, snapshot_id, kind, [s.item_key for s in staged])
         if kind == "resources":
             keys = [(s.payload["resource_type"], s.payload["external_id"]) for s in staged]
-            canonical = await merge.fetch_resources(conn, ctx.owner_account_id, platform, keys)
+            canonical = await merge.fetch_resources(conn, ctx.effective_owner, platform, keys)
             rows = [canonical.get(k) for k in keys]
             datas = [merge.resource_data(s.payload, r["data"] if r else None) for s, r in zip(staged, rows, strict=True)]
             immutable = False
@@ -275,7 +275,7 @@ class SnapshotService:
 
     async def _merge(self, conn: asyncpg.Connection, ctx: MachineContext, snapshot_id: str,
                      req: schemas.CommitRequest) -> dict:
-        snap = await repository.get_for_client(conn, snapshot_id, ctx.owner_account_id, ctx.client_id, lock=True)
+        snap = await repository.get_for_client(conn, snapshot_id, ctx.effective_owner, ctx.client_id, lock=True)
         if snap is None or snap["status"] != "committing":
             raise conflict(Extra.SNAPSHOT_NOT_WRITABLE, "Snapshot không ở trạng thái committing")
         await self.ensure_platform(conn, ctx, snap["platform"])

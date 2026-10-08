@@ -65,7 +65,8 @@ _JOB = "job_0123456789abcdef0123456789abcdef"
 _RES = "res_0123456789abcdef0123456789abcdef"
 JOB = {"job_id": _JOB, "owner_account_id": _ACC, "resource_id": _RES, "platform": "facebook", "kind": "resource.sync",
        "status": "pending", "priority": 0, "attempts": 0, "max_attempts": 3, "payload": {"mode": "refresh"},
-       "required_capability": "", "run_after": _T, "lease_until": None, "claimed_by_client": None, "result": None,
+       "required_capability": "", "resource_owner_id": None, "run_after": _T, "lease_until": None,
+       "claimed_by_client": None, "result": None,
        "last_error_code": None, "last_error_message": None, "created_at": _T, "updated_at": _T, "completed_at": None,
        "created": True}
 JOB_CLAIM = {"jobs": [{"job_id": _JOB, "owner_account_id": _ACC, "kind": "resource.sync", "platform": "facebook",
@@ -76,3 +77,5 @@ JOB_CLAIM = {"jobs": [{"job_id": _JOB, "owner_account_id": _ACC, "kind": "resour
                                     "url": None}}], "server_time": _T}
 JOB_TRANSITION = {"job_id": _JOB, "status": "done", "attempts": 1, "max_attempts": 3, "run_after": None,
                   "lease_until": None, "completed_at": _T, "replayed": False}
+WORKER_REGISTER = {"registration_id": "wkr_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f", "heartbeat_interval_s": 30}
+WORKER_HEARTBEAT = {"ok": True, "next_heartbeat_in_s": 30}

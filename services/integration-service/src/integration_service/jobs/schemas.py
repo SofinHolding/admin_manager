@@ -51,6 +51,7 @@ class JobOut(BaseModel):
     max_attempts: int
     payload: dict[str, Any]
     required_capability: str
+    resource_owner_id: str | None = None
     run_after: datetime
     lease_until: datetime | None
     claimed_by_client: str | None

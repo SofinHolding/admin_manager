@@ -1,7 +1,9 @@
 # Shared Collector Design v1 — Manager Platform
 
-**Trạng thái:** ĐÃ THIẾT KẾ, TRIỂN KHAI PHASE 4  
-**Ngày:** 2026-10-08
+**Trạng thái:** ĐÃ THIẾT KẾ; PHASE 4 mục 1, 3, 4 ĐÃ TRIỂN KHAI (migration `0006`, `X-Delegated-Job`, worker
+register/heartbeat — xem `docs/api/integration-api-v1.md` §3-§4). Mục 2 (`POST /v1/resources/subscriptions`), 5
+(collector dedup SDK), 6 (`/channels` ngoài phạm vi trang `/my-tools` đã có) CHƯA làm, nằm ngoài phạm vi đợt này.
+**Ngày:** 2026-10-08 (thiết kế), cập nhật triển khai cùng ngày.
 
 ---
 
@@ -70,7 +72,8 @@ jobs (
   resource_id,          -- resource cần collect
   platform,
   resource_owner_id,    -- THÊM MỚI: owner thực sự của data (≠ collector's account)
-  delegated_to_client,  -- THÊM MỚI: client_id được phép claim job này (NULL = any fallback_tool)
+  delegated_to_client,  -- KHÔNG triển khai: `claimed_by_client` (đã có sẵn từ PHASE 3) đạt cùng mục đích — chỉ
+                         -- client ĐANG giữ lease (claim) mới push được, không cần cột riêng.
   ...
 )
 ```

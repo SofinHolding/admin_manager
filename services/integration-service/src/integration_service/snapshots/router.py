@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request
 from manager_contracts import ErrorCode
 
 from integration_service.api_models import (BatchResult, CommitOut, Envelope, SnapshotDetailOut, SnapshotOut)
 from integration_service.credentials.service import MachineContext
 from integration_service.deps import get_container, machine
-from integration_service.errors import not_found
+from integration_service.errors import Extra, conflict, forbidden, not_found
 from integration_service import examples as ex
 from integration_service.http_utils import (EnvelopeResponse, envelope, error_responses, ok_response, parse_json_object,
                                             parse_model, raw_body_doc)
 from integration_service.ingest import schemas, validate
+from integration_service.jobs import repository as jobs_repository
 
 router = APIRouter(prefix="/v1/integrations", tags=["machine"])
 
@@ -39,14 +41,42 @@ def _check_id(snapshot_id: str) -> str:
     return snapshot_id
 
 
+def _delegated(scope: str):
+    """`machine(scope)` + header tuỳ chọn `X-Delegated-Job` (PHASE 4, delegated ingestion — Shared Collector push dữ
+    liệu CHO owner của job đã claim thay vì owner của chính credential, xem docs/architecture/shared-collector-design-v1.md).
+    Chỉ `client_kind=fallback_tool`; job phải đang `leased` bởi ĐÚNG client này và có `resource_owner_id`. Vắng
+    header: hành vi y hệt `machine(scope)` (owner = tài khoản của credential, như trước PHASE 4)."""
+
+    async def dep(request: Request, ctx: MachineContext = Depends(machine(scope)),
+                  x_delegated_job: str | None = Header(
+                      None, alias="X-Delegated-Job",
+                      description="job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id")
+                  ) -> MachineContext:
+        if not x_delegated_job:
+            return ctx
+        if ctx.client_kind != "fallback_tool":
+            raise forbidden(ErrorCode.SCOPE_DENIED, "Chỉ fallback_tool mới dùng được delegated ingestion")
+        async with get_container(request).db.connection() as conn:
+            job = await jobs_repository.get(conn, x_delegated_job)
+        if job is None or job["claimed_by_client"] != ctx.client_id:
+            raise not_found(ErrorCode.JOB_NOT_FOUND, "Không tìm thấy job")
+        if job["status"] != "leased":
+            raise conflict(Extra.JOB_INVALID_STATE, f"Job không ở trạng thái leased ({job['status']})")
+        if job["resource_owner_id"] is None:
+            raise conflict(Extra.JOB_INVALID_STATE, "Job này không hỗ trợ delegated ingestion (thiếu resource_owner_id)")
+        return dataclasses.replace(ctx, delegated_owner_id=job["resource_owner_id"])
+
+    return dep
+
+
 @router.post("/snapshots", status_code=201, summary="Tạo snapshot (status=building)",
              description=("Scope `snapshots:write`. `snapshot_type=full` + `scope` khai báo \"tập này ĐẦY ĐỦ\" cho phạm vi; "
                           "bản ghi thuộc phạm vi nhưng vắng mặt sẽ bị đánh dấu `removed` sau commit. `expected_counts` được kiểm "
                           "lúc commit. Đổi `report_timezone` giữa các snapshot của cùng Tool => `TIMEZONE_CHANGED`."),
              responses={201: ok_response(Envelope[SnapshotOut], "Snapshot đang building", ex.SNAPSHOT),
-                        **error_responses(400, 401, 403, 409, 422, 429, 503)})
+                        **error_responses(400, 401, 403, 404, 409, 422, 429, 503)})
 async def create_snapshot(request: Request, body: schemas.SnapshotCreate,
-                          ctx: MachineContext = Depends(machine("snapshots:write"))):
+                          ctx: MachineContext = Depends(_delegated("snapshots:write"))):
     c = get_container(request)
 
     async def work(conn, extra):
@@ -63,7 +93,7 @@ def _batch_route(kind: str, schema_name: str, scope: str, example: dict | None, 
                  responses={200: ok_response(Envelope[BatchResult], "Kết quả theo bản ghi", ex.BATCH),
                             **error_responses(400, 401, 403, 404, 409, 413, 422, 429, 503)},
                  name=f"snapshot_{kind}")
-    async def handler(request: Request, snapshot_id: str, ctx: MachineContext = Depends(machine(scope))):
+    async def handler(request: Request, snapshot_id: str, ctx: MachineContext = Depends(_delegated(scope))):
         c = get_container(request)
         _check_id(snapshot_id)
         raw = await request.body()
@@ -91,7 +121,7 @@ _batch_route("metrics", "MetricsBatch", "metrics:write", None, "Gửi batch metr
              openapi_extra=raw_body_doc("CommitRequest", {"accept_partial": False}),
              responses={200: ok_response(Envelope[CommitOut], "Đã commit", ex.COMMIT),
                         **error_responses(400, 401, 403, 404, 409, 413, 422, 429, 503)})
-async def commit_snapshot(request: Request, snapshot_id: str, ctx: MachineContext = Depends(machine("snapshots:write"))):
+async def commit_snapshot(request: Request, snapshot_id: str, ctx: MachineContext = Depends(_delegated("snapshots:write"))):
     c = get_container(request)
     _check_id(snapshot_id)
     raw = await request.body()
@@ -107,7 +137,7 @@ async def commit_snapshot(request: Request, snapshot_id: str, ctx: MachineContex
             description="Scope `snapshots:write`. Trạng thái, đếm staging, rejections (tối đa 100), kết quả commit.",
             responses={200: ok_response(Envelope[SnapshotDetailOut], "Chi tiết snapshot", ex.SNAPSHOT_DETAIL),
                        **error_responses(401, 403, 404, 429, 503)})
-async def get_snapshot(request: Request, snapshot_id: str, ctx: MachineContext = Depends(machine("snapshots:write"))):
+async def get_snapshot(request: Request, snapshot_id: str, ctx: MachineContext = Depends(_delegated("snapshots:write"))):
     _check_id(snapshot_id)
     return EnvelopeResponse(content=envelope(await get_container(request).snapshots.get(ctx, snapshot_id)))
 

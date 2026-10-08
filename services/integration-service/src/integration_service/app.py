@@ -56,6 +56,7 @@ from integration_service.resources.service import ResourceService
 from integration_service.security import utcnow
 from integration_service.snapshots.router import router as snapshots_router
 from integration_service.snapshots.service import SnapshotService
+from integration_service.workers.router import router as workers_router
 
 logger = logging.getLogger("integration.app")
 
@@ -190,7 +191,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
 
     for router in (clients_router, credentials_router, installations_router, projects_router, resources_router,
                    snapshots_router, platforms_router, audit_router, resources_admin_router, jobs_machine_router,
-                   jobs_user_router):
+                   jobs_user_router, workers_router):
         app.include_router(router)
     legacy_errors.install(app)
     for legacy_router in build_legacy_routers(include_in_schema=False):   # ACL: hợp đồng = OpenAPI legacy đóng băng

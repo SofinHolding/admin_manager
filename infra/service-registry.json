@@ -227,6 +227,10 @@
         "audit": {
           "phase": "2.2",
           "responsibility": "audit client/installation/request"
+        },
+        "workers": {
+          "phase": "2.7",
+          "responsibility": "đăng ký/heartbeat Shared Collector worker (PHASE 4 delegated ingestion, chỉ in-memory, chưa có bảng lưu trữ bền vững)"
         }
       }
     },

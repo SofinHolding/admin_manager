@@ -11,13 +11,13 @@ TERMINAL = ("done", "failed", "dead", "cancelled")
 
 async def insert(conn: asyncpg.Connection, *, job_id: str, owner: str, resource_id: str | None, platform: str, kind: str,
                  required_capability: str, priority: int, payload: dict, max_attempts: int, dedupe_key: str | None,
-                 created_by: str, now: datetime) -> dict:
+                 created_by: str, now: datetime, resource_owner_id: str | None = None) -> dict:
     row = await conn.fetchrow(
         "INSERT INTO jobs (id, owner_account_id, resource_id, platform, kind, required_capability, status, priority, "
-        "payload, max_attempts, run_after, dedupe_key, created_by, created_at, updated_at) "
-        "VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$10,$10) RETURNING *",
+        "payload, max_attempts, run_after, dedupe_key, created_by, created_at, updated_at, resource_owner_id) "
+        "VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$10,$10,$13) RETURNING *",
         job_id, owner, resource_id, platform, kind, required_capability, priority, payload, max_attempts, now,
-        dedupe_key, created_by)
+        dedupe_key, created_by, resource_owner_id)
     return dict(row)
 
 

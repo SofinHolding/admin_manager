@@ -160,7 +160,9 @@ class LegacyService:
         `collect` cho Shared Collector nhặt (PHASE 3, docs/architecture/shared-collector-design-v1.md).
         Idempotent: `dedupe_key` theo resource + `jobs_collect_resource_active_idx` (0005) chặn job trùng kể cả
         khi có đường tạo job khác cùng resource không qua `dedupe_key`. Vượt hạn mức job của owner: bỏ qua lặng
-        lẽ, không chặn việc thêm kênh — Shared Collector sẽ bắt kịp ở lượt sau."""
+        lẽ, không chặn việc thêm kênh — Shared Collector sẽ bắt kịp ở lượt sau.
+        PHASE 4: `resource_owner_id=principal.sub` (= owner của resource, xem `JobService.create`) cho phép
+        collector push dữ liệu hộ qua header `X-Delegated-Job` (snapshots/router.py `_delegated`)."""
         if not principal.has_perm(CAP_MANUAL_CHANNEL_MGMT):
             return
         try:
@@ -168,7 +170,7 @@ class LegacyService:
                 conn, principal, job_schemas.JobCreate(
                     resource_id=resource_id, kind=COLLECT_JOB_KIND, priority=COLLECT_JOB_PRIORITY,
                     required_capability=COLLECT_JOB_CAPABILITY, dedupe_key=f"collect:{resource_id}"),
-                created_by=principal.sub, now=now)
+                created_by=principal.sub, now=now, resource_owner_id=principal.sub)
         except (ApiProblem, asyncpg.UniqueViolationError):
             pass
 

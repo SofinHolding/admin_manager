@@ -1463,6 +1463,48 @@
         "title": "Envelope[SnapshotOut]",
         "type": "object"
       },
+      "Envelope_WorkerHeartbeatOut_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkerHeartbeatOut"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OkMeta"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "Envelope[WorkerHeartbeatOut]",
+        "type": "object"
+      },
+      "Envelope_WorkerRegisterOut_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkerRegisterOut"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OkMeta"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "Envelope[WorkerRegisterOut]",
+        "type": "object"
+      },
       "Envelope_list_ClientOut__": {
         "properties": {
           "data": {
@@ -2159,6 +2201,17 @@
             ],
             "title": "Resource Id"
           },
+          "resource_owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Owner Id"
+          },
           "result": {
             "anyOf": [
               {
@@ -2404,6 +2457,17 @@
               }
             ],
             "title": "Resource Id"
+          },
+          "resource_owner_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Owner Id"
           },
           "result": {
             "anyOf": [
@@ -3822,6 +3886,97 @@
           "to"
         ],
         "title": "WindowModel",
+        "type": "object"
+      },
+      "WorkerHeartbeat": {
+        "additionalProperties": false,
+        "description": "Chưa mang dữ liệu nghiệp vụ nào (reserved cho thống kê trong tương lai) — body `{}` là đủ.",
+        "example": {},
+        "properties": {},
+        "title": "WorkerHeartbeat",
+        "type": "object"
+      },
+      "WorkerHeartbeatOut": {
+        "properties": {
+          "next_heartbeat_in_s": {
+            "title": "Next Heartbeat In S",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "next_heartbeat_in_s"
+        ],
+        "title": "WorkerHeartbeatOut",
+        "type": "object"
+      },
+      "WorkerRegister": {
+        "additionalProperties": false,
+        "example": {
+          "capabilities": [
+            "data.collect"
+          ],
+          "platforms": [
+            "tiktok",
+            "facebook"
+          ],
+          "worker_id": "collector-01"
+        },
+        "properties": {
+          "capabilities": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "platforms": {
+            "items": {
+              "maxLength": 32,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Platforms",
+            "type": "array"
+          },
+          "worker_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.\\-]{1,64}$",
+            "title": "Worker Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker_id"
+        ],
+        "title": "WorkerRegister",
+        "type": "object"
+      },
+      "WorkerRegisterOut": {
+        "properties": {
+          "heartbeat_interval_s": {
+            "title": "Heartbeat Interval S",
+            "type": "integer"
+          },
+          "registration_id": {
+            "title": "Registration Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "registration_id",
+          "heartbeat_interval_s"
+        ],
+        "title": "WorkerRegisterOut",
         "type": "object"
       }
     },
@@ -9202,6 +9357,24 @@
         "operationId": "create_snapshot_v1_integrations_snapshots_post",
         "parameters": [
           {
+            "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+            "in": "header",
+            "name": "X-Delegated-Job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+              "title": "X-Delegated-Job"
+            }
+          },
+          {
             "description": "Phiên bản hợp đồng, vd 2026-10-01",
             "in": "header",
             "name": "x-contract-version",
@@ -9370,6 +9543,27 @@
             },
             "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -9478,6 +9672,24 @@
             "schema": {
               "title": "Snapshot Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+            "in": "header",
+            "name": "X-Delegated-Job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+              "title": "X-Delegated-Job"
             }
           },
           {
@@ -9749,6 +9961,24 @@
             "schema": {
               "title": "Snapshot Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+            "in": "header",
+            "name": "X-Delegated-Job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+              "title": "X-Delegated-Job"
             }
           },
           {
@@ -10091,6 +10321,24 @@
             }
           },
           {
+            "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+            "in": "header",
+            "name": "X-Delegated-Job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+              "title": "X-Delegated-Job"
+            }
+          },
+          {
             "description": "Phiên bản hợp đồng, vd 2026-10-01",
             "in": "header",
             "name": "x-contract-version",
@@ -10420,6 +10668,24 @@
             }
           },
           {
+            "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+            "in": "header",
+            "name": "X-Delegated-Job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+              "title": "X-Delegated-Job"
+            }
+          },
+          {
             "description": "Phiên bản hợp đồng, vd 2026-10-01",
             "in": "header",
             "name": "x-contract-version",
@@ -10732,6 +10998,24 @@
             "schema": {
               "title": "Snapshot Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+            "in": "header",
+            "name": "X-Delegated-Job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+              "title": "X-Delegated-Job"
             }
           },
           {
@@ -11050,6 +11334,24 @@
             }
           },
           {
+            "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+            "in": "header",
+            "name": "X-Delegated-Job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+              "title": "X-Delegated-Job"
+            }
+          },
+          {
             "description": "Phiên bản hợp đồng, vd 2026-10-01",
             "in": "header",
             "name": "x-contract-version",
@@ -11345,6 +11647,475 @@
           }
         ],
         "summary": "Gửi batch resource (kênh/page)",
+        "tags": [
+          "machine"
+        ]
+      }
+    },
+    "/v1/integrations/workers/register": {
+      "post": {
+        "description": "Mặt phẳng MÁY, scope `jobs:claim` + `client_kind=fallback_tool`. IN-MEMORY: chưa lưu bền vững, chỉ xác thực credential rồi sinh `registration_id` mới + cấu hình heartbeat. Gọi lại nhiều lần (vd worker khởi động lại) không lỗi: mỗi lần trả `registration_id` mới.",
+        "operationId": "register_v1_integrations_workers_register_post",
+        "parameters": [
+          {
+            "description": "Phiên bản hợp đồng, vd 2026-10-01",
+            "in": "header",
+            "name": "x-contract-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Phiên bản hợp đồng, vd 2026-10-01",
+              "title": "X-Contract-Version"
+            }
+          },
+          {
+            "description": "installation_id từ handshake (cho audit)",
+            "in": "header",
+            "name": "x-installation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "installation_id từ handshake (cho audit)",
+              "title": "X-Installation-Id"
+            }
+          },
+          {
+            "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerRegister"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "heartbeat_interval_s": 30,
+                    "registration_id": "wkr_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f"
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_WorkerRegisterOut_"
+                }
+              }
+            },
+            "description": "Đã đăng ký"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "CONTRACT_VERSION_UNSUPPORTED",
+                    "details": {},
+                    "message": "Chỉ hỗ trợ contract 2026-10-01"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Yêu cầu sai (vd CONTRACT_VERSION_UNSUPPORTED)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RATE_LIMITED",
+                    "details": {},
+                    "message": "Vượt giới hạn request của client"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RATE_LIMITED (kèm Retry-After)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "MachineApiKey": []
+          }
+        ],
+        "summary": "Đăng ký Shared Collector worker",
+        "tags": [
+          "machine"
+        ]
+      }
+    },
+    "/v1/integrations/workers/{worker_id}/heartbeat": {
+      "post": {
+        "description": "Mặt phẳng MÁY, scope `jobs:claim` + `client_kind=fallback_tool`. IN-MEMORY: chỉ xác thực lại credential rồi trả `ok` + khoảng cách heartbeat kế tiếp; chưa theo dõi miss heartbeat (không cần đã `register` trước — mỗi lần gọi độc lập, không có trạng thái liên hệ).",
+        "operationId": "heartbeat_v1_integrations_workers__worker_id__heartbeat_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worker_id",
+            "required": true,
+            "schema": {
+              "title": "Worker Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Phiên bản hợp đồng, vd 2026-10-01",
+            "in": "header",
+            "name": "x-contract-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Phiên bản hợp đồng, vd 2026-10-01",
+              "title": "X-Contract-Version"
+            }
+          },
+          {
+            "description": "installation_id từ handshake (cho audit)",
+            "in": "header",
+            "name": "x-installation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "installation_id từ handshake (cho audit)",
+              "title": "X-Installation-Id"
+            }
+          },
+          {
+            "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerHeartbeat"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "next_heartbeat_in_s": 30,
+                    "ok": true
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_WorkerHeartbeatOut_"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "CONTRACT_VERSION_UNSUPPORTED",
+                    "details": {},
+                    "message": "Chỉ hỗ trợ contract 2026-10-01"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Yêu cầu sai (vd CONTRACT_VERSION_UNSUPPORTED)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RATE_LIMITED",
+                    "details": {},
+                    "message": "Vượt giới hạn request của client"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RATE_LIMITED (kèm Retry-After)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "MachineApiKey": []
+          }
+        ],
+        "summary": "Heartbeat Shared Collector worker",
         "tags": [
           "machine"
         ]

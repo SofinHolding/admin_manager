@@ -41,6 +41,7 @@ Theo `ingest-data-contract-v1.md` §3 và contract api-first. Bắt buộc:
 | `POST /v1/integrations/snapshots/{id}/commit` | `snapshots:write` |
 | `GET  /v1/integrations/snapshots/{id}` | `snapshots:write` (trạng thái, đếm, rejections) |
 | `POST /v1/integrations/jobs/claim` · `/{id}/complete` · `/{id}/fail` | `jobs:claim` / `jobs:complete` (+ `jobs:claim:system` cho đa-owner) |
+| `POST /v1/integrations/workers/register` · `/{worker_id}/heartbeat` | `jobs:claim` (chỉ `client_kind=fallback_tool`) — PHASE 4, chỉ in-memory (xem §4) |
 
 Hành vi bắt buộc (mỗi mục có test):
 
@@ -61,6 +62,10 @@ Hành vi bắt buộc (mỗi mục có test):
 - **Audit** `audit_log(account_id, client_id, installation_id, key_id, action, snapshot_id?, request_id, ip, result, at)`; admin xem `GET /v1/integrations/audit`.
 - **Registry**: `platform_registry` và `metric_registry` là DỮ LIỆU (seed trong migration: platforms `facebook, youtube, tiktok, instagram`; metrics `views, reactions, comments,
   likes, shares, followers, interactions, videos_posted`). Thêm platform/metric = thêm dòng qua `PUT /v1/integrations/admin/platforms/{key}` / `.../metrics/{key}` (admin), không đổi code.
+- **Delegated ingestion** (PHASE 4, Shared Collector — `docs/architecture/shared-collector-design-v1.md`): header tuỳ chọn `X-Delegated-Job: <job_id>`
+  trên MỌI endpoint snapshot (`POST /snapshots`, batch, `commit`, `GET /snapshots/{id}`). Chỉ `client_kind=fallback_tool`; job phải đang `leased` bởi
+  ĐÚNG client đó và có `resource_owner_id` (gán lúc tạo job `kind=collect`, xem §4) → owner dữ liệu = `job.resource_owner_id` thay vì owner của credential.
+  Vắng header: hành vi y hệt trước PHASE 4. Job không thoả điều kiện → `404 JOB_NOT_FOUND` / `409 JOB_INVALID_STATE`; sai `client_kind` → `403 SCOPE_DENIED`.
 
 ## 4. Jobs (Fallback Tool)
 
@@ -70,6 +75,12 @@ người giữ lease cũ gặp `409 JOB_LEASE_EXPIRED`. Capability hiệu lực 
 `jobs:claim:system` ⇒ chỉ claim job của **chính owner**; có ⇒ đa-owner nhưng owner do server gán. Job của owner khác hiện ra như `404 JOB_NOT_FOUND`.
 `fail` với `retryable=true` còn lượt → `pending` sau backoff mũ; hết lượt (`max_attempts`) → `dead`; `retryable=false` → `failed`. `complete`/`fail` lặp lại trả `replayed=true` (idempotent).
 `heartbeat` gia hạn lease. User tạo job: `POST /v1/integrations/jobs` (resource phải `execution_mode=fallback_tool`, có `dedupe_key`, hạn mức job chờ mỗi owner; body chứa `owner*` ⇒ 422).
+Cột `jobs.resource_owner_id` (PHASE 4, migration `0006`): owner THỰC của dữ liệu khi collector push hộ qua `X-Delegated-Job` (xem §3). `NULL` với mọi
+job tạo trước PHASE 4 và mọi `kind` khác `collect` — không hỗ trợ delegated ingestion, hành vi không đổi. Job `kind=collect` tự tạo khi user có
+`capability:manual_channel_mgmt` tự khai báo kênh (`POST /v1/resources`, xem §5) luôn có `resource_owner_id = owner_account_id`.
+`POST /v1/integrations/workers/register` · `/{worker_id}/heartbeat` (PHASE 4): chỉ xác thực credential (`client_kind=fallback_tool`, scope `jobs:claim`)
+rồi trả `{registration_id, heartbeat_interval_s}` / `{ok, next_heartbeat_in_s}`. CHỈ IN-MEMORY — chưa có bảng lưu trữ, chưa theo dõi miss heartbeat
+(việc tương lai); Shared Collector hiện dựa vào lease TTL của job để tự phục hồi khi chết giữa chừng.
 
 ## 5. Tương thích legacy (Phase 2b)
 

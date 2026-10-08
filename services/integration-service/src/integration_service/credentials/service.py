@@ -40,6 +40,14 @@ class MachineContext:
     client_kind: str
     tool_name: str
     installation_id: str | None = None
+    delegated_owner_id: str | None = None   # PHASE 4: set khi có header X-Delegated-Job hợp lệ (chỉ fallback_tool)
+
+    @property
+    def effective_owner(self) -> str:
+        """Owner dùng cho QUYỀN SỞ HỮU DỮ LIỆU (snapshot/resource): `delegated_owner_id` nếu đang ingest hộ, ngược lại
+        tài khoản của chính credential. KHÔNG dùng cho audit/job ownership/rate-limit — những chỗ đó vẫn phải dùng
+        `owner_account_id` thật (ai thực sự gọi API)."""
+        return self.delegated_owner_id or self.owner_account_id
 
 
 class CredentialService:

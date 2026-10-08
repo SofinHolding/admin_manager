@@ -40,8 +40,9 @@ def job_out(row: dict) -> dict:
     return {"job_id": row["id"], "owner_account_id": row["owner_account_id"], "resource_id": row["resource_id"],
             "platform": row["platform"], "kind": row["kind"], "status": row["status"], "priority": row["priority"],
             "attempts": row["attempts"], "max_attempts": row["max_attempts"], "payload": row["payload"],
-            "required_capability": row["required_capability"], "run_after": row["run_after"],
-            "lease_until": row["lease_until"], "claimed_by_client": row["claimed_by_client"], "result": row["result"],
+            "required_capability": row["required_capability"], "resource_owner_id": row["resource_owner_id"],
+            "run_after": row["run_after"], "lease_until": row["lease_until"],
+            "claimed_by_client": row["claimed_by_client"], "result": row["result"],
             "last_error_code": row["last_error_code"], "last_error_message": row["last_error_message"],
             "created_at": row["created_at"], "updated_at": row["updated_at"], "completed_at": row["completed_at"]}
 
@@ -61,8 +62,13 @@ class JobService:
     # ── Mặt phẳng USER: tạo / xem / huỷ ─────────────────────────────────────────────
 
     async def create(self, conn: asyncpg.Connection, principal: Principal, body, *, created_by: str | None = None,
-                     now: datetime | None = None, resource_id: str | None = None) -> tuple[dict, bool]:
-        """(job, created). Resource phải thuộc user (admin: bất kỳ) và ở `execution_mode=fallback_tool`. Owner = chủ resource."""
+                     now: datetime | None = None, resource_id: str | None = None,
+                     resource_owner_id: str | None = None) -> tuple[dict, bool]:
+        """(job, created). Resource phải thuộc user (admin: bất kỳ) và ở `execution_mode=fallback_tool`. Owner = chủ resource.
+
+        `resource_owner_id` (PHASE 4, chỉ truyền cho job `kind='collect'`): owner dữ liệu cho delegated ingestion
+        (snapshots/router.py `_delegated`). Mặc định `None` — mọi job khác (và mọi job tạo trước PHASE 4) giữ
+        hành vi cũ, không hỗ trợ delegated ingestion."""
         now = now or self._now()
         res = await conn.fetchrow("SELECT * FROM resources WHERE id = $1", resource_id or body.resource_id)
         if res is None or (res["owner_account_id"] != principal.sub and not principal.is_admin):
@@ -84,7 +90,7 @@ class JobService:
             conn, job_id=new_id("job"), owner=owner, resource_id=res["id"], platform=res["platform"], kind=body.kind,
             required_capability=body.required_capability, priority=body.priority, payload=body.payload,
             max_attempts=body.max_attempts or self._settings.job_max_attempts, dedupe_key=body.dedupe_key,
-            created_by=created_by or principal.sub, now=now)
+            created_by=created_by or principal.sub, now=now, resource_owner_id=resource_owner_id)
         return row, True
 
     async def create_job(self, principal: Principal, body) -> tuple[dict, bool]:
