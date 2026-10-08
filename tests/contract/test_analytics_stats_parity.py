@@ -126,7 +126,12 @@ def to_canonical(fake: FakeIntegration) -> None:
     resources = []
     for target, meta in FB_META.items():
         no_group = [p for p in PAIRINGS.values() if p["target"] == target and not p["group_id"]]
-        extra = {"managed": True, "active": all(p["enabled"] for p in no_group)} if no_group else {}
+        all_bindings = [p for p in PAIRINGS.values() if p["target"] == target]
+        # managed=True cho page có BẤT KỲ binding nào (grouped hoặc không), khớp với channel_units() logic.
+        # active chỉ xét các binding không-group (vì group off/on do group quyết định).
+        extra: dict = {"managed": len(all_bindings) > 0}
+        if no_group:
+            extra["active"] = all(p["enabled"] for p in no_group)
         resources.append(res(target, meta["name"], platform="facebook", country=meta["country"],
                              projects=bindings.get(target), **extra))
     fake.commit(

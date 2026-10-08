@@ -63,7 +63,9 @@ export default function ChannelsPage() {
       setItems((cur) => [created, ...cur]);
       setInputRef("");
       setDisplayName("");
-      toast.success("Đã thêm kênh");
+      toast.success(created.execution_mode === "fallback_local"
+        ? "Đã thêm kênh. Thu thập dữ liệu đang được lên lịch."
+        : "Đã thêm kênh");
     } catch (e) {
       toast.error(errorMessage(e, "Không thêm được kênh. Hãy thử lại."));
     } finally {

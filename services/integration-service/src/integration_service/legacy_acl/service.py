@@ -33,6 +33,10 @@ from integration_service.security import iso, new_id
 
 LINK_CODE_TTL = timedelta(minutes=15)
 _NOTHING = "Không có gì để cập nhật"
+CAP_MANUAL_CHANNEL_MGMT = "capability:manual_channel_mgmt"   # identity_service/permissions/capabilities.py
+COLLECT_JOB_KIND = "collect"                  # kind job cho Shared Collector (PHASE 3), khác resource.sync (Run Queue)
+COLLECT_JOB_CAPABILITY = "data.collect"       # Shared Collector claim với capabilities=["data.collect"]
+COLLECT_JOB_PRIORITY = 50                     # kênh mới thêm tay ưu tiên hơn job mặc định (priority=0)
 
 
 class LegacyService:
@@ -150,6 +154,24 @@ class LegacyService:
         if mode != "fallback_local":   # không còn chạy bằng Fallback Tool => huỷ job đang chờ
             await jobs_repo.cancel_pending_for_resource(conn, row["id"], now)
 
+    async def _ensure_collect_job(self, conn: asyncpg.Connection, principal: Principal, resource_id: str,
+                                  now: datetime) -> None:
+        """User có `capability:manual_channel_mgmt` (không cần Tool cá nhân) tự khai báo kênh => tự tạo job
+        `collect` cho Shared Collector nhặt (PHASE 3, docs/architecture/shared-collector-design-v1.md).
+        Idempotent: `dedupe_key` theo resource + `jobs_collect_resource_active_idx` (0005) chặn job trùng kể cả
+        khi có đường tạo job khác cùng resource không qua `dedupe_key`. Vượt hạn mức job của owner: bỏ qua lặng
+        lẽ, không chặn việc thêm kênh — Shared Collector sẽ bắt kịp ở lượt sau."""
+        if not principal.has_perm(CAP_MANUAL_CHANNEL_MGMT):
+            return
+        try:
+            await self._jobs.create(
+                conn, principal, job_schemas.JobCreate(
+                    resource_id=resource_id, kind=COLLECT_JOB_KIND, priority=COLLECT_JOB_PRIORITY,
+                    required_capability=COLLECT_JOB_CAPABILITY, dedupe_key=f"collect:{resource_id}"),
+                created_by=principal.sub, now=now)
+        except (ApiProblem, asyncpg.UniqueViolationError):
+            pass
+
     # ── /v1/resources ────────────────────────────────────────────────────────────────────
 
     async def available_platforms(self) -> dict:
@@ -210,6 +232,8 @@ class LegacyService:
                 await self._audit(conn, principal.sub, "resource_created", "resource", row["id"],
                                   {"platform": body.platform, "input_ref": input_ref, "origin": mapper.ORIGIN_WEB,
                                    "execution_mode": mode})
+            if mode == "fallback_local":
+                await self._ensure_collect_job(conn, principal, row["id"], now)
             return mapper.resource_to_legacy(row)
 
     async def import_resources(self, principal: Principal, body) -> dict:

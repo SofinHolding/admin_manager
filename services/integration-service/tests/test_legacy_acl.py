@@ -137,6 +137,29 @@ async def test_create_resource_goes_through_the_canonical_pipeline(lg, env):
     assert listed[0]["source_ids"] == [src["id"]]
 
 
+@covers("POST /v1/resources")
+async def test_capability_manual_channel_mgmt_auto_creates_a_collect_job(lg, env):
+    u = lg.env.user(perms=["capability:manual_channel_mgmt"])
+    await lg.env.projection(u["sub"])
+    src = await lg.source(u)
+    res = await lg.resource(u, src, "https://fb.com/auto")
+    job = (await env.rows("SELECT * FROM jobs"))[0]
+    assert job["resource_id"] == res["id"] and job["kind"] == "collect" and job["owner_account_id"] == u["sub"]
+    assert job["required_capability"] == "data.collect" and job["priority"] == 50 and job["status"] == "pending"
+    assert job["dedupe_key"] == f"collect:{res['id']}"
+    # thêm lại đúng kênh đó (qua nguồn khác): resource identity không đổi => không tạo job thứ hai
+    src2 = await lg.source(u, name="Nguồn 2")
+    await lg.resource(u, src2, "https://fb.com/auto")
+    assert await env.scalar("SELECT count(*) FROM jobs") == 1
+
+
+async def test_without_the_capability_no_collect_job_is_created(lg, env):
+    u = await lg.user()   # không có capability:manual_channel_mgmt
+    src = await lg.source(u)
+    await lg.resource(u, src, "https://fb.com/manual")
+    assert await env.scalar("SELECT count(*) FROM jobs") == 0
+
+
 async def test_policy_without_fallback_makes_execution_mode_disabled(lg):
     u = await lg.user()
     src = await lg.source(u, platform="instagram")

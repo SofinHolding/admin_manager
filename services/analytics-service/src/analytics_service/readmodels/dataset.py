@@ -173,7 +173,7 @@ async def load_dataset(conn: asyncpg.Connection, owner_scope: list[str] | None, 
                 overrides[(r["account_id"], r["channel_ref"])] = value
 
     rrows = await conn.fetch(
-        "SELECT owner_account_id, platform, external_id, display_name, username, country, state, projects, managed,"
+        "SELECT owner_account_id, platform, resource_type, external_id, display_name, username, country, state, projects, managed,"
         " active, observed_at, removed FROM read_resources WHERE ($1::text[] IS NULL OR owner_account_id = ANY($1))"
         " ORDER BY owner_account_id, platform, external_id, resource_type", owner_scope)
     entities: dict[EntityKey, Entity] = {}
