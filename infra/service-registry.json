@@ -149,8 +149,6 @@
         "feed_cursor",
         "processed_events",
         "dead_letters",
-        "documents",
-        "user_meta",
         "account_links",
         "link_codes",
         "platform_policies",

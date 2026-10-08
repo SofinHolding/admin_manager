@@ -11,7 +11,7 @@ thành các service độc lập, mỗi service một database, chạy song song
 
 ## 1.2 Bản đồ thành phần
 
-```text
+```markdown
                      ┌────────────────────────── người dùng (browser) ──┐   ┌── Tool ngoài / Fallback Tool ──┐
                      │ manager-web (admin-web, React/Vite)              │   │ SDK: manager_sdk.IntegrationClient │
                      └───────────────┬──────────────────────────────────┘   └───────────────┬────────────────┘
@@ -33,11 +33,11 @@ thành các service độc lập, mỗi service một database, chạy song song
 | identity-service | `services/identity-service` | 8430 | `identity_db` | Nguồn sự thật account, đăng nhập/đăng ký, token RS256/JWKS, role, permission, invite key, OIDC |
 | integration-service | `services/integration-service` | 8431 | `integration_db` | Cổng duy nhất cho Tool: client, credential, resource, snapshot/ingest, jobs, ACL cho API legacy |
 | analytics-service | `services/analytics-service` | 8432 | `analytics_db` + Redis (tùy chọn) | Read model + toàn bộ thống kê Dashboard |
-| reward-service | `services/reward-service` | 8422 | `reward_db` | Phân phối điểm thưởng qua Discord (engine job, SSE). Đã tách khỏi `accounts`/JWT secret chung |
-| manager-web | `apps/manager-web` | 5174 (vite dev) | — | UI quản trị; gọi `/v1/*` qua gateway |
+| reward-service | `services/reward-service/` | 8422 | `reward_db` | Phân phối điểm thưởng qua Discord (engine job, SSE). Đã tách khỏi `accounts`/JWT secret chung |
+| manager-web | `apps/manager-web/` | 5174 (vite dev) | — | UI quản trị; gọi `/v1/*` qua gateway |
 | Packages | `packages/{contracts,observability,sdk-python}` | — | — | Mã dùng chung, **chỉ generic** (xem 1.5) |
-| local-fallback-tool | `apps/local-fallback-tool` | — | — | Tool B (legacy, chưa chuyển sang machine credential) |
-| admin-server | `legacy/admin-server` | 8421 | — | Hệ cũ **đóng băng**; production vẫn chạy. **Không sửa** trừ lỗi nghiêm trọng |
+| Legacy đóng băng | `legacy/admin-server/` | — | — | Hệ cũ; production vẫn chạy. **Không sửa** trừ lỗi nghiêm trọng |
+| Fallback Tool | `apps/local-fallback-tool/` | — | — | Tool nội bộ; dùng machine credential qua IntegrationClient SDK |
 
 Tất cả bind `127.0.0.1` trong DEV.
 
@@ -63,32 +63,27 @@ Lý do chi tiết, các phương án đã loại, ma trận sở hữu: `archite
 - Test: pytest + pytest-asyncio; Postgres/Redis **thật** (DEV riêng), tiến trình thật qua `uvicorn`. Không mock DB.
 - Hạ tầng DEV: Docker Compose project `manager-platform-dev`. Production: nginx + systemd/Docker (chưa dựng — xem runbook).
 
-## 1.5 Cấu trúc repo (chuẩn: `docs/architecture/repo-layout-v1.md`)
+## 1.5 Cấu trúc repo
 
 ```text
-CLAUDE.md  README.md
-apps/                      ỨNG DỤNG người dùng/biên
-  manager-web/             React/Vite (Dashboard + quản trị)
-  local-fallback-tool/     Tool B (legacy)
-services/                  BACKEND — mỗi thư mục một service, CÙNG skeleton:
-  <x>-service/               src/<package>/<module>/ · migrations/ (nếu có DB) · tests/ · Dockerfile · .env.example · README.md · pytest.ini · requirements.txt
-  api-gateway  identity-service  integration-service  analytics-service  reward-service
-legacy/admin-server/       hệ cũ ĐÓNG BĂNG (README ghi rõ)
-packages/                  contracts/ (ErrorCode, schema ingest) · observability/ · sdk-python/   (chỉ generic)
+CLAUDE.md                          luật ràng buộc (đọc đầu tiên)
 infra/
-  service-registry.json    NGUỒN SỰ THẬT: service, module, bảng sở hữu, event phát/nhận, cổng, DB, public_prefixes
-  gateway/                 route-map.json, render_nginx.py, nginx.conf
-  docker/                  hạ tầng dữ liệu DEV: compose.dev.yml, templates/ (render vào .dev/, gitignored)
-  compose/                 stack.yml: chạy cả nền tảng bằng container (đã build + health xanh)
-  deploy/                  manifest/script triển khai theo môi trường (legacy/setup-vps.sh); production = PENDING_PRODUCTION_APPROVAL
-  scripts/                 bootstrap_dev, devenv, dev_stack, scaffold_service, test_all
-tests/{arch,contract,integration,e2e}/     test xuyên service (test của một service nằm trong service đó)
-docs/{handbook,architecture,api,operations}/
-tasks/  .omp/              prompt/backlog của chủ dự án · ngữ cảnh công cụ agent về hệ legacy (giữ nguyên)
+  service-registry.json            NGUỒN SỰ THẬT: service, module, bảng sở hữu, event phát/nhận, cổng, DB, public_prefixes
+  gateway/route-map.json           route legacy → service đích; render_nginx.py sinh nginx.conf
+  docker/                          compose.dev.yml, templates/ (initdb, redis ACL) — render vào .dev/ (gitignored)
+  scripts/                         bootstrap_dev, devenv, dev_stack, scaffold_service, test_all
+services/<x>-service/              src/<package>/<module>/, migrations/, tests/, Dockerfile, .env.example, README.md
+apps/
+  manager-web/                   manager-web (React/Vite)
+  local-fallback-tool/           Tool nội bộ (machine credential + IntegrationClient)
+legacy/
+  admin-server/                  hệ cũ — đóng băng
+packages/contracts/                python/manager_contracts (ErrorCode, envelope) + ingest/<ngày>/ (JSON Schema + ví dụ)
+packages/observability/            log JSON, request-id, health, app factory (chassis)
+packages/sdk-python/               manager_sdk: TokenVerifier(JWKS), ServiceKeyAuth, FeedClient, IntegrationClient
+tests/{arch,contract,integration,e2e}/
+docs/{api,architecture,operations,handbook}/
 ```
-
-**Quy tắc đặt chỗ:** backend có API/DB/event riêng → `services/`; giao diện/Tool phía người dùng → `apps/`; mã tái sử dụng generic → `packages/`; hạ tầng/deploy → `infra/`; hệ cũ → `legacy/`.
-Thêm service/app mới chỉ **thêm** một thư mục + một mục registry, không sửa thư mục khác (test `tests/arch/test_repo_layout.py` giữ chuẩn).
 
 **Package dùng chung chỉ được chứa mã generic** (luật 13). Không đặt logic nghiệp vụ vào `packages/`. Service **không import** service khác hay module legacy (test `tests/arch` quét).
 
@@ -96,7 +91,7 @@ Thêm service/app mới chỉ **thêm** một thư mục + một mục registry,
 
 Là nguồn sự thật mà test kiến trúc đọc: mỗi service khai `path, package, port, database, public_prefixes, modules, owned_tables, emits, consumes`.
 - `status: scaffold` = service do `scaffold_service.py` quản lý (có chassis chuẩn) — **KHÔNG có nghĩa "chưa làm"**. Trạng thái làm việc thật nằm ở docstring `status:` của từng module (`planned|active`) và ở [02-trang-thai-tinh-nang.md](02-trang-thai-tinh-nang.md).
-- `status: active` = service đã theo skeleton chuẩn nhưng không do scaffold sinh (reward-service); scaffold không đụng tới.
+- `status: legacy-in-place` = reward-service (không bị scaffold đụng; `target_path` là nơi sẽ chuyển tới khi được duyệt).
 - Test kiến trúc kiểm: bảng trong migration phải thuộc `owned_tables` của service; SQL không chạm bảng service khác; mọi route legacy có đúng một đích; v.v.
 
 ## 1.7 Chassis chuẩn của một service

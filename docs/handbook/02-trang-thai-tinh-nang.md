@@ -86,7 +86,7 @@ Số liệu test tại thời điểm viết: arch 117 · contract 38 · identit
 | Tính năng | | Ghi chú |
 |---|:-:|---|
 | Engine job slash-command (SSE, recovery, reconcile, token pool) | ✅ | Giữ nguyên, `--workers 1` |
-| DB riêng `reward_db` (migration 001→004), không còn `accounts`/`invite_keys`/`refresh_tokens` | ✅ | |
+| DB riêng `reward_db` (migration 001→005), không còn `accounts`/`invite_keys`/`refresh_tokens` | ✅ | |
 | Verify RS256 qua `manager_sdk` (JWKS offline); `reward:access`/`reward:admin` | ✅ | |
 | Quyền do Identity quản lý (`grant-discord`/`revoke-discord` gọi Identity bằng Bearer của người gọi) | ✅ | Revoke role `discord` (shim) → 409 cho tới khi cấp `reward:access` tường minh |
 | Consumer feed Identity → `account_projection`, `account_denylist`; thu quyền/khóa/xóa/`session.revoked` dừng job | ✅ | `session.revoked` dừng **mọi** job của tài khoản (thận trọng) |
@@ -110,7 +110,7 @@ Số liệu test tại thời điểm viết: arch 117 · contract 38 · identit
 |---|:-:|---|
 | `manager_sdk.IntegrationClient` (idempotency ổn định, retry an toàn, chia lô 500, không rò key) | ✅ | Chưa có `heartbeat`/`lease_token` |
 | SDK TypeScript (`packages/sdk-typescript`) | ⛔ | CLAUDE.md ghi "chưa có" |
-| `local-ops-hub` chuyển sang machine credential + jobs API (Fallback Tool) | ⛔🔒 | Vẫn là legacy nguyên trạng |
+| `apps/local-fallback-tool/` chuyển sang machine credential + jobs API (Fallback Tool) | ⛔🔒 | Thư mục đã đổi tên (không còn `local-ops-hub`); codebase vẫn là legacy nguyên trạng |
 | Test E2E tiến trình thật + cô lập lỗi + Mock Tool X | ✅ | `tests/e2e` |
 | Cổng chất lượng `test_all.py` (bootstrap hạ tầng, migrate, mọi bộ, frontend) | ✅ | |
 | CI GitHub | 🟡 | `ci-tests.yml` chỉ `workflow_dispatch`, **chưa cập nhật** cho bộ test mới (không dựng Postgres ⇒ test DB sẽ SKIP). Deploy workflows chỉ `workflow_dispatch` (khóa bằng `tests/arch/test_ci_guard.py`) |

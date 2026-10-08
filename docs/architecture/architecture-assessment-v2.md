@@ -364,7 +364,8 @@ Không xóa trước khi commit, vì một request đọc xen vào sẽ nạp l�
 | DB | Sở hữu |
 |---|---|
 | `identity_db` | `accounts`, `invite_keys` (+`integration_policy`), `refresh_tokens`, `permissions`, `account_permissions`, `oidc_clients`, `signing_keys`, `auth_audit`, `outbox` |
-| `integration_db` | `integration_clients`, `integration_credentials`, `installations`, `platform_registry`, `metric_registry`, `projects`, `resources`, `resource_project_bindings`, `snapshots`, `snapshot_items`, `idempotency_keys`, `jobs`, `audit_log`, `account_projection`, `outbox`; **schema `legacy_ingest`**: `documents`, `user_meta`, `account_links`, `link_codes` |
+| `integration_db` | `integration_clients`, `integration_credentials`, `installations`, `platform_registry`, `metric_registry`, `projects`, `resources`, `resource_project_bindings`, `snapshots`, `snapshot_items`, `idempotency_keys`, `jobs`, `audit_log`, `account_projection`, `outbox`; **schema `legacy_ingest`**: `account_links`, `link_codes`, `platform_policies`, `resource_sources`, `resource_assignments`, `operation_batches`, `operation_items`, `operation_audit_log` |
+| *(chưa thực hiện)* | `documents`, `user_meta` — hiện vẫn do sync server của Tool (`upload-facebook`) ghi thẳng vào DB ngoài; kế hoạch chuyển vào `legacy_ingest` (F1) nhưng canonicalizer ⛔🔒 chưa triển khai |
 | `analytics_db` | read models, `agg_*`, `channel_groups`, `channel_group_members`, `country_aliases`, `country_canonicals`, `account_projection`, `feed_cursor`, `processed_events` |
 | `reward_db` | 12 bảng `reward_*`, `account_denylist`, `account_projection` tối thiểu |
 
