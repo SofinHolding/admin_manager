@@ -26,7 +26,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../compon
 import { PermissionsDialog } from "../components/PermissionsDialog";
 import { EmptyState, Field, Notice, PageHeader, Section, TechDetails } from "../components/kit";
 import { useAuth } from "../auth";
-import { PERM_REWARD_ADMIN } from "../auth/permissions";
+import { CAP_DASHBOARD_ACCESS, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION, PERM_REWARD_ADMIN } from "../auth/permissions";
 import { roleLabel } from "../nav";
 import { cn } from "../lib/utils";
 import { errorMessage } from "../lib/errors";
@@ -254,6 +254,10 @@ function InviteKeysTab() {
   const [scopes, setScopes] = useState<string[]>([...DEFAULT_POLICY_SCOPES]);
   const [maxClients, setMaxClients] = useState("1");
   const [apps, setApps] = useState("");
+  // Capability cấp thêm lúc đăng ký bằng mã này (capability-model-v1.md §4); default theo role vẫn áp dụng.
+  const [capToolIntegration, setCapToolIntegration] = useState(false);
+  const [capDashboard, setCapDashboard] = useState(false);
+  const [capChannelMgmt, setCapChannelMgmt] = useState(false);
   const { copied, copy } = useCopied();
 
   const load = useCallback(async () => {
@@ -273,7 +277,12 @@ function InviteKeysTab() {
 
   const handleCreate = async () => {
     setFormError(null);
-    const built = buildKeyExtra({ allowIntegration, platforms, scopes, maxClients, apps });
+    const capabilities = [
+      capToolIntegration && CAP_TOOL_INTEGRATION,
+      capDashboard && CAP_DASHBOARD_ACCESS,
+      capChannelMgmt && CAP_MANUAL_CHANNEL_MGMT,
+    ].filter((c): c is string => !!c);
+    const built = buildKeyExtra({ allowIntegration, platforms, scopes, maxClients, apps, capabilities });
     if (!built.ok) { setFormError(built.error); return; }
     setCreating(true);
     try {
@@ -360,6 +369,24 @@ function InviteKeysTab() {
                      hint="Tên ứng dụng, cách nhau bằng dấu phẩy, ví dụ: reward. Người đăng ký bằng mã này chỉ được mở quyền vào đúng các ứng dụng đó.">
                 {(p) => <Input {...p} value={apps} onChange={(e) => setApps(e.target.value)} placeholder="Ví dụ: reward" />}
               </Field>
+              <fieldset className="space-y-3">
+                <legend className="text-sm font-semibold">Capability cấp thêm (ngoài mặc định theo vai trò)</legend>
+                <label className="flex items-center gap-3">
+                  <input type="checkbox" className={checkboxCls} checked={capToolIntegration}
+                         onChange={(e) => setCapToolIntegration(e.target.checked)} />
+                  <span>Cho phép liên kết Tool cá nhân <code className="font-mono text-sm text-muted-foreground">(capability:tool_integration)</code></span>
+                </label>
+                <label className="flex items-center gap-3">
+                  <input type="checkbox" className={checkboxCls} checked={capDashboard}
+                         onChange={(e) => setCapDashboard(e.target.checked)} />
+                  <span>Xem Dashboard thống kê <code className="font-mono text-sm text-muted-foreground">(capability:dashboard_access)</code></span>
+                </label>
+                <label className="flex items-center gap-3">
+                  <input type="checkbox" className={checkboxCls} checked={capChannelMgmt}
+                         onChange={(e) => setCapChannelMgmt(e.target.checked)} />
+                  <span>Tự quản lý kênh <code className="font-mono text-sm text-muted-foreground">(capability:manual_channel_mgmt)</code></span>
+                </label>
+              </fieldset>
             </div>
           </TechDetails>
 
@@ -417,6 +444,9 @@ function InviteKeysTab() {
                     <span className="mt-1 flex flex-wrap gap-1.5 empty:hidden">
                       {k.integration_policy?.allow_integration_registration && <Badge variant="default">Được tạo công cụ</Badge>}
                       {k.allowed_apps?.length ? <Badge variant="secondary">Ứng dụng: {k.allowed_apps.join(", ")}</Badge> : null}
+                      {k.capability_grant?.capabilities.length
+                        ? <Badge variant="secondary">Capability: {k.capability_grant.capabilities.join(", ")}</Badge>
+                        : null}
                     </span>
                   </RCell>
                   <RCell label="Trạng thái"><StatusBadge spec={KEY_STATE[st]} /></RCell>

@@ -31,6 +31,7 @@ from identity_service.errors import DomainError
 from identity_service.notifications.port import Mailer
 from identity_service.outbox import events
 from identity_service.permissions import repository as perms_repo
+from identity_service.permissions.capabilities import default_for_role
 from identity_service.permissions.service import effective_permissions
 from identity_service.tokens.service import TokenService
 from identity_service.registration_keys import policy as key_policy, repository as keys
@@ -162,6 +163,15 @@ class AuthService:
             for app in apps:  # SSO (D11): key phát cho app nào chỉ cấp `<app>:access` của app đó
                 if await perms_repo.grant(conn, account["id"], f"{app}:access", "registration"):
                     await events.permission_changed(conn, account["id"], f"{app}:access", True)
+            # Phase 2 (capability-model-v1.md §4): default theo role + extra/override từ capability_grant của key.
+            cap_grant = keys.parse_capability_grant(key_row.get("capability_grant"))
+            caps = set(default_for_role(account["role"]))
+            if cap_grant:
+                extra = set(cap_grant.get("capabilities") or [])
+                caps = extra if cap_grant.get("override_defaults") else caps | extra
+            for cap in sorted(caps):
+                if await perms_repo.grant(conn, account["id"], cap, "registration"):
+                    await events.permission_changed(conn, account["id"], cap, True)
 
         await self._safe_send(self.mailer.send_verify, account["email"], verify_token, account["username"])
         result = {"ok": True, "email": account["email"],

@@ -43,6 +43,8 @@ export interface KeyExtraForm {
   scopes: readonly string[];
   maxClients: string;
   apps: string;
+  /** `capability:*` được chọn cấp thêm lúc đăng ký bằng mã này (docs/architecture/capability-model-v1.md §4). */
+  capabilities?: readonly string[];
 }
 
 export function parseList(raw: string): string[] {
@@ -59,6 +61,7 @@ export function buildKeyExtra(f: KeyExtraForm): KeyExtraResult {
   const badApp = apps.find((a) => !TOKEN_RE.test(a));
   if (badApp) return { ok: false, error: "Tên ứng dụng chỉ gồm chữ thường, số, dấu - và _" };
   if (apps.length) extra.allowed_apps = apps;
+  if (f.capabilities?.length) extra.capability_grant = { capabilities: [...f.capabilities] };
 
   if (f.allowIntegration) {
     const platforms = parseList(f.platforms);

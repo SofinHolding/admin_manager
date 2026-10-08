@@ -244,10 +244,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     // Giữ cờ "persist" (token đã ở sessionStorage); refresh token được xoay vòng thì ghi đè tại chỗ.
-    setRefreshToken(stored, true);
+    // Pre-refresh để lấy AT hợp lệ trước khi gọi /me — tránh 401 trung gian hiện ra trong console.
+    // (Pattern cũ: gọi /me → 401 → lõi HTTP tự refresh → retry; đúng về nghiệp vụ nhưng gây noise.)
     (async () => {
       try {
-        // Gọi /me: 401 -> lõi HTTP tự refresh (qua chiến lược của chế độ hiện tại) rồi thử lại.
+        const refreshed = await authApi.refresh(stored);
+        setTokens(refreshed.access_token, refreshed.refresh_token ?? stored, true);
         const me = await authApi.me();
         setUser(buildUser(me));
       } catch (e) {
@@ -261,7 +263,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     })();
   }, [buildUser]);
-
   // ── Login ───────────────────────────────────────────────────────────────
 
   const login = useCallback(async (username: string, password: string, remember: boolean) => {

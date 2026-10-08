@@ -78,6 +78,19 @@ describe("adminKeyForm (thuần)", () => {
     expect(buildKeyExtra({ ...base, apps: "<script>" })).toMatchObject({ ok: false });
     expect(buildKeyExtra({ ...base, platforms: "face book!" })).toMatchObject({ ok: false });
   });
+
+  it("chọn capability => capability_grant.capabilities đúng danh sách, không chọn => không có trường", () => {
+    const none = buildKeyExtra({ allowIntegration: false, platforms: "", scopes: [], maxClients: "1", apps: "" });
+    expect(none).toEqual({ ok: true, extra: {} });
+    const some = buildKeyExtra({
+      allowIntegration: false, platforms: "", scopes: [], maxClients: "1", apps: "",
+      capabilities: ["capability:tool_integration", "capability:manual_channel_mgmt"],
+    });
+    expect(some).toEqual({
+      ok: true,
+      extra: { capability_grant: { capabilities: ["capability:tool_integration", "capability:manual_channel_mgmt"] } },
+    });
+  });
 });
 
 describe("AdminPage — tạo invite key", () => {
@@ -118,6 +131,23 @@ describe("AdminPage — tạo invite key", () => {
       max_integration_clients: 2,
     });
     expect(body.allowed_apps).toEqual(["reward"]);
+  });
+
+  it("chọn capability => gửi capability_grant.capabilities đúng danh sách", async () => {
+    const f = installFetch(...server({ perms: [] }));
+    renderAdmin();
+    const user = userEvent.setup();
+    await screen.findByText(/Chưa có mã mời nào/);
+    await user.click(screen.getByText("Tùy chọn nâng cao"));
+    const form = screen.getByTestId("policy-form");
+    await user.click(within(form).getByRole("checkbox", { name: /capability:tool_integration/ }));
+    await user.click(within(form).getByRole("checkbox", { name: /capability:manual_channel_mgmt/ }));
+    await user.click(screen.getByRole("button", { name: /Tạo mã mời/ }));
+    await waitFor(() => expect(f.calls.some((c) => c.method === "POST")).toBe(true));
+    const body = JSON.parse(f.calls.find((c) => c.method === "POST")!.body!);
+    expect(body.capability_grant).toEqual({
+      capabilities: ["capability:tool_integration", "capability:manual_channel_mgmt"],
+    });
   });
 
   it("policy không hợp lệ (thiếu nền tảng) => không gọi API", async () => {

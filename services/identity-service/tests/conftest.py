@@ -138,14 +138,27 @@ async def db(migrated):
     await database.open()
     async with database.connection() as conn:
         await conn.execute(f"TRUNCATE {_TABLES} RESTART IDENTITY CASCADE")
-        # Catalog permission không bị TRUNCATE (là dữ liệu seed của migration 0002): đưa về đúng trạng thái seed
+        # Catalog permission không bị TRUNCATE (là dữ liệu seed của migration 0002 + 0005): đưa về đúng trạng thái seed
         # để test nào thêm/xoá permission không làm nhiễm test khác.
-        await conn.execute("DELETE FROM permissions WHERE name NOT IN ('reward:access', 'reward:admin')")
+        _SEED_PERMS = (
+            "('reward:access',          'Dùng module Reward',                          'reward-service', false)",
+            "('reward:admin',           'Quản trị module Reward',                      'reward-service', true)",
+            "('capability:web_access',          'Đăng nhập và dùng website cơ bản',           'identity', false)",
+            "('capability:dashboard_access',    'Xem Dashboard thống kê',                     'identity', false)",
+            "('capability:manual_channel_mgmt', 'Tự nhập/sửa/xóa kênh trên website',          'identity', false)",
+            "('capability:tool_integration',    'Liên kết Tool, tạo integration client',       'identity', false)",
+            "('capability:api_write',           'Credential gửi được snapshots/metrics',       'identity', false)",
+            "('capability:api_read',            'Credential đọc được dữ liệu',                'identity', false)",
+            "('capability:multi_tool',          'Tạo nhiều hơn 1 integration client',          'identity', false)",
+        )
+        # Tên permission: token thứ hai trong mỗi phần tử ("('{name}', ...)") — tách ngoài f-string
+        _names_list = [s.split("'")[1] for s in _SEED_PERMS]
+        _SEED_NAMES = ", ".join("'" + n + "'" for n in _names_list)
+        await conn.execute(f"DELETE FROM permissions WHERE name NOT IN ({_SEED_NAMES})")
         await conn.execute(
             "INSERT INTO permissions (name, description, owner_service, admin_only) VALUES "
-            "('reward:access', 'Dùng module Reward (tạo/chạy job phân phối điểm)', 'reward-service', false), "
-            "('reward:admin', 'Quản trị module Reward (xem mọi job/tài khoản)', 'reward-service', true) "
-            "ON CONFLICT (name) DO UPDATE SET admin_only = EXCLUDED.admin_only")
+            + ", ".join(_SEED_PERMS)
+            + " ON CONFLICT (name) DO UPDATE SET admin_only = EXCLUDED.admin_only")
     yield database
     await database.close()
 

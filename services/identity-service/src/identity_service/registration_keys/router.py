@@ -18,6 +18,7 @@ class CreateKeyBody(BaseModel):
     expires_days: int = Field(7, ge=1, le=365)
     integration_policy: dict | None = None      # Phase 1.7: chính sách đăng ký kèm Tool
     allowed_apps: list[str] = Field(default_factory=list, max_length=32)   # tự cấp permission `<app>:access`
+    capability_grant: dict | None = None        # Phase 2: capability cấp thêm lúc đăng ký (capability:*)
 
 
 @router.post("/keys", summary="Tạo invite key mới")
@@ -25,7 +26,8 @@ async def create_key(body: CreateKeyBody, request: Request, admin: dict = Depend
     return await get_container(request).keys.create(admin, role=body.role, label=body.label,
                                                     max_uses=body.max_uses, expires_days=body.expires_days,
                                                     integration_policy=body.integration_policy,
-                                                    allowed_apps=body.allowed_apps)
+                                                    allowed_apps=body.allowed_apps,
+                                                    capability_grant=body.capability_grant)
 
 
 @router.get("/keys", summary="Danh sách invite keys")

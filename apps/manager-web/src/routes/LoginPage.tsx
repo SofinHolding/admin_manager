@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth";
+import { homePath } from "../auth/permissions";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Field, Notice } from "../components/kit";
@@ -25,7 +26,7 @@ export default function LoginPage() {
   // Đã đăng nhập → về dashboard. Dùng useEffect thay vì gọi navigate() trong render body
   // vì navigate() setState bên trong → "Cannot update while rendering another component".
   useEffect(() => {
-    if (user) navigate("/dashboard", { replace: true });
+    if (user) navigate(homePath(user), { replace: true });
   }, [user, navigate]);
 
   if (user) return null;
@@ -78,7 +79,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(username.trim(), password, remember);
-      navigate("/dashboard", { replace: true });
+      // navigate xử lý bởi useEffect khi user state được set
     } catch (err) {
       setError(loginError(err));
     } finally {

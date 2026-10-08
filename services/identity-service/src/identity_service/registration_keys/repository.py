@@ -43,18 +43,27 @@ def parse_policy(value) -> dict | None:
     return value if isinstance(value, dict) else json.loads(value)
 
 
+def parse_capability_grant(value) -> dict | None:
+    """`capability_grant` là jsonb: asyncpg trả str (chưa đăng ký codec) -> dict."""
+    if value is None:
+        return None
+    return value if isinstance(value, dict) else json.loads(value)
+
+
 async def create(conn: asyncpg.Connection, *, role: str, label: str, max_uses: int, expires_days: int,
                  now: datetime, integration_policy: dict | None = None,
-                 allowed_apps: list[str] | None = None) -> dict:
+                 allowed_apps: list[str] | None = None, capability_grant: dict | None = None) -> dict:
     expires = now + timedelta(days=expires_days)
     for _ in range(10):  # va chạm key gần như không xảy ra; thử lại thay vì lỗi
         key = generate_key()
         try:
             row = await conn.fetchrow(
                 "INSERT INTO invite_keys (key, role, label, max_uses, created_at, expires_at, integration_policy, "
-                "allowed_apps) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8) RETURNING *",
+                "allowed_apps, capability_grant) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb) "
+                "RETURNING *",
                 key, role, label, max_uses, now, expires,
-                json.dumps(integration_policy) if integration_policy is not None else None, allowed_apps or [])
+                json.dumps(integration_policy) if integration_policy is not None else None, allowed_apps or [],
+                json.dumps(capability_grant) if capability_grant is not None else None)
             return dict(row)
         except asyncpg.UniqueViolationError:
             continue

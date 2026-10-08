@@ -18,6 +18,7 @@ from manager_observability import create_service_app
 
 from identity_service import SERVICE_NAME, __version__, migrate
 from identity_service.accounts.router import me_router as accounts_me_router, router as users_router
+from identity_service.accounts.capabilities import router as capabilities_router
 from identity_service.accounts.service import AccountAdminService
 from identity_service.auth.ratelimit import RateLimiter
 from identity_service.auth.router import router as auth_router
@@ -128,6 +129,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
     app.include_router(keys_router)
     app.include_router(users_router)
     app.include_router(accounts_me_router)
+    app.include_router(capabilities_router)
     app.include_router(oidc_router)
     app.include_router(oidc_admin_router)
     app.include_router(permissions_router)

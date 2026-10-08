@@ -70,3 +70,19 @@ Chủ dự án yêu cầu dựng lại cấu trúc cho rõ ràng, không cần g
 `packages/`, `infra/{gateway,docker,compose,deploy,scripts}`, `tests/`, `docs/`; `tasks/` và `.omp/` giữ nguyên (bị tham chiếu bằng đường dẫn). Di chuyển bằng lệnh hệ điều hành (mang theo file ignore như `node_modules`, `admin-auth.db`); đổi tên thư mục
 nhưng **không** đổi tên package npm/Python hay khóa registry, và **không** sửa migration đã áp dụng (checksum). reward-service được chuẩn hóa thành `src/reward_service/` + `migrations/` ở gốc service (180 test là lưới an toàn).
 Workflow deploy (chỉ `workflow_dispatch`) được sửa đường dẫn trong repo; đường dẫn trên VPS (`/srv/admin`, `/srv/reward`) không đổi. Hệ quả: mọi tham chiếu đường dẫn bị cứng đã được cập nhật; `tests/arch/test_repo_layout.py` giữ chuẩn (gốc repo, skeleton service/app, legacy đóng băng, registry, compose).
+
+## Phân quyền tài khoản
+
+**ADR-013 · Capability model tái dùng `permissions`/`account_permissions`, không thêm bảng (`docs/architecture/capability-model-v1.md`).**
+Capability = permission namespace `capability:*` (`web_access`, `dashboard_access`, `manual_channel_mgmt`, `tool_integration`,
+`api_write`, `api_read`, `multi_tool`), seed trong migration `0005_capabilities.sql` kèm backfill một lần cho tài khoản cũ theo
+role hiện tại (không mất quyền). `invite_keys.capability_grant` (jsonb, `{capabilities, override_defaults}`) cấp thêm/khác default
+của role lúc đăng ký — `override_defaults=false` cộng vào default, `true` chỉ cấp đúng danh sách (cho role đặc biệt như `discord`).
+API quản trị `/v1/admin/accounts/{id}/capabilities` (GET/POST/DELETE) dùng dependency MỚI `require_full_admin` (role `admin` đúng
+nghĩa, không gồm `dash_admin` như `require_admin` hiện có) vì capability ảnh hưởng tới cả vai trò website lẫn Tool; nội bộ gọi thẳng
+`PermissionService.grant/revoke` sẵn có (đã có audit + event `account.permission_changed`) nên không có nghiệp vụ trùng lặp.
+Frontend: `hasCap` đọc thẳng `perms`, KHÔNG bypass theo role như `hasPerm` (capability không ngầm định theo role — kể cả `admin`
+phải được seed/grant tường minh). `homePath` ưu tiên dashboard, rồi `reward:access` (giữ hành vi cũ), rồi `tool_integration` →
+`/my-tools`, rồi `manual_channel_mgmt` → `/channels`; với 4 role hiện có (`viewer`/`dash_admin`/`admin` luôn vào dashboard,
+`discord` luôn có `reward:access`) hai nhánh capability chưa có đường tới qua đăng nhập — hạ tầng này dọn chỗ cho role website-only
+tương lai, dùng được ngay qua điều hướng trực tiếp (nav + CapGate) nếu admin cấp capability cho tài khoản hiện có.

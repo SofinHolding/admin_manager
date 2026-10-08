@@ -22,6 +22,7 @@ _PLATFORM = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 _SCOPE = re.compile(r"^[a-z][a-z0-9_]*(:[a-z][a-z0-9_]*)+$")
 _TOOL_NAME = re.compile(r"^[\w .\-]{1,64}$")
 _APP = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+_CAPABILITY = re.compile(r"^capability:[a-z][a-z0-9_]*$")
 MAX_LIST = 32
 
 
@@ -71,6 +72,23 @@ def normalize_policy(raw: dict | None) -> dict | None:
 
 def normalize_apps(raw: object) -> list[str]:
     return _str_list(raw if raw is not None else [], _APP, "allowed_apps")
+
+
+def normalize_capability_grant(raw: dict | None) -> dict | None:
+    """Chuẩn hoá `capability_grant` khi admin tạo key (docs/architecture/capability-model-v1.md §4).
+
+    None => key không cấp thêm gì ngoài default theo role. `override_defaults: true` => đăng ký chỉ nhận
+    đúng danh sách `capabilities` (bỏ qua default của role) — dùng cho role đặc biệt như `discord`.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise _err(422, "capability_grant phải là object", "REQUEST_VALIDATION_FAILED")
+    unknown = set(raw) - {"capabilities", "override_defaults"}
+    if unknown:
+        raise _err(422, "capability_grant có trường không được hỗ trợ", "REQUEST_VALIDATION_FAILED")
+    caps = _str_list(raw.get("capabilities", []), _CAPABILITY, "capabilities")
+    return {"capabilities": caps, "override_defaults": bool(raw.get("override_defaults", False))}
 
 
 def plan_registration(policy: dict | None, req: dict) -> dict:

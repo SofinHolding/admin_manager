@@ -10,7 +10,7 @@ initPreferences(); // áp giao diện sáng/tối và cỡ chữ đã chọn TR�
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <BrowserRouter basename="/admin">
+      <BrowserRouter>
       <App />
       <Toaster position="top-center" richColors closeButton />
     </BrowserRouter>

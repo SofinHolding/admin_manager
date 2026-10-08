@@ -30,9 +30,28 @@ export function canSeeDashboard(user: PrincipalLike | null | undefined): boolean
   return !!user && (DASHBOARD_ROLES as readonly string[]).includes(user.role);
 }
 
-/** Trang chủ: người chỉ có quyền Reward (vd role discord) vào module phân phối điểm; còn lại vào dashboard. */
+/**
+ * Capability — permission namespace `capability:*` (docs/architecture/capability-model-v1.md).
+ * Tính năng tài khoản (có dùng Tool không, có được nhập kênh không) tách khỏi vai trò website.
+ */
+export const CAP_WEB_ACCESS = "capability:web_access";
+export const CAP_DASHBOARD_ACCESS = "capability:dashboard_access";
+export const CAP_MANUAL_CHANNEL_MGMT = "capability:manual_channel_mgmt";
+export const CAP_TOOL_INTEGRATION = "capability:tool_integration";
+export const CAP_API_WRITE = "capability:api_write";
+export const CAP_API_READ = "capability:api_read";
+export const CAP_MULTI_TOOL = "capability:multi_tool";
+
+export function hasCap(user: PrincipalLike | null | undefined, cap: string): boolean {
+  return (user?.perms ?? []).includes(cap);
+}
+
+/** Trang chủ: dashboard trước, rồi Tool cá nhân, rồi tự quản lý kênh, cuối cùng là hồ sơ. */
 export function homePath(user: PrincipalLike | null | undefined): string {
   if (!user) return "/login";
+  if (canSeeDashboard(user)) return "/admin/dashboard";
   if (!canSeeDashboard(user) && hasPerm(user, PERM_REWARD_ACCESS)) return "/reward/jobs";
-  return "/dashboard";
+  if (hasCap(user, CAP_TOOL_INTEGRATION)) return "/my-tools";
+  if (hasCap(user, CAP_MANUAL_CHANNEL_MGMT)) return "/channels";
+  return "/profile";
 }

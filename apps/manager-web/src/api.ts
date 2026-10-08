@@ -365,6 +365,11 @@ export const groupsApi = {
 
 // ── Admin API ───────────────────────────────────────────────────────────────
 
+export interface CapabilityGrant {
+  capabilities: string[];
+  override_defaults?: boolean;
+}
+
 export interface InviteKey {
   key: string;
   role: string;
@@ -376,11 +381,13 @@ export interface InviteKey {
   status: string;
   integration_policy?: IntegrationPolicy;
   allowed_apps?: string[];
+  capability_grant?: CapabilityGrant;
 }
 
 export interface CreateKeyExtra {
   integration_policy?: IntegrationPolicy;
   allowed_apps?: string[];
+  capability_grant?: CapabilityGrant;
 }
 
 export interface Account {

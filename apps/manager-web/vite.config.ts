@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
-    base: "/admin/",
+    base: "/",
     server: {
       // 127.0.0.1 (không phải "localhost") để khớp redirect URI OIDC đã đăng ký: http://127.0.0.1:5174/admin/callback
       host: "127.0.0.1",

@@ -5,7 +5,7 @@
 
 import type { LucideIcon } from "lucide-react";
 import { BarChart3, Coins, Database, KeyRound, Link2, Settings, Users } from "lucide-react";
-import { PERM_REWARD_ACCESS, type PrincipalLike } from "./auth/permissions";
+import { canSeeDashboard, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION, hasCap, PERM_REWARD_ACCESS, type PrincipalLike } from "./auth/permissions";
 
 export interface NavItem {
   to: string;
@@ -33,21 +33,22 @@ export function roleLabel(role: string | undefined): string {
 
 export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: string) => boolean): NavGroup[] {
   if (!user) return [];
-  const dashboardRole = user.role === "admin" || user.role === "dash_admin" || user.role === "viewer";
+  const isAdminZone = canSeeDashboard(user);
+  const rewardBase = isAdminZone ? "/admin/reward" : "/reward";
   const groups: NavGroup[] = [];
-  if (dashboardRole) {
+  if (isAdminZone) {
     groups.push({
       title: "Theo dõi",
       items: [
-        { to: "/dashboard", label: "Tổng quan", icon: BarChart3 },
-        { to: "/groups", label: "Nhóm kênh", icon: Users },
+        { to: "/admin/dashboard", label: "Tổng quan", icon: BarChart3 },
+        { to: "/admin/groups", label: "Nhóm kênh", icon: Users },
       ],
     });
     groups.push({
       title: "Kết nối dữ liệu",
       items: [
-        { to: "/resources", label: "Kênh và nguồn", short: "Kênh", icon: Database },
-        { to: "/integrations", label: "Công cụ đẩy dữ liệu", short: "Công cụ", icon: KeyRound },
+        { to: "/admin/resources", label: "Kênh và nguồn", short: "Kênh", icon: Database },
+        { to: "/admin/integrations", label: "Công cụ đẩy dữ liệu", short: "Công cụ", icon: KeyRound },
       ],
     });
   }
@@ -55,13 +56,20 @@ export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: s
     groups.push({
       title: "Phân phối điểm",
       items: [
-        { to: "/reward/credentials", label: "Kết nối Discord", short: "Discord", icon: Link2 },
-        { to: "/reward/jobs", label: "Công việc phân phối", short: "Công việc", icon: Coins },
+        { to: `${rewardBase}/credentials`, label: "Kết nối Discord", short: "Discord", icon: Link2 },
+        { to: `${rewardBase}/jobs`, label: "Công việc phân phối", short: "Công việc", icon: Coins },
       ],
     });
   }
   if (user.role === "admin" || user.role === "dash_admin") {
-    groups.push({ title: "Quản trị", items: [{ to: "/manage", label: "Quản trị hệ thống", icon: Settings }] });
+    groups.push({ title: "Quản trị", items: [{ to: "/admin/manage", label: "Quản trị hệ thống", icon: Settings }] });
+  }
+  // Website-only: tài khoản không vào được khu quản trị nhưng có capability riêng (capability-model-v1.md §8).
+  if (!isAdminZone && hasCap(user, CAP_TOOL_INTEGRATION)) {
+    groups.push({ title: "Tool của tôi", items: [{ to: "/my-tools", label: "Tool cá nhân", icon: KeyRound }] });
+  }
+  if (!isAdminZone && hasCap(user, CAP_MANUAL_CHANNEL_MGMT)) {
+    groups.push({ title: "Kênh của tôi", items: [{ to: "/channels", label: "Kênh của tôi", icon: Database }] });
   }
   return groups;
 }

@@ -85,18 +85,16 @@ describe("AuthProvider — đăng nhập mật khẩu & lưu token", () => {
     expect(JSON.parse(f.byPath("/v1/auth/logout")[0].body!)).toEqual({ refresh_token: "RT-1" });
   });
 
-  it("F5: khôi phục phiên từ refresh token của TAB này (me -> 401 -> refresh -> me)", async () => {
+  it("F5: khôi phục phiên — pre-refresh lấy AT trước rồi gọi /me (không có 401 trung gian)", async () => {
     sessionStorage.setItem("mp_refresh_token", "RT-PERSISTED");
-    let meCalls = 0;
     const f = installFetch(
       (c) => c.path === "/v1/auth/refresh" ? jsonResponse({ access_token: ACCESS, expires_in: 900 }) : undefined,
-      (c) => c.path === "/v1/auth/me"
-        ? (++meCalls === 1 ? jsonResponse({ detail: "Token hết hạn" }, { status: 401 }) : jsonResponse({ ...user, created_at: "" }))
-        : undefined,
+      (c) => c.path === "/v1/auth/me" ? jsonResponse({ ...user, created_at: "" }) : undefined,
     );
     mount();
     await waitFor(() => expect(screen.getByTestId("user").textContent).toBe("alice"));
     expect(f.byPath("/v1/auth/refresh")).toHaveLength(1);
+    expect(f.byPath("/v1/auth/me")).toHaveLength(1);
     expect(screen.getByTestId("perms").textContent).toBe("reward:access");
   });
 

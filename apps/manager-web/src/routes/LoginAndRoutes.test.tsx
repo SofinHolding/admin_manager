@@ -5,8 +5,9 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import LoginPage from "./LoginPage";
 import OidcCallbackPage from "./OidcCallbackPage";
 import { PermGate, RoleGate, HomeRedirect } from "../components/RoleGate";
+import { CapGate } from "../components/CapGate";
 import { AuthContext, type AuthCtx, type User } from "../auth";
-import { hasPerm, homePath } from "../auth/permissions";
+import { CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION, hasCap, hasPerm, homePath } from "../auth/permissions";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -32,11 +33,24 @@ describe("permission / điều hướng theo claim perms", () => {
     expect(hasPerm(null, "reward:access")).toBe(false);
   });
 
-  it("homePath: chỉ có reward:access (không có quyền dashboard) -> /reward/jobs; còn lại /dashboard", () => {
+  it("homePath: chỉ có reward:access (không có quyền dashboard) -> /reward/jobs; còn lại /admin/dashboard", () => {
     expect(homePath(mk("discord"))).toBe("/reward/jobs");
-    expect(homePath(mk("viewer"))).toBe("/dashboard");
-    expect(homePath(mk("admin"))).toBe("/dashboard");
-    expect(homePath(mk("viewer", ["reward:access"]))).toBe("/dashboard");
+    expect(homePath(mk("viewer"))).toBe("/admin/dashboard");
+    expect(homePath(mk("admin"))).toBe("/admin/dashboard");
+    expect(homePath(mk("viewer", ["reward:access"]))).toBe("/admin/dashboard");
+  });
+
+  it("hasCap: đọc thẳng từ perms, KHÔNG có bypass theo role như hasPerm", () => {
+    expect(hasCap(mk("viewer", [CAP_TOOL_INTEGRATION]), CAP_TOOL_INTEGRATION)).toBe(true);
+    expect(hasCap(mk("admin"), CAP_TOOL_INTEGRATION)).toBe(false);
+    expect(hasCap(null, CAP_TOOL_INTEGRATION)).toBe(false);
+  });
+
+  it("homePath: capability độc lập với role — tool_integration rồi manual_channel_mgmt rồi profile khi không có vai trò dashboard/reward", () => {
+    expect(homePath(mk("capability_only", [CAP_TOOL_INTEGRATION]))).toBe("/my-tools");
+    expect(homePath(mk("capability_only", [CAP_MANUAL_CHANNEL_MGMT]))).toBe("/channels");
+    expect(homePath(mk("capability_only", [CAP_TOOL_INTEGRATION, CAP_MANUAL_CHANNEL_MGMT]))).toBe("/my-tools");
+    expect(homePath(mk("capability_only"))).toBe("/profile");
   });
 
   function renderRoutes(user: User, at: string) {
@@ -48,7 +62,10 @@ describe("permission / điều hướng theo claim perms", () => {
               <Route path="/reward/jobs" element={<div>REWARD-PAGE</div>} />
             </Route>
             <Route element={<RoleGate allow={["admin", "dash_admin", "viewer"]} />}>
-              <Route path="/dashboard" element={<div>DASH-PAGE</div>} />
+              <Route path="/admin/dashboard" element={<div>DASH-PAGE</div>} />
+            </Route>
+            <Route element={<CapGate cap={CAP_TOOL_INTEGRATION} />}>
+              <Route path="/my-tools" element={<div>MY-TOOLS-PAGE</div>} />
             </Route>
             <Route path="/" element={<HomeRedirect />} />
           </Routes>
@@ -70,14 +87,26 @@ describe("permission / điều hướng theo claim perms", () => {
     expect(screen.getByText("DASH-PAGE")).toBeInTheDocument();
   });
 
-  it("route Dashboard: role discord không vào được, trang nêu đúng vai trò và lý do, nút dẫn về /reward/jobs", async () => {
-    renderRoutes(mk("discord"), "/dashboard");
+  it("route Admin dashboard: role discord không vào được, trang nêu đúng vai trò và lý do, nút dẫn về /reward/jobs", async () => {
+    renderRoutes(mk("discord"), "/admin/dashboard");
     expect(screen.queryByText("DASH-PAGE")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Bạn chưa có quyền vào trang này" })).toBeInTheDocument();
     expect(screen.getByText(/vai trò Vận hành Discord/)).toBeInTheDocument();
     expect(screen.getByText(/chỉ dành cho: Quản trị viên, Quản lý Dashboard, Người xem/)).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole("link", { name: "Về trang chính" }));
     expect(screen.getByText("REWARD-PAGE")).toBeInTheDocument();
+  });
+
+  it("route /my-tools: capability:tool_integration cho vào", () => {
+    renderRoutes(mk("capability_only", [CAP_TOOL_INTEGRATION]), "/my-tools");
+    expect(screen.getByText("MY-TOOLS-PAGE")).toBeInTheDocument();
+  });
+
+  it("route /my-tools: không có capability -> trang giải thích đúng tên quyền cần", () => {
+    renderRoutes(mk("capability_only"), "/my-tools");
+    expect(screen.queryByText("MY-TOOLS-PAGE")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Bạn chưa có quyền vào trang này" })).toBeInTheDocument();
+    expect(screen.getByText(/liên kết Tool cá nhân/)).toBeInTheDocument();
   });
 
   it("route Reward: admin được vào; role discord legacy vẫn vào được (shim)", () => {
