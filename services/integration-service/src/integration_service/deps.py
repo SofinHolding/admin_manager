@@ -45,7 +45,7 @@ async def require_tool_integration(principal: Principal = Depends(require_user))
     if not principal.has_perm("capability:tool_integration"):
         raise AuthError("Tài khoản chưa được cấp quyền sử dụng Tool tích hợp",
                         status_code=403, code=ErrorCode.SCOPE_DENIED.value)
-
+    return principal
 
 def machine(scope: str):
     """Dependency mặt phẳng MÁY: API key + scope. Token user (JWT) ở đây => AUTH_INVALID."""

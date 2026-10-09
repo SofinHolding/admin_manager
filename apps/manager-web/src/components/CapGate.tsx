@@ -4,10 +4,13 @@ import { hasCap } from "../auth/permissions";
 import { AccessDenied } from "./RoleGate";
 
 const CAP_LABEL: Record<string, string> = {
-  "capability:tool_integration": "liên kết Tool cá nhân",
-  "capability:manual_channel_mgmt": "tự quản lý kênh",
-  "capability:dashboard_access": "xem Dashboard thống kê",
-  "capability:web_access": "đăng nhập và dùng website",
+  "capability:web_access":           "đăng nhập và dùng website",
+  "capability:dashboard_access":     "xem Dashboard thống kê",
+  "capability:manual_channel_mgmt":  "tự quản lý kênh",
+  "capability:tool_integration":     "liên kết Tool cá nhân",
+  "capability:api_write":            "gửi dữ liệu qua API",
+  "capability:api_read":             "đọc dữ liệu qua API",
+  "capability:multi_tool":           "sử dụng nhiều Tool",
 };
 
 /** Chặn route theo capability (claim `perms` namespace `capability:*`). Server mới là nơi ENFORCE. */

@@ -63,6 +63,19 @@ async def test_client_body_rejects_owner_and_unknown_fields_and_bad_kind(env):
     assert (await create_client(env, u, platforms=[])).status_code == 422
 
 
+async def test_user_without_tool_integration_capability_cannot_create_client(env):
+    """CRITICAL: capability:tool_integration phải được enforce ở BACKEND (không chỉ frontend)."""
+    no_cap = await env.verified_user(perms=[])      # user có JWT nhưng KHÔNG có capability
+    r = await create_client(env, no_cap)
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["code"] == "SCOPE_DENIED"
+
+    # Có capability thì được phép
+    with_cap = await env.verified_user(perms=["capability:tool_integration"])
+    r2 = await create_client(env, with_cap)
+    assert r2.status_code in (201, 409), r2.text  # 201 tạo mới, 409 nếu đã đạt giới hạn
+
+
 async def test_suspended_account_cannot_create_clients(env):
     u = env.user()
     await env.projection(u["sub"], status="suspended")

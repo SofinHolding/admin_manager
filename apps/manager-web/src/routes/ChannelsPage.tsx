@@ -24,7 +24,7 @@ export default function ChannelsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [platform, setPlatform] = useState("");
-  const [inputRef, setInputRef] = useState("");
+  const [inputValue, setInputValue] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -48,7 +48,7 @@ export default function ChannelsPage() {
   useEffect(() => { void load(); }, [load]);
 
   const handleAdd = async () => {
-    if (!platform || !inputRef.trim()) return;
+    if (!platform || !inputValue.trim()) return;
     setSaving(true);
     try {
       // Mỗi nền tảng dùng chung đúng một "nguồn" tối giản của tài khoản — không có khái niệm nguồn
@@ -57,11 +57,11 @@ export default function ChannelsPage() {
       const source = sources.items.find((s) => s.platform === platform)
         ?? await resourcesApi.createSource({ name: "Kênh của tôi", platform });
       const created = await resourcesApi.createResource({
-        source_instance_id: source.id, platform, input_ref: inputRef.trim(),
+        source_instance_id: source.id, platform, input_ref: inputValue.trim(),
         display_name: displayName.trim() || undefined,
       });
       setItems((cur) => [created, ...cur]);
-      setInputRef("");
+      setInputValue("");
       setDisplayName("");
       toast.success(created.execution_mode === "fallback_local"
         ? "Đã thêm kênh. Thu thập dữ liệu đang được lên lịch."
@@ -104,12 +104,12 @@ export default function ChannelsPage() {
             )}
           </Field>
           <Field label="Link hoặc tên kênh" hint="Dán link trang/kênh, hoặc nhập tên định danh.">
-            {(p) => <Input {...p} value={inputRef} onChange={(e) => setInputRef(e.target.value)} placeholder="https://facebook.com/ten-trang" />}
+            {(p) => <Input {...p} value={inputValue} onChange={(e) => setInputValue(e.target.value)} placeholder="https://facebook.com/ten-trang" />}
           </Field>
           <Field label="Tên hiển thị" optional>
             {(p) => <Input {...p} value={displayName} onChange={(e) => setDisplayName(e.target.value)} />}
           </Field>
-          <Button type="submit" disabled={saving || !platform || !inputRef.trim()}>
+          <Button type="submit" disabled={saving || !platform || !inputValue.trim()}>
             <Plus aria-hidden /> {saving ? "Đang thêm…" : "Thêm kênh"}
           </Button>
         </form>

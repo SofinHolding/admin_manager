@@ -256,14 +256,17 @@ class Env:
                 "INSERT INTO account_projection (account_id, username, status, email_verified) VALUES ($1,'u',$2,$3) "
                 "ON CONFLICT (account_id) DO UPDATE SET status = $2, email_verified = $3", account_id, status, verified)
 
-    async def verified_user(self, role: str = "viewer") -> dict:
-        u = self.user(role=role)
+    async def verified_user(self, role: str = "viewer", *, perms: list[str] | None = None) -> dict:
+        """Tài khoản đã xác thực email. Mặc định có capability:tool_integration để tạo client/credential.
+        Dùng `perms=[]` hoặc perms không có capability:tool_integration để test trường hợp bị từ chối."""
+        default_perms = ["capability:tool_integration"]
+        u = self.user(role=role, perms=perms if perms is not None else default_perms)
         await self.projection(u["sub"])
         return u
 
     async def tool(self, *, platforms=("facebook",), kind: str = "primary_tool", scopes: list[str] | None = None,
                    user: dict | None = None) -> Tool:
-        user = user or await self.verified_user()
+        user = user or await self.verified_user()   # đã có capability:tool_integration mặc định
         r = await self.http.post("/v1/integrations/clients", headers=user["headers"], json={
             "tool_name": "Tool-" + uuid.uuid4().hex[:6], "client_kind": kind, "platforms": list(platforms)})
         assert r.status_code == 201, r.text

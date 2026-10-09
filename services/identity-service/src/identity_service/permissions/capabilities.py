@@ -20,6 +20,17 @@ CAP_MULTI_TOOL = "capability:multi_tool"
 ALL_CAPABILITIES = (CAP_WEB_ACCESS, CAP_DASHBOARD_ACCESS, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION,
                     CAP_API_WRITE, CAP_API_READ, CAP_MULTI_TOOL)
 
+# Dùng bởi conftest.py (seed) và migration 0005 để đảm bảo description đồng bộ.
+ALL_CAPABILITIES_DESC: dict[str, str] = {
+    CAP_WEB_ACCESS:           "Đăng nhập và dùng website cơ bản",
+    CAP_DASHBOARD_ACCESS:     "Xem Dashboard thống kê",
+    CAP_MANUAL_CHANNEL_MGMT:  "Tự nhập/sửa/xóa kênh trên website",
+    CAP_TOOL_INTEGRATION:     "Liên kết Tool, tạo integration client",
+    CAP_API_WRITE:            "Credential gửi được snapshots/metrics",
+    CAP_API_READ:             "Credential đọc được dữ liệu",
+    CAP_MULTI_TOOL:           "Tạo nhiều hơn 1 integration client",
+}
+
 # Mục 3 của design spec: capability mặc định cấp lúc đăng ký theo role.
 DEFAULT_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "viewer": (CAP_WEB_ACCESS, CAP_DASHBOARD_ACCESS),

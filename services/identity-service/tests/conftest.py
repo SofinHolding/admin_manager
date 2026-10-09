@@ -138,26 +138,22 @@ async def db(migrated):
     await database.open()
     async with database.connection() as conn:
         await conn.execute(f"TRUNCATE {_TABLES} RESTART IDENTITY CASCADE")
-        # Catalog permission không bị TRUNCATE (là dữ liệu seed của migration 0002 + 0005): đưa về đúng trạng thái seed
-        # để test nào thêm/xoá permission không làm nhiễm test khác.
-        _SEED_PERMS = (
-            "('reward:access',          'Dùng module Reward',                          'reward-service', false)",
-            "('reward:admin',           'Quản trị module Reward',                      'reward-service', true)",
-            "('capability:web_access',          'Đăng nhập và dùng website cơ bản',           'identity', false)",
-            "('capability:dashboard_access',    'Xem Dashboard thống kê',                     'identity', false)",
-            "('capability:manual_channel_mgmt', 'Tự nhập/sửa/xóa kênh trên website',          'identity', false)",
-            "('capability:tool_integration',    'Liên kết Tool, tạo integration client',       'identity', false)",
-            "('capability:api_write',           'Credential gửi được snapshots/metrics',       'identity', false)",
-            "('capability:api_read',            'Credential đọc được dữ liệu',                'identity', false)",
-            "('capability:multi_tool',          'Tạo nhiều hơn 1 integration client',          'identity', false)",
-        )
-        # Tên permission: token thứ hai trong mỗi phần tử ("('{name}', ...)") — tách ngoài f-string
-        _names_list = [s.split("'")[1] for s in _SEED_PERMS]
-        _SEED_NAMES = ", ".join("'" + n + "'" for n in _names_list)
-        await conn.execute(f"DELETE FROM permissions WHERE name NOT IN ({_SEED_NAMES})")
+        # Catalog permission không bị TRUNCATE: đưa về đúng trạng thái seed sau mỗi test.
+        # Import từ capabilities.py để conftest tự động cập nhật khi thêm capability mới.
+        from identity_service.permissions.capabilities import ALL_CAPABILITIES_DESC
+        _cap_rows = [
+            f"('{name}', '{desc}', 'identity', false)"
+            for name, desc in ALL_CAPABILITIES_DESC.items()
+        ]
+        _all_rows = [
+            "('reward:access', 'Dùng module Reward (tạo/chạy job phân phối điểm)', 'reward-service', false)",
+            "('reward:admin',  'Quản trị module Reward (xem mọi job/tài khoản)',   'reward-service', true)",
+        ] + _cap_rows
+        _names = ", ".join(f"'{r.split(chr(39))[1]}'" for r in _all_rows)
+        await conn.execute(f"DELETE FROM permissions WHERE name NOT IN ({_names})")
         await conn.execute(
             "INSERT INTO permissions (name, description, owner_service, admin_only) VALUES "
-            + ", ".join(_SEED_PERMS)
+            + ", ".join(_all_rows)
             + " ON CONFLICT (name) DO UPDATE SET admin_only = EXCLUDED.admin_only")
     yield database
     await database.close()
