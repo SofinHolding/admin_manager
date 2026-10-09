@@ -7,7 +7,7 @@ from manager_sdk import Principal
 
 from integration_service.api_models import (CredentialCreate, CredentialIssued, CredentialRevoked, Envelope,
                                             RotateRequest)
-from integration_service.deps import user_bearer, get_container, require_user
+from integration_service.deps import user_bearer, get_container, require_user, require_tool_integration
 from integration_service import examples as ex
 from integration_service.http_utils import error_responses, ok, ok_response
 
@@ -31,7 +31,7 @@ async def _issue(request: Request, client_id: str, body: CredentialCreate, princ
              responses={201: ok_response(Envelope[CredentialIssued], "Key mới (plaintext chỉ lần này)", ex.CREDENTIAL_ISSUED),
                         **error_responses(401, 403, 404, 409, 422, 429, 503)})
 async def issue_credential(request: Request, client_id: str, body: CredentialCreate | None = None,
-                           principal: Principal = Depends(require_user)):
+                           principal: Principal = Depends(require_tool_integration)):
     return await _issue(request, client_id, body or CredentialCreate(), principal)
 
 
@@ -40,7 +40,7 @@ async def issue_credential(request: Request, client_id: str, body: CredentialCre
              responses={201: ok_response(Envelope[CredentialIssued], "Key mới (plaintext chỉ lần này)", ex.CREDENTIAL_ISSUED),
                         **error_responses(401, 403, 404, 409, 422, 429, 503)})
 async def issue_credential_alias(request: Request, client_id: str, body: CredentialCreate | None = None,
-                                 principal: Principal = Depends(require_user)):
+                                 principal: Principal = Depends(require_tool_integration)):
     return await _issue(request, client_id, body or CredentialCreate(), principal)
 
 
@@ -50,7 +50,7 @@ async def issue_credential_alias(request: Request, client_id: str, body: Credent
              responses={201: ok_response(Envelope[CredentialIssued], "Key mới", ex.CREDENTIAL_ROTATED),
                         **error_responses(401, 403, 404, 409, 422, 429, 503)})
 async def rotate_credential(request: Request, client_id: str, key_id: str, body: RotateRequest | None = None,
-                            principal: Principal = Depends(require_user)):
+                            principal: Principal = Depends(require_tool_integration)):
     c = get_container(request)
     async with c.audit.scope(request, "credential.rotate", actor_account_id=principal.sub, client_id=client_id,
                              key_id=key_id):

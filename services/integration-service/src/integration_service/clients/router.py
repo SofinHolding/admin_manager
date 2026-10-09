@@ -7,7 +7,7 @@ from manager_sdk import Principal
 
 from integration_service.api_models import (ClientCreate, ClientDetailOut, ClientOut, ClientPatch, Envelope)
 from integration_service.clients.service import public_client
-from integration_service.deps import user_bearer, get_container, require_super_admin, require_user
+from integration_service.deps import user_bearer, get_container, require_super_admin, require_user, require_tool_integration
 from integration_service import examples as ex
 from integration_service.http_utils import EnvelopeResponse, error_responses, ok, ok_response
 
@@ -22,7 +22,7 @@ _USER_ERRORS = error_responses(401, 403, 404, 422, 429, 503)
                           "email của account được xác thực (xem `account.verified`)."),
              responses={201: ok_response(Envelope[ClientOut], "Client đã tạo", ex.CLIENT), **error_responses(
                  401, 403, 409, 422, 429, 503)})
-async def create_client(request: Request, body: ClientCreate, principal: Principal = Depends(require_user)):
+async def create_client(request: Request, body: ClientCreate, principal: Principal = Depends(require_tool_integration)):
     c = get_container(request)
     async with c.audit.scope(request, "client.create", actor_account_id=principal.sub,
                              account_id=principal.sub) as extra:

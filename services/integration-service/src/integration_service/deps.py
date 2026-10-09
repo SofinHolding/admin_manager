@@ -39,6 +39,14 @@ async def require_super_admin(principal: Principal = Depends(require_user)) -> P
     return principal
 
 
+async def require_tool_integration(principal: Principal = Depends(require_user)) -> Principal:
+    """Bất kỳ user nào muốn tạo/quản lý Integration Client phải có capability:tool_integration.
+    role=admin luôn pass (principal.has_perm trả True cho admin mọi quyền)."""
+    if not principal.has_perm("capability:tool_integration"):
+        raise AuthError("Tài khoản chưa được cấp quyền sử dụng Tool tích hợp",
+                        status_code=403, code=ErrorCode.SCOPE_DENIED.value)
+
+
 def machine(scope: str):
     """Dependency mặt phẳng MÁY: API key + scope. Token user (JWT) ở đây => AUTH_INVALID."""
 
