@@ -12,9 +12,8 @@ import DashboardPage from "./routes/DashboardPage";
 import AdminPage from "./routes/AdminPage";
 import ProfilePage from "./routes/ProfilePage";
 import GroupsPage from "./routes/GroupsPage";
-import ResourcesPage from "./routes/ResourcesPage";
-import IntegrationClientsPage from "./routes/IntegrationClientsPage";
 import OidcCallbackPage from "./routes/OidcCallbackPage";
+import IntegrationClientsPage from "./routes/IntegrationClientsPage";
 import ChannelsPage from "./routes/ChannelsPage";
 import MyToolsPage from "./routes/MyToolsPage";
 import { PERM_REWARD_ACCESS, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION } from "./auth/permissions";
@@ -44,8 +43,6 @@ export default function App() {
             <Route element={<RoleGate allow={["admin", "dash_admin", "viewer"]} />}>
               <Route path="/admin/dashboard" element={<DashboardPage />} />
               <Route path="/admin/groups" element={<GroupsPage />} />
-              <Route path="/admin/resources" element={<ResourcesPage />} />
-              <Route path="/admin/integrations" element={<IntegrationClientsPage />} />
               {/* Reward dưới admin zone (admin cũng có reward:access) */}
               <Route element={<PermGate perm={PERM_REWARD_ACCESS} />}>
                 <Route path="/admin/reward/credentials" element={<CredentialsPage />} />
@@ -58,9 +55,10 @@ export default function App() {
               <Route path="/admin/manage" element={<AdminPage />} />
             </Route>
 
-            {/* Website-only — capability độc lập với vai trò website (capability-model-v1.md §8) */}
+            {/* Công cụ — capability:tool_integration (không cần role admin) */}
             <Route element={<CapGate cap={CAP_TOOL_INTEGRATION} />}>
               <Route path="/my-tools" element={<MyToolsPage />} />
+              <Route path="/integrations" element={<IntegrationClientsPage />} />
             </Route>
             <Route element={<CapGate cap={CAP_MANUAL_CHANNEL_MGMT} />}>
               <Route path="/channels" element={<ChannelsPage />} />

@@ -110,10 +110,11 @@ export default function MyToolsPage() {
           </dl>
         </Section>
       )}
-      <Section title="Quản lý Tool">
+      <Section title="Quản lý khóa kết nối">
+        <p className="mb-3 text-sm text-muted-foreground">Tạo, xoay hoặc thu hồi khóa API cho Tool của bạn.</p>
         <Button asChild>
-          <Link to="/admin/integrations">
-            <KeyRound aria-hidden /> Mở trang quản lý Tool
+          <Link to="/integrations">
+            <KeyRound aria-hidden /> Quản lý Tool &amp; khóa kết nối
           </Link>
         </Button>
       </Section>

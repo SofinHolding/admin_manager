@@ -44,13 +44,6 @@ export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: s
         { to: "/admin/groups", label: "Nhóm kênh", icon: Users },
       ],
     });
-    groups.push({
-      title: "Kết nối dữ liệu",
-      items: [
-        { to: "/admin/resources", label: "Kênh và nguồn", short: "Kênh", icon: Database },
-        { to: "/admin/integrations", label: "Công cụ đẩy dữ liệu", short: "Công cụ", icon: KeyRound },
-      ],
-    });
   }
   if (hasPerm(PERM_REWARD_ACCESS)) {
     groups.push({
@@ -66,7 +59,10 @@ export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: s
   }
   // Website-only: tài khoản không vào được khu quản trị nhưng có capability riêng (capability-model-v1.md §8).
   if (!isAdminZone && hasCap(user, CAP_TOOL_INTEGRATION)) {
-    groups.push({ title: "Tool của tôi", items: [{ to: "/my-tools", label: "Tool cá nhân", icon: KeyRound }] });
+    groups.push({ title: "Tool của tôi", items: [
+      { to: "/my-tools",     label: "Tổng quan Tool",    icon: KeyRound },
+      { to: "/integrations", label: "Khóa kết nối",  icon: Database },
+    ] });
   }
   if (!isAdminZone && hasCap(user, CAP_MANUAL_CHANNEL_MGMT)) {
     groups.push({ title: "Kênh của tôi", items: [{ to: "/channels", label: "Kênh của tôi", icon: Database }] });
