@@ -231,6 +231,53 @@ async def test_recovers_when_identity_comes_back(issuer, clock):
     assert (await v.verify(issuer.token())).sub
 
 
+# ── prefetch ──────────────────────────────────────────────────────────────────
+
+async def test_prefetch_loads_jwks_when_identity_is_up(issuer, clock):
+    v = verifier_for(issuer, clock)
+    hits_before = issuer.hits
+    await v.prefetch()
+    assert issuer.hits > hits_before       # đã gọi JWKS endpoint
+    assert v._keys                         # khoá đã được cache
+    assert v._fetched_at is not None
+    # token verify được ngay, không cần fetch thêm
+    hits_after = issuer.hits
+    await v.verify(issuer.token())
+    assert issuer.hits == hits_after       # không gọi thêm lần nào (dùng cache)
+
+
+async def test_prefetch_does_not_crash_when_identity_is_down(issuer, clock):
+    issuer.up = False
+    v = verifier_for(issuer, clock)
+    await v.prefetch(retries=2, backoff=0.0)   # không chờ, phải xong nhanh
+    assert not v._keys                          # thất bại nhưng KHÔNG crash
+    # token đầu tiên vẫn ném AuthError (không có khoá) — không crash service
+    with pytest.raises(AuthError):
+        await v.verify(issuer.token())
+
+
+async def test_prefetch_retries_until_identity_available(issuer, clock):
+    """prefetch với retry=1: Identity chết → fail; Identity sống → thành công."""
+    issuer.up = False
+    v = verifier_for(issuer, clock, min_refetch_interval=0)
+    await v.prefetch(retries=1, backoff=0.0)   # 1 lần thất bại
+    assert not v._keys
+    issuer.up = True
+    # lần prefetch thứ hai (gọi thủ công): Identity đã sống → load được
+    await v.prefetch(retries=1, backoff=0.0)
+    assert v._keys
+    assert (await v.verify(issuer.token())).sub
+
+
+async def test_prefetch_then_identity_down_tokens_still_verify_offline(issuer, clock):
+    """Sau khi prefetch thành công, Identity chết → JWKS cache còn hạn → token vẫn verify."""
+    v = verifier_for(issuer, clock, refresh_interval=300, stale_max=86400)
+    await v.prefetch()
+    issuer.up = False
+    clock.t += 60   # JWKS vẫn fresh (300s)
+    assert (await v.verify(issuer.token())).sub   # verify offline, không cần Identity
+
+
 # ── FastAPI dependencies ────────────────────────────────────────────────────────
 
 def make_app(issuer, clock, style="envelope") -> FastAPI:

@@ -101,6 +101,7 @@ def create_app() -> FastAPI:
             logger.info("Migration hiện tại: %s", version)
         else:
             logger.info("REWARD_DB_MIGRATE_ON_BOOT=0 — bỏ qua migrate lúc khởi động")
+        await verifier.prefetch()  # warm-up JWKS: token verify ngay khi service sống, kể cả khi Identity tạm chết
         # Phục hồi sau crash TRƯỚC khi nhận request đầu tiên (D.5/D.2 recovery.py) — idempotent.
         await recovery.recover_orphaned_attempts(pool)
         consumer_task: asyncio.Task | None = None

@@ -98,6 +98,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
         if owns_db:
             await db.open()  # pool lười (min_size=0): DB chết lúc boot không làm sập tiến trình
         container: Container = app.state.container
+        await container.verifier.prefetch()  # warm-up JWKS: token verify ngay khi service sống
         if settings.maintenance_interval_s > 0:
             background.append(asyncio.create_task(maintenance.loop(container), name="integration-maintenance"))
         consumer = app.state.provisioning

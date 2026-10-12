@@ -93,6 +93,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
         task = None
         if owns_db:
             await db.open()   # pool lười (min_size=0): DB chết lúc boot không làm sập tiến trình
+        await token_verifier.prefetch()  # warm-up JWKS: token verify ngay khi service sống, kể cả khi Identity tạm chết
         if run_consumer:
             task = asyncio.create_task(consumer.run_forever(stop), name="analytics-feed-consumer")
         yield

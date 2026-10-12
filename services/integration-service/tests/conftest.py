@@ -248,6 +248,9 @@ class Env:
 
     def user(self, sub: str | None = None, role: str = "viewer", **claims) -> dict:
         sub = sub or uuid.uuid4().hex
+        # Mặc định có capability:tool_integration (gán lúc đăng ký, không phụ thuộc xác thực email).
+        # Dùng env.user(perms=[]) để test trường hợp thiếu capability tường minh.
+        claims.setdefault("perms", ["capability:tool_integration"])
         return {"sub": sub, "headers": {"Authorization": f"Bearer {self.identity.token(sub=sub, role=role, **claims)}"}}
 
     async def projection(self, account_id: str, *, verified: bool = True, status: str = "active") -> None:

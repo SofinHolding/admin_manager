@@ -118,9 +118,7 @@ def test_stopping_reward_does_not_affect_auth_integration_or_analytics(stack, ap
 def test_stopping_identity_leaves_issued_tokens_valid_offline_and_machine_ingest_working(stack, api, world, seeded, guard):
     owner = world["owner"]
     token = owner["headers"]
-    # Làm ấm JWKS cache của Reward (service vừa khởi động lại ở test trước). Khởi động LẠNH khi Identity đã chết thì
-    # không có khoá để verify -> 401: giới hạn đã biết, ghi ở implementation-final-report.
-    assert httpx.get(stack.url("gateway", "/v1/reward/admin/accounts"), headers=token, timeout=10).status_code == 403
+    # JWKS đã được warm-up qua prefetch() trong lifespan → không cần bước "làm ấm" thủ công.
     stack.stop("identity")
     assert not stack.alive("identity")
     # user plane: token đã cấp vẫn qua được xác thực ở Analytics và Reward (JWKS cache + verify offline)

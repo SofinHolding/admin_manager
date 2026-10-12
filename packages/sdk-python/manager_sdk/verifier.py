@@ -56,6 +56,27 @@ class TokenVerifier:
         if self._owns_http and self._http is not None:
             await self._http.aclose()
 
+    async def prefetch(self, *, retries: int = 3, backoff: float = 1.0) -> None:
+        """Warm-up JWKS lúc khởi động service.
+
+        Gọi trong lifespan startup để cache khoá ngay từ đầu — sau khi prefetch thành công,
+        token đầu tiên verify offline không cần fetch thêm dù Identity tạm chết.
+        Không crash nếu Identity chưa sẵn sàng: chỉ log warning, trả về bình thường;
+        service vẫn khởi động được và sẽ tự tải lại khi gặp token đầu tiên.
+        Idempotent: gọi lại an toàn.
+        """
+        for attempt in range(retries):
+            async with self._lock:
+                await self._fetch()
+            if self._keys:
+                logger.debug("JWKS prefetch thành công (%d key(s))", len(self._keys))
+                return
+            if attempt < retries - 1:
+                await asyncio.sleep(backoff * (2 ** attempt))
+        logger.warning(
+            "Prefetch JWKS thất bại sau %d lần thử — sẽ tự tải lại khi nhận token đầu tiên", retries
+        )
+
     @property
     def http(self) -> httpx.AsyncClient:
         if self._http is None:
