@@ -24,6 +24,7 @@ from integration_service import SERVICE_NAME, __version__, maintenance, migrate
 from integration_service.api_models import ClientPatch, CredentialCreate, RotateRequest
 from integration_service.audit.router import router as audit_router
 from integration_service.audit.service import AuditService
+from integration_service.channel_groups.router import router as channel_groups_router
 from integration_service.clients.router import router as clients_router
 from integration_service.clients.service import ClientService
 from integration_service.config import Settings, load_settings, require_serving_config
@@ -192,7 +193,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
 
     for router in (clients_router, credentials_router, installations_router, projects_router, resources_router,
                    snapshots_router, platforms_router, audit_router, resources_admin_router, jobs_machine_router,
-                   jobs_user_router, workers_router):
+                   jobs_user_router, workers_router, channel_groups_router):
         app.include_router(router)
     legacy_errors.install(app)
     for legacy_router in build_legacy_routers(include_in_schema=False):   # ACL: hợp đồng = OpenAPI legacy đóng băng

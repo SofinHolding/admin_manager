@@ -6,18 +6,67 @@
     "new_contract": "2026-10-01"
   },
   "rules": [
-    {"legacy_prefix": "/v1/admin/keys", "target": "identity-service", "note": "invite key"},
-    {"legacy_prefix": "/v1/admin/users", "target": "identity-service", "note": "quản trị user"},
-    {"legacy_prefix": "/v1/admin/cache", "target": "analytics-service", "note": "flush cache dashboard"},
-    {"legacy_prefix": "/v1/admin/country-canonicals", "target": "analytics-service"},
-    {"legacy_prefix": "/v1/admin/country-aliases", "target": "analytics-service"},
-    {"legacy_prefix": "/v1/auth", "target": "identity-service"},
-    {"legacy_prefix": "/v1/viewer/links", "target": "integration-service", "note": "pairing legacy, deprecated"},
-    {"legacy_prefix": "/v1/viewer/groups", "target": "analytics-service", "note": "nhóm kênh = cấu hình dashboard"},
-    {"legacy_prefix": "/v1/viewer", "target": "analytics-service"},
-    {"legacy_prefix": "/v1/resources", "target": "integration-service"},
-    {"legacy_prefix": "/v1/ops", "target": "integration-service"},
-    {"legacy_prefix": "/v1/reward", "target": "reward-service"},
-    {"legacy_prefix": "/v1/health", "target": "gateway"}
+    {
+      "legacy_prefix": "/v1/admin/keys",
+      "target": "identity-service",
+      "note": "invite key"
+    },
+    {
+      "legacy_prefix": "/v1/admin/users",
+      "target": "identity-service",
+      "note": "quản trị user"
+    },
+    {
+      "legacy_prefix": "/v1/admin/cache",
+      "target": "analytics-service",
+      "note": "flush cache dashboard"
+    },
+    {
+      "legacy_prefix": "/v1/admin/country-canonicals",
+      "target": "analytics-service"
+    },
+    {
+      "legacy_prefix": "/v1/admin/country-aliases",
+      "target": "analytics-service"
+    },
+    {
+      "legacy_prefix": "/v1/auth",
+      "target": "identity-service"
+    },
+    {
+      "legacy_prefix": "/v1/viewer/links",
+      "target": "integration-service",
+      "note": "pairing legacy, deprecated"
+    },
+    {
+      "legacy_prefix": "/v1/viewer/groups",
+      "target": "analytics-service",
+      "note": "nhóm kênh = cấu hình dashboard"
+    },
+    {
+      "legacy_prefix": "/v1/viewer",
+      "target": "analytics-service"
+    },
+    {
+      "legacy_prefix": "/v1/user",
+      "target": "integration-service",
+      "note": "viewer: quản lý nhóm quốc gia + kênh"
+    },
+    {
+      "legacy_prefix": "/v1/resources",
+      "target": "integration-service"
+    },
+    {
+      "legacy_prefix": "/v1/ops",
+      "target": "integration-service"
+    },
+    {
+      "legacy_prefix": "/v1/reward",
+      "target": "reward-service"
+    },
+    {
+      "legacy_prefix": "/v1/health",
+      "target": "gateway"
+    }
   ]
 }

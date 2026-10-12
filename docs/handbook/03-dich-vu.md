@@ -69,13 +69,14 @@ Migration: `0001_init` · `0002_tokens_permissions_outbox` · `0003_oidc` · `00
 | `feed` | outbox + `/internal/v1/feed` + `/internal/v1/canonical/{kind}` + `/summary` (checksum đối soát) |
 | `jobs` | hàng đợi Fallback Tool: claim `FOR UPDATE SKIP LOCKED`, lease ≤900s, heartbeat, retry/backoff, `pending|leased|done|failed|dead|cancelled` |
 | `legacy_acl` | 26 operation `/v1/resources`, `/v1/ops`, `/v1/viewer/links` giữ shape legacy; dịch sang cùng đường ghi canonical |
-| `provisioning` | consumer `account.registered` → tạo client; phát `integration.client.provisioned|provision_failed` |
+| `workers` | đăng ký/heartbeat worker (fallback_tool); in-memory, không phát event |
+| `channel_groups` | `user_channel_groups` — viewer tự quản lý nhóm quốc gia; CRUD `/v1/user/channel-groups` |
 | `audit` | `audit_log` |
 | (gốc) `maintenance.py`, `machine_runner.py`, `ratelimit.py`, `security.py` | worker bảo trì (lease hết hạn, snapshot kẹt `committing` >10 phút → failed, `building` quá TTL → abandoned); chạy machine plane; chặn xác thực sai theo IP (30/phút) |
 
-**Bảng sở hữu (31):** `integration_clients, integration_credentials, installations, platform_registry, metric_registry, projects, resources, resource_project_bindings, snapshots, snapshot_items, content_items, daily_metrics, activity_events, idempotency_keys, jobs, audit_log, account_projection, outbox, feed_cursor, processed_events, dead_letters` + nhóm `legacy_ingest`:
+**Bảng sở hữu (32):** `integration_clients, integration_credentials, installations, platform_registry, metric_registry, projects, resources, resource_project_bindings, snapshots, snapshot_items, content_items, daily_metrics, activity_events, idempotency_keys, jobs, audit_log, account_projection, outbox, feed_cursor, processed_events, dead_letters, user_channel_groups` + nhóm `legacy_ingest`:
 `documents, user_meta, account_links, link_codes, platform_policies, resource_sources, resource_assignments, operation_batches, operation_items, operation_audit_log`.
-Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` · `0004_projection_status_seq` (schema `legacy_ingest`, dùng chính user `integration_svc` — **không** có role mới) · `0004_projection_status_seq` (`account_projection.status_seq`).
+Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` · `0004_projection_status_seq` · `0005_channel_subscriptions` · `0006_delegated_ingestion` · `0007_user_channel_groups` (nhóm quốc gia viewer).
 
 **Endpoint (máy, `Authorization: Bearer mpk_…`):** `POST /v1/integrations/handshake`, `PUT /projects/{key}`, `POST /resources/batch`, `POST /snapshots`, `POST /snapshots/{id}/{resources|content|metrics|events|commit}`, `GET /snapshots/{id}`,
 `POST /jobs/claim`, `/jobs/{id}/{complete|fail|heartbeat}`.

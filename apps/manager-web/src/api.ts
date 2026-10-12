@@ -647,3 +647,30 @@ export const resourcesApi = {
 
   deleteResource: (id: string) => apiFetch<{ ok: boolean }>(`/v1/resources/${enc(id)}`, json("DELETE")),
 };
+
+// ── Nhóm quốc gia (integration-service /v1/user/channel-groups) ───────────
+
+export interface ChannelGroup {
+  id: string;
+  owner_account_id: string;
+  name: string;
+  country_code: string;
+  sort_order: number;
+  created_at: string;
+}
+
+export const channelGroupsApi = {
+  list: () =>
+    apiFetch<{ data: ChannelGroup[] }>("/v1/user/channel-groups").then((r) => ({ items: r.data ?? [] })),
+
+  create: (name: string, country_code = "") =>
+    apiFetch<{ data: ChannelGroup }>("/v1/user/channel-groups", json("POST", { name, country_code }))
+      .then((r) => r.data),
+
+  update: (id: string, data: Partial<{ name: string; country_code: string }>) =>
+    apiFetch<{ data: ChannelGroup }>(`/v1/user/channel-groups/${enc(id)}`, json("PATCH", data))
+      .then((r) => r.data),
+
+  delete: (id: string) =>
+    apiFetch<{ data: { deleted: boolean } }>(`/v1/user/channel-groups/${enc(id)}`, json("DELETE")),
+};

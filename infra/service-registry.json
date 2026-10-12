@@ -125,7 +125,8 @@
         "/v1/integrations",
         "/v1/resources",
         "/v1/ops",
-        "/v1/viewer/links"
+        "/v1/viewer/links",
+        "/v1/user"
       ],
       "owned_tables": [
         "integration_clients",
@@ -156,7 +157,8 @@
         "resource_assignments",
         "operation_batches",
         "operation_items",
-        "operation_audit_log"
+        "operation_audit_log",
+        "user_channel_groups"
       ],
       "emits": [
         "snapshot.committed",
@@ -231,6 +233,10 @@
         "workers": {
           "phase": "2.7",
           "responsibility": "đăng ký/heartbeat Shared Collector worker (PHASE 4 delegated ingestion, chỉ in-memory, chưa có bảng lưu trữ bền vững)"
+        },
+        "channel_groups": {
+          "phase": "4",
+          "responsibility": "nhóm quốc gia + kênh do user tự quản lý (CRUD), link với `resources` qua khớp chuỗi tên"
         }
       }
     },
