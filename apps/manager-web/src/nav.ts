@@ -4,7 +4,7 @@
  */
 
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Coins, Database, KeyRound, Link2, Settings, Users } from "lucide-react";
+import { BarChart3, Coins, Database, Globe, KeyRound, Link2, Settings, Users } from "lucide-react";
 import { canSeeDashboard, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION, hasCap, PERM_REWARD_ACCESS, type PrincipalLike } from "./auth/permissions";
 
 export interface NavItem {
@@ -65,7 +65,7 @@ export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: s
     ] });
   }
   if (!isAdminZone && hasCap(user, CAP_MANUAL_CHANNEL_MGMT)) {
-    groups.push({ title: "Kênh của tôi", items: [{ to: "/channels", label: "Kênh của tôi", icon: Database }] });
+    groups.push({ title: "Kênh của tôi", items: [{ to: "/channels", label: "Kênh của tôi", icon: Globe }] });
   }
   return groups;
 }
