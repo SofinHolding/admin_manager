@@ -38,3 +38,14 @@ async def list_keys(request: Request, _: dict = Depends(require_admin)) -> dict:
 @router.delete("/keys/{key}", summary="Thu hồi invite key")
 async def revoke_key(key: str, request: Request, admin: dict = Depends(require_admin)) -> dict:
     return await get_container(request).keys.revoke(admin, key)
+
+
+@router.patch("/keys/{key}/suspend", summary="Tạm dừng invite key")
+async def suspend_key(key: str, request: Request, admin: dict = Depends(require_admin)) -> dict:
+    """Tạm dừng key đang active: không dùng đăng ký được nhưng có thể khôi phục (unsuspend)."""
+    return await get_container(request).keys.suspend(admin, key)
+
+
+@router.patch("/keys/{key}/unsuspend", summary="Khôi phục invite key đã tạm dừng")
+async def unsuspend_key(key: str, request: Request, admin: dict = Depends(require_admin)) -> dict:
+    return await get_container(request).keys.unsuspend(admin, key)

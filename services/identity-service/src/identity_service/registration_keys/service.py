@@ -86,3 +86,21 @@ class RegistrationKeyService:
                                now=self.now(), target_type="invite_key", target_id=key)
         logger.info("Thu hồi invite key %s", key)
         return {"ok": True}
+
+    async def suspend(self, actor: dict, key: str) -> dict:
+        async with self.db.transaction() as conn:
+            if not await keys.suspend(conn, key):
+                raise DomainError(404, "Key không tồn tại hoặc không ở trạng thái active")
+            await audit.record(conn, account_id=actor.get("sub", ""), event_type="invite_key_suspended",
+                               now=self.now(), target_type="invite_key", target_id=key)
+        logger.info("Tạm dừng invite key %s", key)
+        return {"ok": True}
+
+    async def unsuspend(self, actor: dict, key: str) -> dict:
+        async with self.db.transaction() as conn:
+            if not await keys.unsuspend(conn, key):
+                raise DomainError(404, "Key không tồn tại hoặc không ở trạng thái suspended")
+            await audit.record(conn, account_id=actor.get("sub", ""), event_type="invite_key_unsuspended",
+                               now=self.now(), target_type="invite_key", target_id=key)
+        logger.info("Khôi phục invite key %s", key)
+        return {"ok": True}

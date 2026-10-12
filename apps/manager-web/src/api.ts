@@ -48,6 +48,7 @@ export interface RegisterIntegration {
 
 export interface IntegrationPolicy {
   allow_integration_registration?: boolean;
+  default_client_kind?: string;      // "primary_tool" | "fallback_tool" | "service"
   allowed_platforms?: string[];
   allowed_scopes?: string[];
   max_integration_clients?: number;
@@ -411,6 +412,10 @@ export const adminApi = {
   listKeys: () => apiFetch<{ keys: InviteKey[] }>("/v1/admin/keys"),
 
   revokeKey: (key: string) => apiFetch<{ ok: boolean }>(`/v1/admin/keys/${enc(key)}`, json("DELETE")),
+
+  suspendKey: (key: string) => apiFetch<{ ok: boolean }>(`/v1/admin/keys/${enc(key)}/suspend`, json("PATCH", {})),
+
+  unsuspendKey: (key: string) => apiFetch<{ ok: boolean }>(`/v1/admin/keys/${enc(key)}/unsuspend`, json("PATCH", {})),
 
   listUsers: (o?: Opts) => apiFetch<{ users: Account[] }>("/v1/admin/users", undefined, o),
 

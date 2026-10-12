@@ -70,10 +70,11 @@ export function relativeExpiry(iso: string, now: number = Date.now()): string {
   return days >= 1 || hours >= 1 ? `đã hết hạn ${span} trước` : "vừa hết hạn";
 }
 
-type KeyState = "active" | "revoked" | "expired" | "used";
+type KeyState = "active" | "suspended" | "revoked" | "expired" | "used";
 
 function keyState(k: InviteKey): KeyState {
   if (k.status === "revoked") return "revoked";
+  if (k.status === "suspended") return "suspended";
   if (isExpired(k.expires_at)) return "expired";
   if (k.used_count >= k.max_uses) return "used";
   return "active";
@@ -81,6 +82,7 @@ function keyState(k: InviteKey): KeyState {
 
 const KEY_STATE: Record<KeyState, { text: string; variant: "success" | "destructive" | "warning" | "secondary"; icon: typeof Check }> = {
   active: { text: "Dùng được", variant: "success", icon: CheckCircle2 },
+  suspended: { text: "Tạm dừng", variant: "warning", icon: Lock },
   revoked: { text: "Đã thu hồi", variant: "destructive", icon: XCircle },
   expired: { text: "Hết hạn", variant: "warning", icon: Clock },
   used: { text: "Đã dùng", variant: "secondary", icon: Ban },
@@ -238,6 +240,8 @@ export default function AdminPage() {
 const checkboxCls = "size-4 shrink-0 rounded accent-primary";
 
 function InviteKeysTab() {
+  const { user: authUser } = useAuth();
+  const isDashAdmin = authUser?.role === "dash_admin";
   const [keys, setKeys] = useState<InviteKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -250,6 +254,7 @@ function InviteKeysTab() {
   const [listError, setListError] = useState<string | null>(null);
   // Tùy chọn nâng cao: đăng ký kèm công cụ đẩy dữ liệu + ứng dụng được mở sẵn
   const [allowIntegration, setAllowIntegration] = useState(false);
+  const [clientKind, setClientKind] = useState("primary_tool");
   const [platforms, setPlatforms] = useState("facebook, youtube");
   const [scopes, setScopes] = useState<string[]>([...DEFAULT_POLICY_SCOPES]);
   const [maxClients, setMaxClients] = useState("1");
@@ -258,6 +263,12 @@ function InviteKeysTab() {
   const [capToolIntegration, setCapToolIntegration] = useState(false);
   const [capDashboard, setCapDashboard] = useState(false);
   const [capChannelMgmt, setCapChannelMgmt] = useState(false);
+  const [capApiRead, setCapApiRead] = useState(false);
+  // Chỉ admin mới thấy / dùng được 2 capability sau (admin_only).
+  const [capApiWrite, setCapApiWrite] = useState(false);
+  const [capMultiTool, setCapMultiTool] = useState(false);
+  const [suspendTarget, setSuspendTarget] = useState<InviteKey | null>(null);
+  const [suspending, setSuspending] = useState(false);
   const { copied, copy } = useCopied();
 
   const load = useCallback(async () => {
@@ -281,8 +292,11 @@ function InviteKeysTab() {
       capToolIntegration && CAP_TOOL_INTEGRATION,
       capDashboard && CAP_DASHBOARD_ACCESS,
       capChannelMgmt && CAP_MANUAL_CHANNEL_MGMT,
+      capApiRead && "capability:api_read",
+      !isDashAdmin && capApiWrite && "capability:api_write",
+      !isDashAdmin && capMultiTool && "capability:multi_tool",
     ].filter((c): c is string => !!c);
-    const built = buildKeyExtra({ allowIntegration, platforms, scopes, maxClients, apps, capabilities });
+    const built = buildKeyExtra({ allowIntegration, clientKind, platforms, scopes, maxClients, apps, capabilities });
     if (!built.ok) { setFormError(built.error); return; }
     setCreating(true);
     try {
@@ -316,6 +330,30 @@ function InviteKeysTab() {
     }
   };
 
+  const handleSuspend = async () => {
+    if (!suspendTarget) return;
+    const key = suspendTarget.key;
+    const isCurrentlySuspended = suspendTarget.status === "suspended";
+    setSuspending(true);
+    try {
+      if (isCurrentlySuspended) {
+        await adminApi.unsuspendKey(key);
+        setKeys((prev) => prev.map((k) => (k.key === key ? { ...k, status: "active" } : k)));
+        toast.success("Đã khôi phục mã mời");
+      } else {
+        await adminApi.suspendKey(key);
+        setKeys((prev) => prev.map((k) => (k.key === key ? { ...k, status: "suspended" } : k)));
+        toast.success("Đã tạm dừng mã mời");
+      }
+      setSuspendTarget(null);
+    } catch (e) {
+      setSuspendTarget(null);
+      setListError(adminErrorText(e, "Không thực hiện được thao tác. Hãy thử lại."));
+    } finally {
+      setSuspending(false);
+    }
+  };
+
   return (
     <div>
       <Section title="Tạo mã mời" description="Gửi mã này cho người bạn muốn mời. Họ nhập mã ở trang đăng ký để có tài khoản với vai trò bạn chọn.">
@@ -345,6 +383,29 @@ function InviteKeysTab() {
               </label>
               {allowIntegration && (
                 <div className="space-y-5 border-l-2 border-border pl-4">
+                  <Field label="Loại công cụ" hint="primary_tool: Tool chính đẩy dữ liệu; fallback_tool: Tool dự phòng nhận công việc từ hàng đợi.">
+                    {(p) => (
+                      <Select value={clientKind} onValueChange={(v) => {
+                        setClientKind(v);
+                        // fallback_tool bắt buộc cần jobs:claim + jobs:complete — tự tích sẵn.
+                        if (v === "fallback_tool") {
+                          setScopes((cur) => {
+                            const add = ["jobs:claim", "jobs:complete"].filter((s) => !cur.includes(s));
+                            return add.length ? [...cur, ...add] : cur;
+                          });
+                        }
+                      }}>
+                        <SelectTrigger {...p} className="md:max-w-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="primary_tool">primary_tool — Tool chính</SelectItem>
+                          <SelectItem value="fallback_tool">fallback_tool — Tool dự phòng</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </Field>
+                  {clientKind === "fallback_tool" && (
+                    <Notice tone="info">fallback_tool tự động nhận thêm <code>jobs:claim</code> + <code>jobs:complete</code> vào danh sách quyền bên dưới.</Notice>
+                  )}
                   <Field label="Nền tảng được phép" hint="Cách nhau bằng dấu phẩy, ví dụ: facebook, youtube.">
                     {(p) => <Input {...p} value={platforms} onChange={(e) => setPlatforms(e.target.value)} />}
                   </Field>
@@ -386,6 +447,26 @@ function InviteKeysTab() {
                          onChange={(e) => setCapChannelMgmt(e.target.checked)} />
                   <span>Tự quản lý kênh <code className="font-mono text-sm text-muted-foreground">(capability:manual_channel_mgmt)</code></span>
                 </label>
+                <label className="flex items-center gap-3">
+                  <input type="checkbox" className={checkboxCls} checked={capApiRead}
+                         onChange={(e) => setCapApiRead(e.target.checked)} />
+                  <span>Credential đọc dữ liệu <code className="font-mono text-sm text-muted-foreground">(capability:api_read)</code></span>
+                </label>
+                {/* Hai capability admin_only: chỉ hiển thị cho admin thật */}
+                {!isDashAdmin && (
+                  <>
+                    <label className="flex items-center gap-3">
+                      <input type="checkbox" className={checkboxCls} checked={capApiWrite}
+                             onChange={(e) => setCapApiWrite(e.target.checked)} />
+                      <span>Credential gửi snapshot/metrics <code className="font-mono text-sm text-muted-foreground">(capability:api_write)</code></span>
+                    </label>
+                    <label className="flex items-center gap-3">
+                      <input type="checkbox" className={checkboxCls} checked={capMultiTool}
+                             onChange={(e) => setCapMultiTool(e.target.checked)} />
+                      <span>Tạo nhiều integration client <code className="font-mono text-sm text-muted-foreground">(capability:multi_tool)</code></span>
+                    </label>
+                  </>
+                )}
               </fieldset>
             </div>
           </TechDetails>
@@ -454,9 +535,19 @@ function InviteKeysTab() {
                     {st === "revoked" ? "—" : <time dateTime={k.expires_at} title={fmtDate(k.expires_at)}>{relativeExpiry(k.expires_at)}</time>}
                   </RCell>
                   <RCell label="Tạo lúc" className="whitespace-nowrap text-muted-foreground">{fmtDate(k.created_at)}</RCell>
-                  <RCell label="" className="md:text-right">
+                  <RCell label="" className="md:flex md:justify-end md:gap-2">
                     {st === "active" && (
-                      <Button variant="outline" onClick={() => setRevokeTarget(k)} aria-label={`Thu hồi mã ${k.key}`}>
+                      <Button variant="outline" size="sm" onClick={() => setSuspendTarget(k)} aria-label={`Tạm dừng mã ${k.key}`}>
+                        <Lock aria-hidden /> Tạm dừng
+                      </Button>
+                    )}
+                    {st === "suspended" && (
+                      <Button variant="outline" size="sm" onClick={() => setSuspendTarget(k)} aria-label={`Khôi phục mã ${k.key}`}>
+                        <Unlock aria-hidden /> Khôi phục
+                      </Button>
+                    )}
+                    {st === "active" && (
+                      <Button variant="outline" size="sm" onClick={() => setRevokeTarget(k)} aria-label={`Thu hồi mã ${k.key}`}>
                         <Trash2 aria-hidden /> Thu hồi
                       </Button>
                     )}
@@ -476,6 +567,18 @@ function InviteKeysTab() {
         busy={revoking}
         onConfirm={handleRevoke}
         onCancel={() => setRevokeTarget(null)}
+      />
+      <ConfirmDialog
+        open={!!suspendTarget}
+        title={suspendTarget?.status === "suspended" ? "Khôi phục mã mời này?" : "Tạm dừng mã mời này?"}
+        description={suspendTarget?.status === "suspended"
+          ? <>Mã <span className="font-mono">{suspendTarget?.key}</span> sẽ dùng được trở lại để đăng ký.</>
+          : <>Mã <span className="font-mono">{suspendTarget?.key}</span> sẽ tạm thời không dùng được. Bạn có thể khôi phục lại sau.</>}
+        confirmLabel={suspendTarget?.status === "suspended" ? "Khôi phục mã mời" : "Tạm dừng mã mời"}
+        busy={suspending}
+        danger={suspendTarget?.status !== "suspended"}
+        onConfirm={handleSuspend}
+        onCancel={() => setSuspendTarget(null)}
       />
     </div>
   );

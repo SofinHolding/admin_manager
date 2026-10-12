@@ -53,18 +53,40 @@ describe("adminKeyForm (thuần)", () => {
     expect(buildKeyExtra({ allowIntegration: false, platforms: "", scopes: [], maxClients: "1", apps: "" })).toEqual({ ok: true, extra: {} });
   });
 
-  it("bật policy => integration_policy đầy đủ 4 trường + allowed_apps", () => {
+  it("bật policy => integration_policy gồm default_client_kind + 4 trường + allowed_apps", () => {
     const r = buildKeyExtra({ allowIntegration: true, platforms: "facebook, youtube", scopes: [...DEFAULT_POLICY_SCOPES], maxClients: "3", apps: "reward" });
     expect(r).toEqual({
       ok: true,
       extra: {
         integration_policy: {
-          allow_integration_registration: true, allowed_platforms: ["facebook", "youtube"],
+          allow_integration_registration: true, default_client_kind: "primary_tool",
+          allowed_platforms: ["facebook", "youtube"],
           allowed_scopes: [...DEFAULT_POLICY_SCOPES], max_integration_clients: 3,
         },
         allowed_apps: ["reward"],
       },
     });
+  });
+
+  it("fallback_tool => default_client_kind=fallback_tool + jobs:claim/complete tự gộp kể cả khi chưa tích", () => {
+    const r = buildKeyExtra({ allowIntegration: true, platforms: "facebook", scopes: [...DEFAULT_POLICY_SCOPES], maxClients: "1", apps: "", clientKind: "fallback_tool" });
+    expect(r).toMatchObject({ ok: true });
+    if (!r.ok) return;
+    expect(r.extra.integration_policy?.default_client_kind).toBe("fallback_tool");
+    expect(r.extra.integration_policy?.allowed_scopes).toContain("jobs:claim");
+    expect(r.extra.integration_policy?.allowed_scopes).toContain("jobs:complete");
+    // không tạo scope trùng
+    const sc = r.extra.integration_policy?.allowed_scopes ?? [];
+    expect(sc.filter((s) => s === "jobs:claim")).toHaveLength(1);
+  });
+
+  it("fallback_tool với jobs:claim đã tích sẵn => không bị trùng", () => {
+    const r = buildKeyExtra({ allowIntegration: true, platforms: "tiktok", scopes: [...DEFAULT_POLICY_SCOPES, "jobs:claim", "jobs:complete"], maxClients: "1", apps: "", clientKind: "fallback_tool" });
+    expect(r).toMatchObject({ ok: true });
+    if (!r.ok) return;
+    const sc = r.extra.integration_policy?.allowed_scopes ?? [];
+    expect(sc.filter((s) => s === "jobs:claim")).toHaveLength(1);
+    expect(sc.filter((s) => s === "jobs:complete")).toHaveLength(1);
   });
 
   it("từ chối đầu vào sai: thiếu nền tảng/scope, max ngoài 1..100, tên app lạ, scope không thuộc danh sách cho phép", () => {
@@ -126,6 +148,7 @@ describe("AdminPage — tạo invite key", () => {
     const body = JSON.parse(f.calls.find((c) => c.method === "POST")!.body!);
     expect(body.integration_policy).toEqual({
       allow_integration_registration: true,
+      default_client_kind: "primary_tool",
       allowed_platforms: ["facebook", "tiktok"],
       allowed_scopes: [...DEFAULT_POLICY_SCOPES, "jobs:claim"],
       max_integration_clients: 2,
@@ -161,6 +184,70 @@ describe("AdminPage — tạo invite key", () => {
     await user.clear(within(form).getByLabelText(/Nền tảng được phép/));
     await user.click(screen.getByRole("button", { name: /Tạo mã mời/ }));
     expect(f.calls.some((c) => c.method === "POST")).toBe(false);
+  });
+});
+
+describe("AdminPage — suspend/unsuspend invite key", () => {
+  const activeKey = { key: "ACTV-1234", role: "viewer", label: "", max_uses: 5, used_count: 0, created_at: "2026-10-05T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", status: "active" };
+  const suspendedKey = { ...activeKey, key: "SUSP-5678", status: "suspended" };
+
+  function keyServer(state: { keys: typeof activeKey[] }): Responder[] {
+    return [
+      (c) => c.method === "GET" && c.path === "/v1/admin/keys" ? jsonResponse({ keys: state.keys }) : undefined,
+      (c) => c.method === "PATCH" && c.path === `/v1/admin/keys/${state.keys[0]?.key}/suspend`
+        ? ((state.keys[0].status = "suspended"), jsonResponse({ ok: true })) : undefined,
+      (c) => c.method === "PATCH" && c.path === `/v1/admin/keys/${state.keys[0]?.key}/unsuspend`
+        ? ((state.keys[0].status = "active"), jsonResponse({ ok: true })) : undefined,
+      (c) => c.path === "/v1/admin/users" ? jsonResponse({ users: [] }) : undefined,
+      (c) => c.path === "/v1/admin/permissions" ? jsonResponse({ permissions: [] }) : undefined,
+    ];
+  }
+
+  it("key active: nút Tạm dừng hiện, xác nhận => gọi PATCH suspend, badge đổi thành Tạm dừng", async () => {
+    const state = { keys: [{ ...activeKey }] };
+    const f = installFetch(...keyServer(state));
+    renderAdmin();
+    const user = userEvent.setup();
+    await screen.findByText("ACTV-1234");
+    await user.click(screen.getByRole("button", { name: /Tạm dừng mã ACTV-1234/ }));
+    await screen.findByText("Tạm dừng mã mời này?");
+    await user.click(screen.getByRole("button", { name: /Tạm dừng mã mời$/ }));
+    await waitFor(() => expect(f.calls.some((c) => c.method === "PATCH" && c.path.includes("suspend"))).toBe(true));
+    await screen.findByText("Tạm dừng");   // badge trạng thái
+  });
+
+  it("key suspended: nút Khôi phục hiện, xác nhận => gọi PATCH unsuspend", async () => {
+    const state = { keys: [{ ...suspendedKey }] };
+    const f = installFetch(...keyServer(state));
+    renderAdmin();
+    const user = userEvent.setup();
+    await screen.findByText("SUSP-5678");
+    expect(screen.getByRole("button", { name: /Khôi phục mã SUSP-5678/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Khôi phục mã SUSP-5678/ }));
+    await screen.findByText("Khôi phục mã mời này?");
+    await user.click(screen.getByRole("button", { name: /Khôi phục mã mời$/ }));
+    await waitFor(() => expect(f.calls.some((c) => c.method === "PATCH" && c.path.includes("unsuspend"))).toBe(true));
+  });
+});
+
+describe("AdminPage — admin_only capability ẩn với dash_admin", () => {
+  it("admin thấy api_write + multi_tool; dash_admin không thấy", async () => {
+    installFetch(...server({ perms: [] }));
+    const { unmount } = renderAdmin(admin);
+    await screen.findByText(/Chưa có mã mời nào/);
+    await userEvent.setup().click(screen.getByText("Tùy chọn nâng cao"));
+    expect(screen.getByRole("checkbox", { name: /capability:api_write/ })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /capability:multi_tool/ })).toBeInTheDocument();
+    unmount();
+
+    installFetch(...server({ perms: [] }));
+    renderAdmin(dashAdmin);
+    await screen.findByText(/Chưa có mã mời nào/);
+    await userEvent.setup().click(screen.getByText("Tùy chọn nâng cao"));
+    expect(screen.queryByRole("checkbox", { name: /capability:api_write/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /capability:multi_tool/ })).toBeNull();
+    // nhưng các capability không admin_only vẫn hiện
+    expect(screen.getByRole("checkbox", { name: /capability:tool_integration/ })).toBeInTheDocument();
   });
 });
 

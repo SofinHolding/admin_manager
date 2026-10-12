@@ -43,6 +43,8 @@ export interface KeyExtraForm {
   scopes: readonly string[];
   maxClients: string;
   apps: string;
+  /** "primary_tool" | "fallback_tool" | "service" — mặc định "primary_tool". */
+  clientKind?: string;
   /** `capability:*` được chọn cấp thêm lúc đăng ký bằng mã này (docs/architecture/capability-model-v1.md §4). */
   capabilities?: readonly string[];
 }
@@ -68,14 +70,21 @@ export function buildKeyExtra(f: KeyExtraForm): KeyExtraResult {
     if (!platforms.length) return { ok: false, error: "Nhập ít nhất một nền tảng được phép" };
     const badPlat = platforms.find((p) => !TOKEN_RE.test(p));
     if (badPlat) return { ok: false, error: "Tên nền tảng chỉ gồm chữ thường, số, dấu - và _" };
-    const scopes = f.scopes.filter((s) => (POLICY_SCOPE_OPTIONS as readonly string[]).includes(s));
-    if (!scopes.length) return { ok: false, error: "Chọn ít nhất một quyền cho công cụ" };
+    const kind = f.clientKind ?? "primary_tool";
+    const baseScopes = f.scopes.filter((s) => (POLICY_SCOPE_OPTIONS as readonly string[]).includes(s));
+    // fallback_tool bắt buộc cần jobs:claim + jobs:complete — thêm những scope chưa có.
+    const FALLBACK_REQUIRED = ["jobs:claim", "jobs:complete"] as const;
+    const effectiveScopes = kind === "fallback_tool"
+      ? [...baseScopes, ...FALLBACK_REQUIRED.filter((s) => !baseScopes.includes(s))]
+      : baseScopes;
+    if (!effectiveScopes.length) return { ok: false, error: "Chọn ít nhất một quyền cho công cụ" };
     const n = Number(f.maxClients);
     if (!Number.isInteger(n) || n < 1 || n > 100) return { ok: false, error: "Số công cụ tối đa phải từ 1 đến 100" };
     extra.integration_policy = {
       allow_integration_registration: true,
+      default_client_kind: kind,
       allowed_platforms: platforms,
-      allowed_scopes: scopes,
+      allowed_scopes: effectiveScopes,
       max_integration_clients: n,
     };
   }

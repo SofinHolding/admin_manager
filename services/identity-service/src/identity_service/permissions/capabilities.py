@@ -20,6 +20,10 @@ CAP_MULTI_TOOL = "capability:multi_tool"
 ALL_CAPABILITIES = (CAP_WEB_ACCESS, CAP_DASHBOARD_ACCESS, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION,
                     CAP_API_WRITE, CAP_API_READ, CAP_MULTI_TOOL)
 
+# Capability chỉ admin thật mới gán được vào invite_key (service.py kiểm qua perms catalog `admin_only`).
+# Đồng bộ với migration 0006_admin_only_capabilities.sql.
+ADMIN_ONLY_CAPABILITIES = (CAP_API_WRITE, CAP_MULTI_TOOL)
+
 # Dùng bởi conftest.py (seed) và migration 0005 để đảm bảo description đồng bộ.
 ALL_CAPABILITIES_DESC: dict[str, str] = {
     CAP_WEB_ACCESS:           "Đăng nhập và dùng website cơ bản",

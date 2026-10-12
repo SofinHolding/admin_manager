@@ -78,3 +78,16 @@ async def list_all(conn: asyncpg.Connection) -> list[dict]:
 async def revoke(conn: asyncpg.Connection, key: str) -> bool:
     tag = await conn.execute("UPDATE invite_keys SET status = 'revoked' WHERE key = $1", key)
     return tag.endswith(" 1")
+
+async def suspend(conn: asyncpg.Connection, key: str) -> bool:
+    """Tạm dừng key: không dùng được nhưng có thể khôi phục (unsuspend)."""
+    tag = await conn.execute(
+        "UPDATE invite_keys SET status = 'suspended' WHERE key = $1 AND status = 'active'", key)
+    return tag.endswith(" 1")
+
+
+async def unsuspend(conn: asyncpg.Connection, key: str) -> bool:
+    """Khôi phục key đã tạm dừng về active."""
+    tag = await conn.execute(
+        "UPDATE invite_keys SET status = 'active' WHERE key = $1 AND status = 'suspended'", key)
+    return tag.endswith(" 1")
