@@ -48,11 +48,6 @@
       "target": "analytics-service"
     },
     {
-      "legacy_prefix": "/v1/user",
-      "target": "integration-service",
-      "note": "viewer: quản lý nhóm quốc gia + kênh"
-    },
-    {
       "legacy_prefix": "/v1/resources",
       "target": "integration-service"
     },
