@@ -37,7 +37,7 @@ AUDIENCE = "manager-api"
 JWKS_URL = f"{ISSUER}/.well-known/jwks.json"
 _TABLES = ("integration_clients, projects, resources, resource_project_bindings, content_items, daily_metrics, "
            "activity_events, snapshots, snapshot_items, idempotency_keys, audit_log, account_projection, outbox, "
-           "feed_cursor, processed_events, dead_letters, jobs, legacy_ingest.operation_audit_log, "
+           "feed_cursor, processed_events, dead_letters, jobs, user_channel_groups, legacy_ingest.operation_audit_log, "
            "legacy_ingest.operation_items, legacy_ingest.operation_batches, legacy_ingest.resource_assignments, "
            "legacy_ingest.resource_sources, legacy_ingest.account_links, legacy_ingest.link_codes")
 LEGACY_POLICIES = (("facebook", True, True), ("tiktok", True, True), ("youtube", True, True), ("instagram", True, False))
