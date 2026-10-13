@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 // Tool B v1 — web shell (xem README.md: lý do chưa đóng gói Tauri). Dev proxy /v1 sang
 // admin-server cổng 8423, cùng quy ước với apps/manager-web/vite.config.ts.
 export default defineConfig({
+  base: process.env.VITE_DEV_SERVER_URL ? "/" : "./",
   plugins: [react(), tailwindcss()],
   server: {
     port: 5176,
