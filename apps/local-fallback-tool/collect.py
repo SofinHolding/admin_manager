@@ -82,7 +82,12 @@ class IntegrationClient:
         await self._http.aclose()
 
     async def claim_jobs(self, platforms: list[str], limit: int = 10) -> list[dict]:
-        """Claim collect-jobs từ hàng đợi."""
+        """Claim collect-jobs từ hàng đợi.
+
+        Chỉ nhận jobs của resources execution_mode=fallback_local — đảm bảo tự nhiên:
+        _rewrite() đã cancel pending-job khi mode != fallback_local, _ensure_collect_job()
+        chỉ tạo job khi mode=fallback_local. Không cần filter thêm ở đây.
+        """
         r = await self._http.post(
             "/v1/integrations/jobs/claim",
             json={"kinds": ["collect"], "platforms": platforms, "limit": limit},
@@ -90,26 +95,28 @@ class IntegrationClient:
         if r.status_code == 204:
             return []
         r.raise_for_status()
-        return r.json().get("data", {}).get("jobs", [])
+        data = r.json().get("data", {})
+        return data.get("jobs", []) if isinstance(data, dict) else []
 
-    async def push_snapshot(self, job_id: str, items: list[dict]) -> None:
-        """Đẩy snapshot kèm X-Delegated-Job để gán owner từ job."""
+    async def push_snapshot(self, job_id: str, platform: str, items: list[dict]) -> None:
+        """Đẩy snapshot kèm X-Delegated-Job để gán owner từ job (delegated ingestion)."""
         idempotency_key = f"collect-{job_id}"
-        # Tạo snapshot
         r = await self._http.post(
             "/v1/integrations/snapshots",
             headers={"X-Delegated-Job": job_id, "Idempotency-Key": idempotency_key},
-            json={"platform": "youtube", "items": items},  # platform suy từ job
+            json={"platform": platform},   # platform từ job, không hardcode
         )
         r.raise_for_status()
         snap = r.json()["data"]["snapshot_id"]
-        # Upload items
-        await self._http.post(
-            f"/v1/integrations/snapshots/{snap}/items",
-            headers={"X-Delegated-Job": job_id},
-            json={"items": items},
-        )
-        # Commit
+        BATCH = 500
+        for i in range(0, max(len(items), 1), BATCH):
+            batch = items[i:i + BATCH]
+            if batch:
+                await self._http.post(
+                    f"/v1/integrations/snapshots/{snap}/items",
+                    headers={"X-Delegated-Job": job_id},
+                    json={"items": batch},
+                )
         await self._http.post(
             f"/v1/integrations/snapshots/{snap}/commit",
             headers={"X-Delegated-Job": job_id},
@@ -369,8 +376,8 @@ async def process_job(
 
         # ── 3. Push snapshot (delegated ingestion) ───────────────────────────
         if items:
-            await client.push_snapshot(job_id, items)
-            log.info("Pushed %d items for job=%s", len(items), job_id)
+            await client.push_snapshot(job_id, platform, items)
+            log.info("Pushed %d items for job=%s platform=%s", len(items), job_id, platform)
 
         await client.complete_job(job_id)
         log.info("Completed job=%s", job_id)

@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  ChevronDown, ChevronUp, Database, Globe, Pencil, Plus, Save, Trash2, X,
+  ChevronDown, ChevronUp, Globe, Pencil, Plus, RefreshCw, Save, Trash2, X,
 } from "lucide-react";
 import {
   channelGroupsApi, resourcesApi,
@@ -49,13 +49,14 @@ const VERIFICATION_BADGE: Record<string, { text: string; variant: "secondary" | 
   invalid:    { text: "Lỗi",           variant: "destructive" },
 };
 
-const MODE_TEXT: Record<string, string> = {
-  fallback_local: "Đang lên lịch",
-  primary_tool:   "Tool chính",
-  disabled:       "Đã tắt",
+/** Nhãn + màu badge theo chế độ thu thập. */
+const MODE_BADGE: Record<string, { text: string; hint: string; variant: "secondary" | "warning" | "success" | "destructive" }> = {
+  fallback_local: { text: "Máy tập trung", hint: "Dữ liệu được máy chủ tập trung tự kéo về",        variant: "secondary" },
+  primary_tool:   { text: "Tool riêng",    hint: "Dữ liệu do Tool cá nhân của bạn đẩy lên",          variant: "success"   },
+  disabled:       { text: "Tắt",           hint: "Kênh này tạm thời không thu thập dữ liệu nào",     variant: "destructive" },
 };
 
-// Danh sách mã ISO 2 ký tự phổ biến để gợi ý (không bắt buộc)
+/** Danh sách quốc gia phổ biến cho datalist gợi ý. */
 const COMMON_COUNTRIES: [string, string][] = [
   ["VN", "Việt Nam"], ["NG", "Nigeria"], ["US", "United States"],
   ["PH", "Philippines"], ["ID", "Indonesia"], ["IN", "India"],
@@ -69,10 +70,22 @@ function VerBadge({ r }: { r: ManagedResource }) {
   return <Badge variant={spec.variant}>{spec.text}</Badge>;
 }
 
-function ModeBadge({ r }: { r: ManagedResource }) {
-  if (!r.execution_mode || r.execution_mode === "disabled") return null;
+function ModeBadge({ r, onSwitch }: { r: ManagedResource; onSwitch: (mode: string) => void }) {
+  const spec = MODE_BADGE[r.execution_mode] ?? { text: r.execution_mode, variant: "secondary" as const, hint: "" };
   return (
-    <span className="text-xs text-muted-foreground">{MODE_TEXT[r.execution_mode] ?? r.execution_mode}</span>
+    <span className="flex items-center gap-1.5">
+      <Badge variant={spec.variant} title={spec.hint}>{spec.text}</Badge>
+      {r.execution_mode !== "disabled" && (
+        <button
+          type="button"
+          title={r.execution_mode === "fallback_local" ? "Chuyển sang Tool riêng" : "Chuyển sang máy tập trung"}
+          className="rounded p-0.5 text-muted-foreground hover:text-fg"
+          onClick={() => onSwitch(r.execution_mode === "fallback_local" ? "primary_tool" : "fallback_local")}
+        >
+          <RefreshCw className="size-3" aria-hidden />
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -170,13 +183,8 @@ function AddChannelForm({
 // ── GroupSection (accordion item) ─────────────────────────────────────────────
 
 function GroupSection({
-  group,
-  platforms,
-  resources,
-  onRename,
-  onDelete,
-  onChannelAdded,
-  onChannelDeleted,
+  group, platforms, resources,
+  onRename, onDelete, onChannelAdded, onChannelDeleted, onChannelModeChanged,
 }: {
   group: ChannelGroup;
   platforms: string[];
@@ -185,6 +193,7 @@ function GroupSection({
   onDelete: (id: string) => void;
   onChannelAdded: (r: ManagedResource) => void;
   onChannelDeleted: (id: string) => void;
+  onChannelModeChanged: (id: string, mode: string) => void;
 }) {
   const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -235,6 +244,18 @@ function GroupSection({
       toast.error(errorMessage(e, "Không xóa được kênh"));
     } finally {
       setDeletingChannelId(null);
+    }
+  };
+
+  const handleSwitchMode = async (r: ManagedResource, newMode: string) => {
+    const label = r.display_name || r.username || r.input_ref;
+    try {
+      await resourcesApi.updateResourceMode(r.id, newMode);
+      onChannelModeChanged(r.id, newMode);
+      const modeLabel = MODE_BADGE[newMode]?.text ?? newMode;
+      toast.success(`Kênh "${label}" chuyển sang: ${modeLabel}`);
+    } catch (e) {
+      toast.error(errorMessage(e, "Không chuyển được chế độ thu thập"));
     }
   };
 
@@ -332,7 +353,7 @@ function GroupSection({
                     </div>
                     <span className="flex shrink-0 items-center gap-2">
                       <VerBadge r={r} />
-                      <ModeBadge r={r} />
+                      <ModeBadge r={r} onSwitch={(mode) => void handleSwitchMode(r, mode)} />
                       <Button
                         variant="outline" size="sm"
                         onClick={() => void handleDeleteChannel(r)}
@@ -429,6 +450,10 @@ export default function ChannelsPage() {
     setResources((prev) => prev.filter((r) => r.id !== id));
   };
 
+  const handleChannelModeChanged = (id: string, mode: string) => {
+    setResources((prev) => prev.map((r) => r.id === id ? { ...r, execution_mode: mode } : r));
+  };
+
   // Kênh không thuộc nhóm nào (country không khớp group nào)
   const groupNames = new Set(groups.map((g) => g.name));
   const ungrouped = resources.filter((r) => !r.country || !groupNames.has(r.country));
@@ -505,6 +530,7 @@ export default function ChannelsPage() {
                 onDelete={handleDeleteGroup}
                 onChannelAdded={handleChannelAdded}
                 onChannelDeleted={handleChannelDeleted}
+                onChannelModeChanged={handleChannelModeChanged}
               />
             ))}
           </div>

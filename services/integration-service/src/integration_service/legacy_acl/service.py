@@ -338,9 +338,15 @@ class LegacyService:
             row = await repository.get_resource(conn, resource_id, lock=True)
             if not row:
                 raise LegacyError(404, "Không tìm thấy resource")
+            if row["owner_account_id"] != principal.sub and not principal.is_admin:
+                raise LegacyError(403, "Không có quyền đổi chế độ resource này")
             await self._rewrite(conn, row, {}, now, mode_legacy=body.execution_mode)
             await self._audit(conn, principal.sub, "execution_mode_changed", "resource", resource_id,
                               {"execution_mode": body.execution_mode})
+            # Khi chuyển sang fallback_local → tạo collect-job cho Shared Collector thu thập hộ.
+            # _rewrite() đã cancel pending-job khi mode != fallback_local (dòng 154-155).
+            if body.execution_mode == "fallback_local":
+                await self._ensure_collect_job(conn, principal, resource_id, now)
         return {"ok": True}
 
     # ── /v1/ops: Run Queue ───────────────────────────────────────────────────────────────

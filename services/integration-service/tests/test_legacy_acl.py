@@ -394,6 +394,41 @@ async def test_admin_sets_execution_mode_canonically(lg, env):
     assert audit == [{"event_type": "execution_mode_changed", "account_id": admin["sub"]}]
 
 
+@covers("PATCH /v1/resources/{resource_id}/execution-mode")
+async def test_owner_switches_execution_mode_and_jobs_follow(lg, env):
+    """Owner chuyển fallback_local→primary_tool: job bị cancel.
+    Owner chuyển primary_tool→fallback_local: collect-job được tạo lại."""
+    # Tạo user có capability:manual_channel_mgmt
+    u = lg.env.user(perms=["capability:manual_channel_mgmt"])
+    other = await lg.user()
+    await lg.env.projection(u["sub"])
+    await lg.env.projection(other["sub"])
+    src = await lg.source(u)
+    res = await lg.resource(u, src, "https://fb.com/switch-me")
+    assert res["execution_mode"] == "fallback_local"
+
+    # Bước 1: owner chuyển → primary_tool → collect-job bị cancel
+    assert await env.scalar("SELECT count(*) FROM jobs WHERE status='pending'") == 1
+    r = await lg.call("PATCH", f"{RES}/{res['id']}/execution-mode", u,
+                      json={"execution_mode": "primary_tool"})
+    assert r.json() == {"ok": True}
+    assert await env.scalar("SELECT count(*) FROM jobs WHERE status='pending'") == 0
+    assert await env.scalar("SELECT count(*) FROM jobs WHERE status='cancelled'") == 1
+    assert (await lg.call("GET", RES, u)).json()["items"][0]["execution_mode"] == "primary_tool"
+
+    # Bước 2: owner chuyển ngược lại → fallback_local → collect-job được tạo mới
+    r = await lg.call("PATCH", f"{RES}/{res['id']}/execution-mode", u,
+                      json={"execution_mode": "fallback_local"})
+    assert r.json() == {"ok": True}
+    assert await env.scalar("SELECT count(*) FROM jobs WHERE status='pending'") == 1
+
+    # Non-owner bị từ chối 403
+    r = await lg.call("PATCH", f"{RES}/{res['id']}/execution-mode", other, expect=403,
+                      json={"execution_mode": "disabled"})
+    # Shape lỗi giữ nguyên legacy {detail: ...}
+    assert "detail" in r.json()
+
+
 # ── Run Queue ↔ jobs ──────────────────────────────────────────────────────────────────
 
 @covers("POST /v1/ops/batches", "GET /v1/ops/batches", "GET /v1/ops/batches/{batch_id}")

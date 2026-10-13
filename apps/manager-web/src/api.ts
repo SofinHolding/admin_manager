@@ -646,6 +646,10 @@ export const resourcesApi = {
   }>) => apiFetch<{ ok: boolean }>(`/v1/resources/${enc(id)}`, json("PATCH", data)),
 
   deleteResource: (id: string) => apiFetch<{ ok: boolean }>(`/v1/resources/${enc(id)}`, json("DELETE")),
+
+  /** Chuyển chế độ thu thập: 'fallback_local' (máy tập trung) | 'primary_tool' (tool riêng) | 'disabled'. */
+  updateResourceMode: (id: string, execution_mode: string) =>
+    apiFetch<{ ok: boolean }>(`/v1/resources/${enc(id)}/execution-mode`, json("PATCH", { execution_mode })),
 };
 
 // ── Nhóm quốc gia (integration-service /v1/user/channel-groups) ───────────

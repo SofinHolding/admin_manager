@@ -76,6 +76,13 @@ def build_routers(include_in_schema: bool = False) -> list[APIRouter]:
     async def delete_resource(request: Request, resource_id: str, payload: Principal = User) -> dict:
         return await _svc(request).delete_resource(payload, resource_id)
 
+    @resources.patch("/{resource_id}/execution-mode",
+                     summary="Đổi chế độ thu thập của resource (owner tự đổi hoặc admin)")
+    async def set_resource_execution_mode(request: Request, resource_id: str,
+                                          body: schemas.SetExecutionModeBody,
+                                          payload: Principal = User) -> dict:
+        return await _svc(request).set_execution_mode(payload, resource_id, body)
+
     # ── /v1/ops ──────────────────────────────────────────────────────────────────────
 
     @ops.get("/inventory", summary="Toàn bộ resource user đã khai báo — filter được")
