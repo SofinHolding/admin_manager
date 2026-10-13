@@ -77,9 +77,35 @@ class IntegrationClient:
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=timeout,
         )
+        self.installation_id: str | None = None
 
     async def aclose(self) -> None:
         await self._http.aclose()
+
+    async def handshake(self, platforms: list[str]) -> str:
+        """Khai báo installation với integration-service → lấy installation_id.
+
+        Phải gọi một lần khi khởi động (trước claim_jobs). Idempotent: gọi lại
+        cùng device_id sẽ cập nhật last_seen_at, không tạo mới.
+        """
+        import socket
+        r = await self._http.post(
+            "/v1/integrations/handshake",
+            json={
+                "installation": {
+                    "device_id": f"shared-collector-{socket.gethostname()}",
+                    "hostname": socket.gethostname(),
+                    "os": "windows",
+                    "app_version": "collect.py/1.0",
+                },
+                "platforms": platforms,
+                "capabilities": ["data.collect"],
+            },
+        )
+        r.raise_for_status()
+        self.installation_id = r.json()["data"]["installation_id"]
+        log.info("Handshake OK — installation_id=%s", self.installation_id)
+        return self.installation_id
 
     async def claim_jobs(self, platforms: list[str], limit: int = 10) -> list[dict]:
         """Claim collect-jobs từ hàng đợi.
@@ -88,9 +114,17 @@ class IntegrationClient:
         _rewrite() đã cancel pending-job khi mode != fallback_local, _ensure_collect_job()
         chỉ tạo job khi mode=fallback_local. Không cần filter thêm ở đây.
         """
+        if not self.installation_id:
+            raise RuntimeError("Chưa handshake — gọi handshake() trước")
         r = await self._http.post(
             "/v1/integrations/jobs/claim",
-            json={"kinds": ["collect"], "platforms": platforms, "limit": limit},
+            json={
+                "installation_id": self.installation_id,
+                "platforms": platforms,
+                "capabilities": ["data.collect"],
+                "limit": min(limit, 20),
+                "lease_seconds": 300,
+            },
         )
         if r.status_code == 204:
             return []
@@ -305,10 +339,13 @@ async def process_job(
     proxy: str | None,
     http: httpx.AsyncClient,
 ) -> None:
-    job_id = job["id"]
+    # ClaimedJob schema: job_id, platform, payload, resource (ResourceRef)
+    job_id = job.get("job_id") or job.get("id", "")
     platform = job.get("platform", "")
-    resource_id = job.get("resource_id", "")
-    input_ref = job.get("resource_input_ref", "") or job.get("input_ref", "")
+    resource = job.get("resource") or {}
+    input_ref = (resource.get("input_ref") or resource.get("external_id") or
+                 job.get("resource_input_ref") or job.get("input_ref", ""))
+    resource_id = resource.get("id") or job.get("resource_id", "")
 
     log.info("Processing job=%s platform=%s input_ref=%s", job_id, platform, input_ref[:60])
 
@@ -401,6 +438,18 @@ async def run_loop(args: argparse.Namespace) -> None:
     sem = asyncio.Semaphore(args.max_concurrent)
 
     log.info("Collector started. gateway=%s poll_interval=%ds", args.gateway, args.poll_interval)
+
+    # Handshake để lấy installation_id — retry tối đa 5 lần nếu gateway chưa sẵn sàng
+    for attempt in range(5):
+        try:
+            await client.handshake(list(PLATFORMS))
+            break
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Handshake attempt %d/5 failed: %s — chờ 5s", attempt + 1, exc)
+            await asyncio.sleep(5)
+    else:
+        log.error("Handshake thất bại sau 5 lần — dừng collector")
+        return
 
     async def _process(job: dict) -> None:
         async with sem:
