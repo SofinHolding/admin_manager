@@ -2,10 +2,13 @@ import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { resolve } from "path";
 
 export default defineConfig(({ mode }) => {
-  // Biến KHÔNG có tiền tố VITE_ (chỉ dùng ở dev server, không bao giờ vào bundle).
-  const env = loadEnv(mode, process.cwd(), "");
+  // Đọc .env.dev từ root monorepo (2 cấp lên từ apps/manager-web/).
+  // loadEnv("dev", rootDir) đọc file .env.dev — khớp với file dev_stack.py sinh ra.
+  const MONOREPO_ROOT = resolve(__dirname, "../..");
+  const env = loadEnv("dev", MONOREPO_ROOT, "");
   // Mọi lời gọi API (kể cả OIDC) đi qua API Gateway cùng origin; Gateway định tuyến tới từng service.
   const gateway = env.DEV_GATEWAY_URL || "http://127.0.0.1:8400";
   const viaGateway = { target: gateway, changeOrigin: true };
