@@ -255,12 +255,15 @@ async def test_registration_with_allowed_apps_grants_app_access_permission(clien
     assert (await reg(client, key, "co_quyen")).status_code == 200
     async with db.connection() as conn:
         types = [r["type"] for r in await conn.fetch("SELECT type FROM outbox ORDER BY seq")]
-    assert types == ["account.registered", "account.permission_changed"]
+    # Phase 2: ngoài reward:access còn cấp 2 capability mặc định của viewer → 3 permission_changed
+    assert types[0] == "account.registered" and len(types) == 4
+    assert types.count("account.permission_changed") == 3
     await client.get("/v1/auth/verify-email", params={"token": mailer.last("verify")})
     token = (await login(client, "co_quyen")).json()["access_token"]
-    assert (await claims(client, token))["perms"] == ["reward:access"]
+    assert "reward:access" in (await claims(client, token))["perms"]
     async with db.connection() as conn:
-        row = await conn.fetchrow("SELECT * FROM account_permissions")
+        row = await conn.fetchrow(
+            "SELECT permission, granted_by FROM account_permissions WHERE permission='reward:access'")
         assert (row["permission"], row["granted_by"]) == ("reward:access", "registration")
 
 
@@ -270,10 +273,18 @@ async def test_key_without_apps_grants_nothing_and_other_apps_stay_closed(client
     key = await policy_key(db, None, apps=["site_b"])
     await reg(client, key, "chi_site_b")
     async with db.connection() as conn:
-        assert [r["permission"] for r in await conn.fetch("SELECT permission FROM account_permissions")] == ["site_b:access"]
+        # site_b:access cấp đúng 1 lần (cho chi_site_b), Phase 2 cũng cấp default caps
+        site_b_grants = await conn.fetchval(
+            "SELECT count(*) FROM account_permissions WHERE permission='site_b:access'")
+        assert site_b_grants == 1
     await reg(client, await make_key(db), "khong_app")
     async with db.connection() as conn:
-        assert await conn.fetchval("SELECT count(*) FROM account_permissions") == 1
+        # khong_app không có site_b:access — chỉ có default caps
+        khong_id = await conn.fetchval("SELECT id FROM accounts WHERE username='khong_app'")
+        no_site_b = await conn.fetchval(
+            "SELECT count(*) FROM account_permissions WHERE account_id=$1 AND permission='site_b:access'",
+            khong_id)
+        assert no_site_b == 0
 
 
 async def test_app_removed_from_catalog_after_key_creation_rejects_registration_without_consuming(client, db):
@@ -297,7 +308,8 @@ async def test_integration_and_apps_work_together(client, db, mailer):
     r = await reg(client, key, "ca_hai", integration={"tool_name": "T", "platforms": ["youtube"]})
     assert r.status_code == 200
     s = await snapshot(db, key)
-    assert (s["accounts"], s["prov"], s["perms"], s["outbox"]) == (1, 1, 1, 2)
+    # Phase 2: perms = reward:access + 2 default viewer caps; outbox = registered + 3×permission_changed
+    assert (s["accounts"], s["prov"], s["perms"], s["outbox"]) == (1, 1, 3, 4)
 
 
 # ── GET /v1/accounts/me/integration ────────────────────────────────────────────

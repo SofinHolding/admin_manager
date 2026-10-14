@@ -35,7 +35,7 @@ class Settings:
     feed_keys: tuple = ()               # ((reader, key), ...) từ IDENTITY_FEED_KEY_<READER>
     integration_feed_url: str = ""      # nguồn feed provisioning (tuỳ chọn)
     integration_feed_key: str = ""
-    access_token_ttl_s: int = 15 * 60
+    access_token_ttl_s: int = 10 * 60   # D12: 600 s RS256; HS256 compat legacy vẫn dùng 900 nếu cần
     refresh_token_ttl_days: int = 30
     login_fail_delay_s: float = 1.0
     base_url: str = "http://localhost:8421"
@@ -152,7 +152,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         integration_feed_url=_env(env, "INTEGRATION_FEED_URL").rstrip("/"),
         integration_feed_key=_env(env, "INTEGRATION_FEED_KEY"),
         port=port, log_level=level, database_url=database_url, env=mode, jwt_compat_secret=secret,
-        access_token_ttl_s=_int(env, "ACCESS_TOKEN_TTL_S", 15 * 60, 60, 24 * 3600),
+        access_token_ttl_s=_int(env, "ACCESS_TOKEN_TTL_S", 10 * 60, 60, 24 * 3600),
         refresh_token_ttl_days=_int(env, "REFRESH_TOKEN_TTL_DAYS", 30, 1, 365),
         login_fail_delay_s=delay,
         base_url=_env(env, "BASE_URL", "http://localhost:8421").rstrip("/"),

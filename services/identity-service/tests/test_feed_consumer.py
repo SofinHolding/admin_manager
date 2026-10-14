@@ -285,8 +285,8 @@ async def test_lifespan_starts_consumer_task_only_when_configured(db, settings, 
     off = create_app(settings, database=db, mailer=mailer, now=clock)
     async with off.router.lifespan_context(off):
         assert "integration-feed" not in {t.get_name() for t in asyncio.all_tasks()}
-    on = create_app(replace(settings, integration_feed_url=source.url, integration_feed_key=KEY), database=db,
-                    mailer=mailer, now=clock)
+    on = create_app(replace(settings, integration_feed_url=source.url, integration_feed_key=KEY,
+                            backchannel_enabled=True), database=db, mailer=mailer, now=clock)
     async with on.router.lifespan_context(on):
         names = {t.get_name() for t in asyncio.all_tasks()}
         assert "integration-feed" in names and "oidc-backchannel" in names

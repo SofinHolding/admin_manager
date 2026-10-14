@@ -170,11 +170,13 @@ async def test_login_success_response_shape_and_token_claims(client, db, mailer)
     r = await login(client, "dang_nhap")
     body = r.json()
     assert r.status_code == 200 and set(body) == {"access_token", "refresh_token", "expires_in", "user"}
-    assert body["expires_in"] == 900 and set(body["user"]) == {"id", "username", "email", "role"}
+    assert body["expires_in"] == 600 and set(body["user"]) == {"id", "username", "email", "role"}
     c = await claims(client, body["access_token"])
     assert c["sub"] == body["user"]["id"] and c["role"] == "viewer" and c["client_type"] == "web"
-    assert c["iss"] == "http://identity.test" and c["aud"] == ["manager-api"] and c["perms"] == []
-    assert c["sid"] and c["jti"] and c["exp"] - c["iat"] == 900 and c["nbf"] == c["iat"]
+    # Phase 2: viewer nhận 2 capability mặc định (web_access + dashboard_access) khi đăng ký
+    assert c["iss"] == "http://identity.test" and c["aud"] == ["manager-api"]
+    assert set(c["perms"]) == {"capability:web_access", "capability:dashboard_access"}
+    assert c["sid"] and c["jti"] and c["exp"] - c["iat"] == 600 and c["nbf"] == c["iat"]
     async with db.connection() as conn:
         assert await conn.fetchval("SELECT last_login FROM accounts WHERE username='dang_nhap'") is not None
 

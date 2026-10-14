@@ -295,7 +295,7 @@ class OidcService:
                "scope": scope}
         scopes = scope.split(" ")
         if with_id_token:
-            issued = int(time.time())
+            issued = int(self.now().timestamp())
             claims = {"iss": self.settings.issuer, "sub": account["id"], "aud": client["client_id"],
                       "azp": client["client_id"], "iat": issued, "exp": issued + self.settings.access_token_ttl_s,
                       "auth_time": int(auth_time.timestamp()), "sid": sid, "at_hash": at_hash(access)}

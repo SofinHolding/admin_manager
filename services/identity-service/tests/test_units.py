@@ -127,7 +127,7 @@ def test_settings_parse_and_defaults():
     s = load_settings({"IDENTITY_ENV": "dev", "IDENTITY_JWT_COMPAT_SECRET": SECRET,
                        "IDENTITY_BASE_URL": "https://m.example.com/", "IDENTITY_LOGIN_FAIL_DELAY_S": "0.5"})
     assert s.env == "dev" and s.base_url == "https://m.example.com" and s.login_fail_delay_s == 0.5
-    assert s.access_token_ttl_s == 900 and s.refresh_token_ttl_days == 30 and not s.smtp_configured
+    assert s.access_token_ttl_s == 600 and s.refresh_token_ttl_days == 30 and not s.smtp_configured
 
 
 @pytest.mark.parametrize("env", [

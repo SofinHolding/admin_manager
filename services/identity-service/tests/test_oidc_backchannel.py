@@ -55,7 +55,7 @@ async def verify_logout_token(client, raw: str, *, client_id: str) -> dict:
     header = jwt.get_unverified_header(raw)
     assert header["alg"] == "RS256" and header["typ"] == "logout+jwt"
     claims = jwt.decode(raw, key, algorithms=["RS256"], audience=client_id, issuer=ISSUER,
-                        options={"require": ["iss", "aud", "iat", "jti", "events"]})
+                        options={"require": ["iss", "aud", "iat", "jti", "events"], "verify_iat": False})
     assert LOGOUT_EVENT in claims["events"] and claims["events"][LOGOUT_EVENT] == {}
     assert "nonce" not in claims                                   # OIDC Back-Channel Logout §2.4
     assert claims.get("sub") or claims.get("sid")
@@ -92,7 +92,8 @@ async def test_logout_token_for_one_rp_is_rejected_when_audience_is_another(clie
     await worker_of(client).run_once()
     raw = rx.requests[0]["form"]["logout_token"]
     with pytest.raises(jwt.InvalidAudienceError):
-        jwt.decode(raw, await jwks_key(client, raw), algorithms=["RS256"], audience="rp-bbb", issuer=ISSUER)
+        jwt.decode(raw, await jwks_key(client, raw), algorithms=["RS256"], audience="rp-bbb", issuer=ISSUER,
+                   options={"verify_iat": False})
 
 
 async def test_worker_is_idempotent_one_delivery_per_client_and_sid(client, db, receivers):

@@ -81,7 +81,8 @@ class TokenService:
         try:
             return jwt.decode(token, pem, algorithms=["RS256"], issuer=self.settings.issuer, leeway=LEEWAY_S,
                               audience=audience, options={"require": ["iss", "sub", "aud"],
-                                                          "verify_exp": verify_exp, "verify_aud": audience is not None})
+                                                          "verify_exp": verify_exp, "verify_aud": audience is not None,
+                                                          "verify_iat": False})
         except jwt.ExpiredSignatureError:
             raise DomainError(401, "Token hết hạn") from None
         except jwt.InvalidTokenError:

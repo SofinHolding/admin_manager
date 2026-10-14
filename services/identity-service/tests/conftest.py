@@ -24,8 +24,23 @@ from identity_service.config import Settings
 from identity_service.db import Database
 
 PG_REASON = devenv.SKIP_REASON
-_TABLES = ("outbox, auth_audit, account_permissions, sessions, refresh_tokens, accounts, invite_keys, "
-           "oidc_clients, oidc_cursor, feed_cursor, processed_events, dead_letters")
+# Thứ tự xóa phải tôn trọng FK: bảng con trước, cha sau.
+# Không dùng TRUNCATE (AccessExclusiveLock) vì xung đột với dev-stack chạy song song cùng identity_db
+# (backchannel giữ RowShareLock trên oidc_cursor qua SELECT FOR UPDATE → deadlock).
+# DELETE dùng RowExclusiveLock, tương thích với RowShareLock của dev-stack.
+_LEAF_TABLES = (
+    # Bảng không có FK con — xóa trực tiếp
+    "outbox", "auth_audit", "invite_keys",
+    "oidc_cursor", "feed_cursor", "processed_events", "dead_letters",
+    # OIDC child tables — phụ thuộc vào oidc_clients hoặc sessions, xóa trước cascade roots
+    "oidc_backchannel_deliveries", "oidc_session_clients",
+    "oidc_auth_codes", "oidc_refresh_tokens", "sso_sessions",
+)
+# accounts cascade → sessions, refresh_tokens, account_permissions, integration_provisioning
+# oidc_clients cascade → oidc_auth_codes, oidc_refresh_tokens, sso_sessions, oidc_backchannel_deliveries
+_CASCADE_ROOTS = ("accounts", "oidc_clients")
+# Danh sách bằng phẳng dùng cho DROP TABLE trong migrated (recovery một lần khi migration lỗi).
+_TABLES = "outbox, auth_audit, account_permissions, sessions, refresh_tokens, accounts, invite_keys, oidc_clients, oidc_cursor, feed_cursor, processed_events, dead_letters"
 
 
 def _dsn() -> str | None:
@@ -77,7 +92,9 @@ class CapturingMailer:
 
 class FakeClock:
     def __init__(self) -> None:
-        self.t = datetime(2026, 10, 5, 10, 0, 0, tzinfo=timezone.utc)
+        # Xa đủ vào tương lai để dev-stack đang chạy (real time ~2026) không pick up
+        # test deliveries qua next_attempt_at — vì dev-stack dùng real clock còn test dùng clock giả.
+        self.t = datetime(2077, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
     def __call__(self) -> datetime:
         return self.t
@@ -88,10 +105,19 @@ class FakeClock:
 
 @pytest.fixture
 def settings() -> Settings:
-    """Cấu hình mặc định: RS256 + JWKS (không có secret chung)."""
+    """Cấu hình mặc định: RS256 + JWKS (không có secret chung).
+
+    backchannel_enabled=False: tắt background task để tránh race condition giữa dev-stack
+    (đang chạy cùng identity_db) và test — test_feed_consumer dùng backchannel_enabled=True tường minh.
+
+    key_encryption_key: dùng IDENTITY_KEY_ENCRYPTION_KEY từ .env.dev (nếu có) để tránh
+    InvalidToken khi dev stack đang chạy cùng identity_db và tạo lại signing keys.
+    Fallback về TEST_FERNET_KEY khi không có (CI / chạy độc lập).
+    """
+    kek = os.environ.get("IDENTITY_KEY_ENCRYPTION_KEY") or TEST_FERNET_KEY
     return Settings(port=8430, log_level="INFO", database_url=_dsn() or "postgresql://x:y@127.0.0.1:1/z",
                     env="test", login_fail_delay_s=0.0, issuer=ISSUER, audience="manager-api",
-                    key_encryption_key=TEST_FERNET_KEY,
+                    key_encryption_key=kek, backchannel_enabled=False,
                     feed_keys=(("analytics", "feed-key-analytics-0123456789abcdef"),
                                ("integration", "feed-key-integration-0123456789abc")))
 
@@ -137,7 +163,15 @@ async def db(migrated):
     database = Database(_dsn(), max_size=5)
     await database.open()
     async with database.connection() as conn:
-        await conn.execute(f"TRUNCATE {_TABLES} RESTART IDENTITY CASCADE")
+        # Xóa theo thứ tự FK: leaf tables trước (RowExclusiveLock, tương thích với dev-stack),
+        # sau đó cascade roots (accounts / oidc_clients tự cascade xuống con).
+        for t in _LEAF_TABLES:
+            await conn.execute(f"DELETE FROM {t}")
+        for t in _CASCADE_ROOTS:
+            await conn.execute(f"DELETE FROM {t}")
+        # Reset sequence của 2 bảng có bigserial (outbox.seq, auth_audit.id).
+        for tbl, col in (("outbox", "seq"), ("auth_audit", "id")):
+            await conn.execute(f"SELECT setval(pg_get_serial_sequence('{tbl}', '{col}'), 1, false)")
         # Catalog permission không bị TRUNCATE: đưa về đúng trạng thái seed sau mỗi test.
         # Import từ capabilities.py để conftest tự động cập nhật khi thêm capability mới.
         from identity_service.permissions.capabilities import ALL_CAPABILITIES_DESC
@@ -205,7 +239,9 @@ async def claims(client, token: str) -> dict:
     kid = jwt.get_unverified_header(token)["kid"]
     jwk = next(k for k in jwks if k["kid"] == kid)
     key = jwt.algorithms.RSAAlgorithm.from_jwk(jwk)
-    return jwt.decode(token, key, algorithms=["RS256"], audience="manager-api", issuer=ISSUER)
+    # verify_iat=False: FakeClock đặt thời gian tương lai (2077) nên iat > real_now; PyJWT 2.15 kiểm iat.
+    return jwt.decode(token, key, algorithms=["RS256"], audience="manager-api", issuer=ISSUER,
+                      options={"verify_iat": False})
 
 
 # ── Trợ giúp nghiệp vụ ──────────────────────────────────────────────────────────

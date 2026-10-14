@@ -140,9 +140,13 @@ async def test_numeric_legacy_reset_value_becomes_change_code_not_reset_token(db
     assert link["reset_token_hash"] == hash_token("reset-token-uuid-0001") and link["change_code_hash"] == ""
 
 
-async def test_pending_verify_link_and_old_password_and_old_session_work_via_the_api(db, client, source):
+async def test_pending_verify_link_and_old_password_and_old_session_work_via_the_api(db, client, source, clock):
     """Điều kiện chuyển không gián đoạn: link đang chờ, mật khẩu cũ và phiên đang đăng nhập còn dùng được."""
     await legacy_sync.sync(_dsn(), source)
+    # FakeClock bắt đầu ở 2077; cập nhật token timestamps để các link/token chưa hết hạn (TTL 24h / 1h).
+    async with db.connection() as conn:
+        await conn.execute("UPDATE accounts SET verify_token_at=$1 WHERE username='dang_cho'", clock())
+        await conn.execute("UPDATE accounts SET reset_token_at=$1 WHERE username='quen_mk'", clock())
     # mật khẩu cũ (bcrypt do legacy tạo) đăng nhập được
     r = await login(client, "quan_tri", password=PW_OLD)
     assert r.status_code == 200 and r.json()["user"]["id"] == "a" * 32

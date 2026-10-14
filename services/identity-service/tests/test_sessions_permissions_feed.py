@@ -107,10 +107,12 @@ async def test_grant_permission_shows_up_in_new_tokens_and_revoke_removes_it(cli
     again = await client.put(f"/v1/admin/accounts/{u['id']}/permissions/reward:access", headers=a["auth"])
     assert again.json()["changed"] is False  # idempotent
     token = (await login(client, "can_quyen")).json()["access_token"]
-    assert (await claims(client, token))["perms"] == ["reward:access"]
+    # Phase 2: viewer có default caps; kiểm tra reward:access có mặt (không check perms == exact list)
+    assert "reward:access" in (await claims(client, token))["perms"]
     assert (await client.delete(f"/v1/admin/accounts/{u['id']}/permissions/reward:access", headers=a["auth"])).json()["changed"]
     token = (await login(client, "can_quyen")).json()["access_token"]
-    assert (await claims(client, token))["perms"] == []
+    # reward:access bị thu hồi; default caps vẫn còn
+    assert "reward:access" not in (await claims(client, token))["perms"]
 
 
 async def test_dash_admin_can_grant_normal_but_not_admin_only_permissions(client, db, mailer):
@@ -156,16 +158,21 @@ async def test_account_lifecycle_emits_events_in_order(client, db, mailer):
     await client.delete(f"/v1/admin/users/{u['id']}", headers=a["auth"])
     body = (await feed(client, limit=500)).json()
     mine = [e for e in body["events"] if e["data"].get("account_id") == u["id"]]
-    assert [e["type"] for e in mine] == [
-        "account.registered", "account.verified", "account.status_changed", "session.revoked",
-        "account.permission_changed", "account.role_changed", "session.revoked", "account.profile_updated",
+    # Phase 2: đăng ký tạo thêm 2 permission_changed cho default capabilities (dashboard_access, web_access)
+    types = [e["type"] for e in mine]
+    assert types == [
+        "account.registered",
+        "account.permission_changed", "account.permission_changed",  # default caps (sorted: dashboard, web)
+        "account.verified", "account.status_changed", "session.revoked",
+        "account.permission_changed",                                  # reward:access
+        "account.role_changed", "session.revoked", "account.profile_updated",
         "session.revoked", "account.deleted"]
     seqs = [e["seq"] for e in body["events"]]
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
     reg = mine[0]
     assert reg["data"] == {"account_id": u["id"], "username": "vong_doi_su_kien", "role": "viewer", "status": "pending"}
-    assert mine[2]["data"] == {"account_id": u["id"], "status": "suspended", "previous": "active"}
-    assert mine[4]["data"] == {"account_id": u["id"], "permission": "reward:access", "granted": True}
+    assert mine[4]["data"] == {"account_id": u["id"], "status": "suspended", "previous": "active"}
+    assert mine[6]["data"] == {"account_id": u["id"], "permission": "reward:access", "granted": True}
 
 
 async def test_events_never_contain_pii_or_secrets(client, db, mailer):
