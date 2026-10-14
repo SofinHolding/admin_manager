@@ -40,7 +40,7 @@ async def list_clients(request: Request, owner: str | None = Query(None, max_len
                        status: str | None = Query(None, max_length=40), limit: int = Query(50, ge=1, le=200),
                        offset: int = Query(0, ge=0, le=100_000), principal: Principal = Depends(require_user)):
     rows = await get_container(request).clients.list(principal, owner=owner, status=status, limit=limit, offset=offset)
-    return ok([public_client(r) for r in rows])
+    return ok({"items": [public_client(r) for r in rows]})
 
 
 @router.get("/clients/{client_id}", summary="Chi tiết client",
