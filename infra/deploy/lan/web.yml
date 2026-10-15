@@ -1,0 +1,20 @@
+# Web + reverse proxy cho máy chủ LAN. Chạy SAU khi stack nền tảng (infra/compose/stack.yml) đã lên.
+#   docker compose -f infra/deploy/lan/web.yml up -d
+# Cổng công bố: MP_WEB_PORT (mặc định 8480) trên mọi giao diện. Tên container/network có tiền tố mp- để không đụng project khác.
+name: manager-platform-web
+
+services:
+  web:
+    image: nginx:1.27-alpine
+    container_name: mp-web
+    restart: unless-stopped
+    ports: ["0.0.0.0:${MP_WEB_PORT:-8480}:80"]
+    volumes:
+      - ../../../apps/manager-web/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [mp_dev_net]
+
+networks:
+  mp_dev_net:
+    external: true
+    name: mp_dev_net

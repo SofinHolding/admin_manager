@@ -49,7 +49,7 @@ services:
       INTEGRATION_IDENTITY_FEED_URL: http://identity:8430
       INTEGRATION_IDENTITY_FEED_KEY: ${IDENTITY_FEED_KEY_INTEGRATION:?}
       INTEGRATION_REVEAL_KEY: ${INTEGRATION_REVEAL_KEY:?}
-      INTEGRATION_PUBLIC_BASE_URL: http://127.0.0.1:8400   # Tool gọi qua gateway
+      INTEGRATION_PUBLIC_BASE_URL: ${INTEGRATION_PUBLIC_BASE_URL:-http://127.0.0.1:8400}   # Tool gọi qua gateway
 
   integration:
     <<: *svc
@@ -104,6 +104,7 @@ services:
     ports: ["127.0.0.1:8400:8400"]
     environment:
       GATEWAY_ENV: dev
+      GATEWAY_TRUSTED_PROXIES: ${GATEWAY_TRUSTED_PROXIES:-}   # CIDR của reverse proxy đứng trước (LAN: infra/deploy/lan)
       GATEWAY_UPSTREAM_IDENTITY: http://identity:8430
       GATEWAY_UPSTREAM_INTEGRATION: http://integration:8431
       GATEWAY_UPSTREAM_ANALYTICS: http://analytics:8432
