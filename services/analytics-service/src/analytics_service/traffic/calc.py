@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from analytics_service.dates import days_between
-from analytics_service.readmodels.aggregate import (content_by_day, content_views_by_entity_day, daily_by_day,
-                                                     daily_views_by_entity_day)
+from analytics_service.readmodels.aggregate import (
+    content_by_day,
+    content_views_by_entity_day,
+    daily_by_day,
+    daily_views_by_entity_day,
+    videos_by_day,
+)
 from analytics_service.readmodels.dataset import Dataset, Selection
 
-KIND_POST_OK = "post_ok"
 _ALL_LABEL = "Tổng — cả hai nền tảng"
 _DISPLAY = {"youtube": "YouTube", "facebook": "Facebook"}   # chỉ nhãn hiển thị; không ảnh hưởng nghiệp vụ
 
@@ -22,14 +26,7 @@ def traffic_metric(ds: Dataset, sel: Selection, date_from: str, date_to: str, co
     content = content_by_day(ds, days, sel, "views")
     reactions = content_by_day(ds, days, sel, "reactions")
     comments = content_by_day(ds, days, sel, "comments")
-    posts_cnt = content_by_day(ds, days, sel, None)
-
-    posted: dict[str, int] = {}
-    for e in ds.events:
-        if e.kind != KIND_POST_OK or not sel.allows(e.ek):
-            continue
-        if e.date:
-            posted[e.date] = posted.get(e.date, 0) + 1
+    videos_day = videos_by_day(ds, days, sel)
 
     rows: list[dict] = []
     total_views = 0
@@ -37,8 +34,7 @@ def traffic_metric(ds: Dataset, sel: Selection, date_from: str, date_to: str, co
     for d in days:
         yt_v, fb_v = daily.get(d), content.get(d)
         views = ((yt_v or 0) + (fb_v or 0)) if (yt_v is not None or fb_v is not None) else None
-        pd = posts_cnt.get(d)
-        videos = pd if pd is not None else posted.get(d, 0)
+        videos = videos_day[d]
         rows.append({"date": d, "views": views, "interactions": reactions.get(d) or 0,
                      "comments": comments.get(d) or 0, "videos": videos})
         if views is not None:

@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from analytics_service.dates import days_between, previous_period
-from analytics_service.readmodels.aggregate import content_by_day, daily_by_day, post_ok_events
+from analytics_service.readmodels.aggregate import (
+    content_by_day,
+    daily_by_day,
+    videos_by_day,
+)
 from analytics_service.readmodels.channels import channel_units
 from analytics_service.readmodels.dataset import Dataset, Selection
 
@@ -22,8 +26,8 @@ def summary(ds: Dataset, sel: Selection, date_from: str, date_to: str, project: 
     pdays = days_between(prev_from, prev_to)
     total_prev = _total_views(ds, pdays, sel) if pdays else 0
 
-    videos = len(post_ok_events(ds, sel, set(days), project))
-    videos_prev = len(post_ok_events(ds, sel, set(pdays), project)) if pdays else 0
+    videos = sum(videos_by_day(ds, days, sel, project).values())
+    videos_prev = sum(videos_by_day(ds, pdays, sel, project).values()) if pdays else 0
 
     managed: set = set()
     active: set = set()

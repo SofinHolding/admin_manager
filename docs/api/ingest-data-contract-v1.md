@@ -113,7 +113,8 @@ Chi tiết kiểu dữ liệu: xem schema. Cột **Bắt buộc** là tập tố
 
 ### 4.5 Activity event (sự kiện) — khóa `(external_id)`
 `external_id`, `resource_external_id`, `kind`, `occurred_date`; tùy chọn `occurred_at`, `project_key`.
-`kind = post_ok` nghĩa là một lần đăng thành công và được đếm vào "số video đăng". Sự kiện bất biến.
+`kind = post_ok` nghĩa là một lần đăng thành công. Dashboard đếm "số video đăng" theo **số bài (`content`) theo `published_date`**; event `post_ok`
+chỉ được đếm cho những ngày không có bài nào (dự phòng), nên Tool đã đẩy đủ bài thì KHÔNG cần đẩy thêm `post_ok`. Sự kiện bất biến.
 
 ### 4.6 Metric Registry (dữ liệu, không phải code)
 `views`, `reactions`, `comments` được dùng bởi Dashboard hiện tại. **`reactions` là khóa canonical mới** cần

@@ -63,7 +63,7 @@ async def test_platform_filter(seeded):
     assert core(yt) == {"total_views": 110, "total_views_prev": 0, "videos_posted": 1, "videos_posted_prev": 0,
                         "active_channels": 2, "managed_channels": 2, "days_in_range": 3}
     fb = (await seeded.get("/v1/analytics/summary", platform="facebook", **RANGE)).json()
-    assert core(fb) == {"total_views": 450, "total_views_prev": 11, "videos_posted": 4, "videos_posted_prev": 1,
+    assert core(fb) == {"total_views": 450, "total_views_prev": 11, "videos_posted": 6, "videos_posted_prev": 1,
                         "active_channels": 2, "managed_channels": 3, "days_in_range": 3}
     t = (await seeded.get("/v1/analytics/traffic", platform="youtube", **RANGE)).json()
     assert t["scope"] == "youtube" and t["scope_label"] == "YouTube"
@@ -77,12 +77,14 @@ async def test_legacy_platform_tag_native_value_means_platform(seeded):
                                                     **RANGE)).json()["scope"] == "youtube"
 
 
-async def test_project_filter_uses_bindings_and_event_project(seeded):
+async def test_project_filter_uses_bindings(seeded):
+    # `videos_posted` đếm BÀI của các kênh gắn với chủ đề (bài không mang chủ đề riêng): itl = pg1(p1,p2,p3) + pg2(p4,p6) = 5;
+    # sib = pg1(p1,p2,p3) + pg3(p5) = 4. Kỳ trước p7 thuộc pg1 nên cả hai chủ đề cùng có 1.
     itl = (await seeded.get("/v1/analytics/summary", project="itl", **RANGE)).json()
-    assert core(itl) == {"total_views": 380, "total_views_prev": 11, "videos_posted": 3, "videos_posted_prev": 1,
+    assert core(itl) == {"total_views": 380, "total_views_prev": 11, "videos_posted": 5, "videos_posted_prev": 1,
                          "active_channels": 2, "managed_channels": 2, "days_in_range": 3}
     sib = (await seeded.get("/v1/analytics/summary", project="sib", **RANGE)).json()
-    assert core(sib) == {"total_views": 420, "total_views_prev": 11, "videos_posted": 1, "videos_posted_prev": 0,
+    assert core(sib) == {"total_views": 420, "total_views_prev": 11, "videos_posted": 4, "videos_posted_prev": 1,
                          "active_channels": 1, "managed_channels": 2, "days_in_range": 3}
 
 
@@ -127,7 +129,7 @@ async def test_all_filters_at_once(seeded):
     params = dict(owner_account_id=OWN_A, platform="facebook", country="Chile", project="itl", group_id=gid,
                   platform_tag="tiktok", **RANGE)
     s = (await seeded.get("/v1/analytics/summary", **params)).json()
-    assert core(s) == {"total_views": 350, "total_views_prev": 11, "videos_posted": 2, "videos_posted_prev": 1,
+    assert core(s) == {"total_views": 350, "total_views_prev": 11, "videos_posted": 3, "videos_posted_prev": 1,
                        "active_channels": 1, "managed_channels": 1, "days_in_range": 3}
     top = (await seeded.get("/v1/analytics/top-channels", **params)).json()["items"]
     assert [(i["id"], i["country"], i["views"]) for i in top] == [("pg1", "Chile", 350)]

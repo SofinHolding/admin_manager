@@ -6,5 +6,6 @@ responsibility: summary: tổng lượt xem, video đăng, kênh quản lý/ho�
 boundary: chỉ import từ chính service này và packages dùng chung (manager_observability, manager_contracts).
 
 Port RIÊNG từ công thức `stats_core.summary` của legacy (không import legacy). Lượt xem kỳ trước = kỳ liền kề cùng số ngày.
-`videos_posted` = số event `post_ok`. Kênh quản lý/hoạt động theo cờ managed/active của resource (cặp (kênh, chủ đề)).
+`videos_posted` = số bài đăng theo `published_date` (cùng định nghĩa với biểu đồ traffic: `readmodels.aggregate.videos_by_day`);
+ngày chưa có bài nào thì dùng số event `post_ok`. Kênh quản lý/hoạt động theo cờ managed/active của resource (cặp (kênh, chủ đề)).
 """

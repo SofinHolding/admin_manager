@@ -85,3 +85,15 @@ def post_ok_events(ds: Dataset, sel: Selection, days: set[str], project: str = "
         out.append(e)
     return out
 
+
+def videos_by_day(ds: Dataset, days: list[str], sel: Selection, project: str = "") -> dict[str, int]:
+    """Số video (bài) đăng mỗi ngày — MỘT định nghĩa cho cả thẻ KPI lẫn biểu đồ traffic.
+
+    Ngày đăng lấy từ `published_date` của bài trong `content`; ngày chưa có bài nào thì dùng số event `post_ok` của
+    ngày đó (Tool chỉ đẩy nhật ký đăng bài, không đẩy bài)."""
+    posts = content_by_day(ds, days, sel, None)
+    events: dict[str, int] = {}
+    for e in post_ok_events(ds, sel, set(days), project):
+        events[e.date] = events.get(e.date, 0) + 1
+    return {d: (posts[d] if posts[d] is not None else events.get(d, 0)) for d in days}
+

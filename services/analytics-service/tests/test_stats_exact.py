@@ -7,6 +7,8 @@ Fixture (owner A, ngày 2026-10-01..03; B là người khác):
             pg3(Peru; Sible nhưng liên kết TẮT) p5=70/7/7 (10-03)
   YouTube : ch1(Peru) 10-01=40, 10-02=0 ; ch2(quốc gia trống) 10-01=60, 10-03=10
   Sự kiện post_ok: e1(10-01) e2(10-02) e3(10-02) e4(10-03) e5(10-01) | post_fail e6 | trước kỳ: e7(09-30)
+  `videos_posted` = SỐ BÀI theo ngày đăng (như biểu đồ traffic), ngày không có bài mới lấy event: 01-03/10 có 6 bài
+  (p1,p2 | p3,p4 | p5,p6) => 6; kỳ trước chỉ có p7 (09-30) => 1. Event post_ok chỉ còn là nguồn dự phòng.
 """
 
 import pytest
@@ -24,7 +26,7 @@ async def test_summary_is_exact(seeded):
     body = r.json()
     assert {k: body[k] for k in ("total_views", "total_views_prev", "videos_posted", "videos_posted_prev",
                                  "active_channels", "managed_channels", "days_in_range")} == {
-        "total_views": 560, "total_views_prev": 11, "videos_posted": 5, "videos_posted_prev": 1,
+        "total_views": 560, "total_views_prev": 11, "videos_posted": 6, "videos_posted_prev": 1,
         "active_channels": 4, "managed_channels": 5, "days_in_range": 3}
     assert body["linked"] is True
 

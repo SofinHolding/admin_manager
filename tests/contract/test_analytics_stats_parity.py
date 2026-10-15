@@ -15,6 +15,9 @@ KHÁC BIỆT CÓ CHỦ ĐÍCH (đều có assertion riêng bên dưới, không 
       legacy chỉ lọc lượt xem. Parity có lọc quốc gia vì vậy chỉ so các phần lượt xem/traffic/top.
   D3. `views-by-country` của analytics có thêm `ignored_filters` (additive), `filter`, `freshness` ở mọi response (additive).
   D4. `top-channels` đồng hạng: thứ tự do analytics quyết định (ORDER BY ổn định); dữ liệu mẫu tránh đồng hạng.
+  D5. `videos_posted` của summary: legacy chỉ đếm event `post_ok`; analytics đếm SỐ BÀI theo `published_date` (cùng định nghĩa với
+      "Số video" của biểu đồ traffic), ngày không có bài nào mới lấy event `post_ok` làm dự phòng. Nhờ vậy Tool chỉ cần đẩy
+      bài (content) là thẻ KPI có số, không bắt buộc đẩy thêm nhật ký đăng bài.
 """
 
 from __future__ import annotations
@@ -191,9 +194,12 @@ def drop_additive(body: dict) -> dict:
 async def test_summary_parity_with_documented_difference_for_managed_channels(legacy, analytics):
     old = await legacy.summary(FROM, TO)
     new = drop_additive(await get(analytics, "summary"))
-    for key in ("total_views", "total_views_prev", "videos_posted", "videos_posted_prev", "days_in_range"):
+    for key in ("total_views", "total_views_prev", "videos_posted_prev", "days_in_range"):
         assert new[key] == old[key], key
     assert old["total_views"] > 0 and old["videos_posted"] == 6 and old["total_views_prev"] == 18   # fixture có ý nghĩa
+    # D5: legacy đếm 6 event post_ok trong kỳ; analytics đếm 12 bài (3+2+2+1+1+1+1+1 ở page1..8, 01-08/10) + 1 event dự phòng
+    # của 08/10 (ngày không có bài nào) = 13. Kỳ trước cả hai đều bằng 1 (bài p7 và event e6 cùng ngày 30/09).
+    assert new["videos_posted"] == 13
     # D1: analytics đếm cả kênh YouTube quản lý
     assert (old["managed_channels"], old["active_channels"]) == (7, 5)
     assert new["managed_channels"] == old["managed_channels"] + N_YT
