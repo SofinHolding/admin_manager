@@ -300,10 +300,15 @@ async def test_delta_snapshot_and_scopeless_full_never_infer_removed(env):
 
 
 async def test_removal_never_touches_records_owned_by_another_client_or_owner(env):
-    a = await env.tool()
-    a2 = await env.tool(user={"sub": a.owner, "headers": env.user(sub=a.owner)["headers"]})   # cùng owner, client khác
-    b = await env.tool()
+    # Cùng owner, client khác: trường hợp thật là client personal cũ bị migration 0008 tạm dừng (dedupe) rồi owner có
+    # Tool cá nhân mới — dữ liệu client cũ vẫn còn trong kho canonical.
+    a2 = await env.tool()
     await ingest_full(a2, resources=[res("shared"), res("only_a2")], obs=0)
+    await env.rows("UPDATE integration_clients SET status = 'suspended', suspended_by = 'migration' WHERE id = $1",
+                   a2.client_id)
+    a = await env.tool(user={"sub": a2.owner, "headers": env.user(sub=a2.owner)["headers"]})
+    assert a.client_id != a2.client_id
+    b = await env.tool()
     await ingest_full(b, resources=[res("only_b")], obs=0)
     await ingest_full(a, resources=[res("only_a")], obs=5)                 # full scope resources của client a
     removed = {i["external_id"] for i in (await canonical(env, "resources"))["items"] if i["removed"]}

@@ -25,7 +25,7 @@ async def types(env):
 # ── Handshake ───────────────────────────────────────────────────────────────────
 
 async def test_handshake_returns_owner_from_credential_and_intersects_capabilities(env):
-    tool = await env.tool(platforms=["facebook", "youtube"])
+    tool = await env.tool(platforms=["facebook", "youtube"], handshake=False)
     body = {"installation": {"device_id": "dev-A", "hostname": "PC-1", "os": "windows", "app_version": "2.4.0"},
             "tool": {"tool_name": "Ten Tool Tuy Y", "contract_version": "2026-10-01"},
             "platforms": ["facebook"], "capabilities": ["resources.push", "metrics.push", "jobs.pull", "browser.automation"]}
@@ -39,25 +39,27 @@ async def test_handshake_returns_owner_from_credential_and_intersects_capabiliti
     assert "server_time" in d and "snapshots:write" in d["allowed_scopes"]
     # tool_name chỉ là metadata: không đổi tên client, không ảnh hưởng quyền
     assert (await env.scalar("SELECT tool_name FROM integration_clients WHERE id = $1", tool.client_id)) != "Ten Tool Tuy Y"
-    # Không có platforms => trả toàn bộ platform được phép
+    # Không có platforms => trả toàn bộ platform được phép (provision cá nhân cấp MỌI platform đang bật)
     all_p = (await tool.post(HS, {"installation": {"device_id": "dev-A"}})).json()["data"]
-    assert all_p["allowed_platforms"] == ["facebook", "youtube"]
+    assert all_p["allowed_platforms"] == ["facebook", "instagram", "tiktok", "youtube"]
 
 
-async def test_handshake_is_idempotent_per_device_and_separates_devices(env):
-    tool = await env.tool()
+async def test_handshake_is_idempotent_per_device_and_rejects_second_device(env):
+    """1 credential : 1 thiết bị — cùng thiết bị thì idempotent; thiết bị khác => 409 CREDENTIAL_DEVICE_BOUND
+    (đổi máy phải xoay khoá, không tự tạo installation thứ hai trên cùng credential)."""
+    tool = await env.tool(handshake=False)
     a1 = (await tool.post(HS, {"installation": {"device_id": "dev-A", "app_version": "1"}})).json()["data"]
     a2 = (await tool.post(HS, {"installation": {"device_id": "dev-A", "app_version": "2"}})).json()["data"]
-    b = (await tool.post(HS, {"installation": {"device_id": "dev-B"}})).json()["data"]
     assert a1["installation_id"] == a2["installation_id"] and a2["installation_created"] is False
-    assert b["installation_id"] != a1["installation_id"]
     row = (await env.rows("SELECT app_version, last_ip FROM installations WHERE id = $1", a1["installation_id"]))[0]
     assert row["app_version"] == "2" and row["last_ip"] == "10.1.0.1"
-    assert await env.scalar("SELECT count(*) FROM installations") == 2
+    r = await tool.post(HS, {"installation": {"device_id": "dev-B"}})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "CREDENTIAL_DEVICE_BOUND"
+    assert await env.scalar("SELECT count(*) FROM installations") == 1
 
 
 async def test_handshake_rejects_owner_fields_and_unknown_fields(env):
-    tool = await env.tool()
+    tool = await env.tool(handshake=False)
     for bad in ({"installation": {"device_id": "d"}, "owner_account_id": "acc_x"},
                 {"installation": {"device_id": "d", "owner_account_id": "acc_x"}},
                 {"installation": {"device_id": "d"}, "bogus": 1}, {"installation": {}}, {}):

@@ -29,11 +29,13 @@
       "database": "identity_db",
       "responsibility": "Nguồn sự thật duy nhất cho account, đăng nhập/đăng ký, token, role, permission, registration key và OIDC.",
       "public_prefixes": [
-        "/v1/auth",
+        "/.well-known",
+        "/oauth",
         "/v1/accounts",
         "/v1/admin/accounts",
-        "/.well-known",
-        "/oauth"
+        "/v1/admin/oidc",
+        "/v1/admin/permissions",
+        "/v1/auth"
       ],
       "owned_tables": [
         "accounts",
@@ -67,10 +69,7 @@
         "account.permission_changed",
         "session.revoked"
       ],
-      "consumes": [
-        "integration.client.provisioned",
-        "integration.client.provision_failed"
-      ],
+      "consumes": [],
       "modules": {
         "auth": {
           "phase": "1.2",
@@ -82,7 +81,7 @@
         },
         "registration_keys": {
           "phase": "1.2",
-          "responsibility": "invite/registration key, integration_policy, allowed_apps"
+          "responsibility": "invite/registration key, preset (role + capability), allowed_apps"
         },
         "tokens": {
           "phase": "1.4",
@@ -107,10 +106,6 @@
         "notifications": {
           "phase": "1.2",
           "responsibility": "adapter gửi email (verify, reset); interface tách được thành service riêng"
-        },
-        "feed_consumer": {
-          "phase": "1.7",
-          "responsibility": "kéo feed Integration để cập nhật kết quả provisioning client"
         }
       }
     },
@@ -164,14 +159,14 @@
         "snapshot.committed",
         "resource.changed",
         "integration.client.provisioned",
-        "integration.client.provision_failed",
         "credential.revoked"
       ],
       "consumes": [
         "account.registered",
         "account.verified",
         "account.status_changed",
-        "account.deleted"
+        "account.deleted",
+        "account.permission_changed"
       ],
       "modules": {
         "clients": {
@@ -224,7 +219,11 @@
         },
         "provisioning": {
           "phase": "2.6",
-          "responsibility": "tạo client từ event account.registered, báo kết quả"
+          "responsibility": "Tool cá nhân từ capability:tool_integration (account.permission_changed): cấp => client personal + khoá chờ chủ nhận; thu hồi => tạm dừng + thu hồi khoá"
+        },
+        "guide": {
+          "phase": "2",
+          "responsibility": "Connection Guide /v1/integrations/me/* cho chủ Tool cá nhân: endpoint máy theo scope khoá, schema, mã lỗi, snapshot gần nhất"
         },
         "audit": {
           "phase": "2.2",

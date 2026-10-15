@@ -100,11 +100,11 @@ async def stack():
     settings = iconf.Settings(
         port=8431, log_level="INFO", database_url=idn_dsn, env="test", issuer=iconf.ISSUER, audience=iconf.AUDIENCE,
         jwks_url=iconf.JWKS_URL, feed_keys=(("analytics", iconf.FEED_KEY_ANALYTICS), ("identity", iconf.FEED_KEY_IDENTITY)),
-        maintenance_interval_s=0, provisioning_poll_s=0.0)
+        maintenance_interval_s=0, provisioning_poll_s=0.0, reveal_key=iconf.REVEAL_KEY)
     iapp = create_integration_app(settings, database=idb, verifier=iconf.build_verifier(identity), now=clock, clock=mono)
     ihttp = httpx.AsyncClient(transport=httpx.ASGITransport(app=iapp, raise_app_exceptions=False),
                               base_url="http://integration.test", headers={"X-Real-IP": "10.9.0.1"})
-    env = iconf.Env(http=ihttp, db=idb, identity=identity, clock=clock)
+    env = iconf.Env(http=ihttp, db=idb, identity=identity, clock=clock, app=iapp)
 
     await analytics_migrate.run(analytics_dsn())
     adb = AnalyticsDb(analytics_dsn(), max_size=6)

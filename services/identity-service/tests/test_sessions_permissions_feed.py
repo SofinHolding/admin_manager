@@ -158,11 +158,12 @@ async def test_account_lifecycle_emits_events_in_order(client, db, mailer):
     await client.delete(f"/v1/admin/users/{u['id']}", headers=a["auth"])
     body = (await feed(client, limit=500)).json()
     mine = [e for e in body["events"] if e["data"].get("account_id") == u["id"]]
-    # Phase 2: đăng ký tạo thêm 2 permission_changed cho default capabilities (dashboard_access, web_access)
+    # Phase 2: đăng ký tạo thêm 3 permission_changed cho default capabilities (dashboard_access, manual_channel_mgmt, web_access)
     types = [e["type"] for e in mine]
     assert types == [
         "account.registered",
-        "account.permission_changed", "account.permission_changed",  # default caps (sorted: dashboard, web)
+        "account.permission_changed", "account.permission_changed", "account.permission_changed",
+        # default caps (sorted: dashboard_access, manual_channel_mgmt, web_access)
         "account.verified", "account.status_changed", "session.revoked",
         "account.permission_changed",                                  # reward:access
         "account.role_changed", "session.revoked", "account.profile_updated",
@@ -171,8 +172,8 @@ async def test_account_lifecycle_emits_events_in_order(client, db, mailer):
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
     reg = mine[0]
     assert reg["data"] == {"account_id": u["id"], "username": "vong_doi_su_kien", "role": "viewer", "status": "pending"}
-    assert mine[4]["data"] == {"account_id": u["id"], "status": "suspended", "previous": "active"}
-    assert mine[6]["data"] == {"account_id": u["id"], "permission": "reward:access", "granted": True}
+    assert mine[5]["data"] == {"account_id": u["id"], "status": "suspended", "previous": "active"}
+    assert mine[7]["data"] == {"account_id": u["id"], "permission": "reward:access", "granted": True}
 
 
 async def test_events_never_contain_pii_or_secrets(client, db, mailer):

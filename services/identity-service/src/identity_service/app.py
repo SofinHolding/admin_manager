@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse
 from manager_observability import create_service_app
 
 from identity_service import SERVICE_NAME, __version__, migrate
-from identity_service.accounts.router import me_router as accounts_me_router, router as users_router
 from identity_service.accounts.capabilities import router as capabilities_router
+from identity_service.accounts.router import router as users_router
 from identity_service.accounts.service import AccountAdminService
 from identity_service.auth.ratelimit import RateLimiter
 from identity_service.auth.router import router as auth_router
@@ -27,23 +27,22 @@ from identity_service.config import Settings, load_settings, require_serving_con
 from identity_service.container import Container
 from identity_service.db import Database
 from identity_service.errors import DomainError
-from identity_service.feed_consumer.consumer import IntegrationFeedConsumer
 from identity_service.notifications.adapters import build_mailer
+from identity_service.notifications.port import Mailer
 from identity_service.oidc.admin_router import router as oidc_admin_router
 from identity_service.oidc.backchannel import BackchannelWorker
 from identity_service.oidc.clients import ClientService
 from identity_service.oidc.router import router as oidc_router
 from identity_service.oidc.service import OidcService
-from identity_service.notifications.port import Mailer
 from identity_service.outbox.router import router as feed_router
 from identity_service.permissions.router import router as permissions_router
 from identity_service.permissions.service import PermissionService
-from identity_service.tokens.keys import KeyStore
-from identity_service.tokens.router import router as jwks_router
-from identity_service.tokens.service import TokenService
 from identity_service.registration_keys.router import router as keys_router
 from identity_service.registration_keys.service import RegistrationKeyService
 from identity_service.security import utcnow
+from identity_service.tokens.keys import KeyStore
+from identity_service.tokens.router import router as jwks_router
+from identity_service.tokens.service import TokenService
 
 logger = logging.getLogger("identity.app")
 
@@ -76,8 +75,6 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
         container = app.state.container
         if settings.backchannel_enabled and container.keystore is not None:
             background.append(asyncio.create_task(container.backchannel.run_forever(), name="oidc-backchannel"))
-        if container.feed_consumer.enabled:
-            background.append(asyncio.create_task(container.feed_consumer.run_forever(), name="integration-feed"))
         yield
         for task in background:
             task.cancel()
@@ -99,7 +96,6 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
         oidc=OidcService(db, settings, auth_service, tokens, now=now),
         oidc_clients=ClientService(db, settings.env, now=now),
         backchannel=BackchannelWorker(db, settings, tokens, now=now),
-        feed_consumer=IntegrationFeedConsumer(db, settings, now=now),
         keys=RegistrationKeyService(db, now=now),
         accounts_admin=AccountAdminService(db, now=now),
         permissions=PermissionService(db, now=now), tokens=tokens, keystore=keystore,
@@ -128,7 +124,6 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
     app.include_router(auth_router)
     app.include_router(keys_router)
     app.include_router(users_router)
-    app.include_router(accounts_me_router)
     app.include_router(capabilities_router)
     app.include_router(oidc_router)
     app.include_router(oidc_admin_router)

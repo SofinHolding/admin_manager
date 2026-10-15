@@ -41,10 +41,10 @@ class ResourceService:
         totals = {"created": 0, "updated": 0, "unchanged": 0, "stale_ignored": dupes}
         for platform in sorted({s.payload["platform"] for s in staged}):
             group = [s for s in staged if s.payload["platform"] == platform]
-            stats = await merge.merge_resources(conn, owner=ctx.owner_account_id, client_id=ctx.client_id,
+            stats = await merge.merge_resources(conn, owner=ctx.effective_owner, client_id=ctx.client_id,
                                                 platform=platform, items=group, snapshot_id=None, now=now,
                                                 origin="tool")
-            await merge.emit_resource_changes(conn, ctx.owner_account_id, platform, stats)
+            await merge.emit_resource_changes(conn, ctx.effective_owner, platform, stats)
             for key in totals:
                 totals[key] += getattr(stats, key)
             for index, rid, verdict in stats.outcomes:
@@ -57,6 +57,90 @@ class ResourceService:
                 "stale_ignored": totals["stale_ignored"], "rejected": len(rejections),
                 "rejections": [r.as_dict() for r in sorted(rejections, key=lambda r: r.index)],
                 "items": result_items}
+
+    async def list_for_owner(
+        self, ctx: MachineContext, *, platform: str = "",
+        resource_type: str = "", owner_account_id: str = "",
+    ) -> dict:
+        """Trả resource.
+
+        fallback_tool (shared operator key):
+          → thấy TẤT CẢ owner, kèm owner_username (LEFT JOIN account_projection).
+          → owner_account_id param dùng để lọc thêm khi pull từng user.
+        Các client_kind khác:
+          → chỉ thấy resource của chính owner_account_id của key.
+        """
+        is_shared = ctx.client_kind == "fallback_tool"
+        # owner filter: shared + có param → lọc param; shared + không param → tất cả; không shared → chỉ self
+        effective_owner = owner_account_id if (is_shared and owner_account_id) else (
+            "" if is_shared else ctx.owner_account_id
+        )
+
+        if is_shared:
+            sql = (
+                "SELECT r.id, r.platform, r.resource_type, r.external_id, "
+                "r.owner_account_id, "
+                "COALESCE(p.username, '') AS owner_username, "
+                "COALESCE(r.data->>'display_name','') AS display_name, "
+                "COALESCE(r.data->>'username','') AS username, "
+                "COALESCE(r.data->>'url','') AS url, "
+                "r.state, "
+                "COALESCE(r.data->'extensions'->'legacy'->>'mapping_status','unmapped') AS mapping_status, "
+                "r.execution_mode, (r.state = 'active') AS enabled "
+                "FROM resources r "
+                "LEFT JOIN account_projection p ON p.account_id = r.owner_account_id "
+                "WHERE NOT r.removed "
+                "AND ($1 = '' OR r.owner_account_id = $1) "
+                "AND ($2 = '' OR r.platform = $2) "
+                "AND ($3 = '' OR r.resource_type = $3) "
+                "ORDER BY COALESCE(p.username,''), r.platform, COALESCE(r.data->>'display_name','')"
+            )
+            params = (effective_owner, platform, resource_type)
+        else:
+            sql = (
+                "SELECT id, platform, resource_type, external_id, "
+                "owner_account_id, '' AS owner_username, "
+                "COALESCE(data->>'display_name','') AS display_name, "
+                "COALESCE(data->>'username','') AS username, "
+                "COALESCE(data->>'url','') AS url, "
+                "state, "
+                "COALESCE(data->'extensions'->'legacy'->>'mapping_status','unmapped') AS mapping_status, "
+                "execution_mode, (state = 'active') AS enabled "
+                "FROM resources "
+                "WHERE owner_account_id = $1 AND NOT removed "
+                "AND ($2 = '' OR platform = $2) "
+                "AND ($3 = '' OR resource_type = $3) "
+                "ORDER BY platform, COALESCE(data->>'display_name','')"
+            )
+            params = (ctx.owner_account_id, platform, resource_type)
+
+        async with self._db.connection() as conn:
+            rows = await conn.fetch(sql, *params)
+        return {
+            "items": [dict(r) for r in rows],
+            "is_shared": is_shared,
+            "owner_account_id": ctx.owner_account_id,
+        }
+
+    async def list_resource_owners(self, ctx: MachineContext) -> dict:
+        """Danh sách owner có resource.
+
+        fallback_tool: tất cả owner trong hệ thống.
+        Khác: chỉ trả chính owner của key (một user duy nhất).
+        """
+        if ctx.client_kind != "fallback_tool":
+            return {"users": [{"id": ctx.owner_account_id, "username": "", "resource_count": 0}]}
+        async with self._db.connection() as conn:
+            rows = await conn.fetch(
+                "SELECT r.owner_account_id AS id, COALESCE(p.username, '') AS username, "
+                "COUNT(r.id) AS resource_count "
+                "FROM resources r "
+                "LEFT JOIN account_projection p ON p.account_id = r.owner_account_id "
+                "WHERE NOT r.removed "
+                "GROUP BY r.owner_account_id, p.username "
+                "ORDER BY COALESCE(p.username,''), r.owner_account_id",
+            )
+        return {"users": [dict(r) for r in rows]}
 
     async def admin_set_state(self, resource_id: str, state: str) -> dict:
         """Admin bật/tắt resource (đổi ngoài snapshot => resource.changed)."""

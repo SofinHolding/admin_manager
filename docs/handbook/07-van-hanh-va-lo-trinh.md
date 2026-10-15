@@ -17,7 +17,6 @@ Lệnh vận hành đã có (đều là job riêng, không chạy tự động l
 | `python -m <identity_service\|integration_service\|analytics_service>.migrate` | áp migration forward-only |
 | `python -m identity_service.keys rotate` / `list` | xoay / liệt kê khóa ký |
 | `python -m identity_service.oidc_clients seed-dev` | seed OIDC client `manager-web` (DEV) |
-| `python -m identity_service.feed_consumer replay` | replay dead-letter (consumer của Identity) |
 | `python -m integration_service.provisioning replay` | replay dead-letter provisioning |
 | `PYTHONPATH=src python -m reward_service.identity_link.consumer replay` (trong `services/reward-service/`) | replay dead-letter của Reward |
 | `POST /v1/analytics/admin/{rebuild,reconcile,sync}`, `GET/POST …/admin/dead-letters[/replay]` | dựng lại / đối soát / đồng bộ / xử lý dead-letter của Analytics (cần admin) |

@@ -14,11 +14,9 @@ def _subject(account_id: str) -> str:
     return f"acc:{account_id}"
 
 
-async def registered(conn: asyncpg.Connection, account: dict, provisioning: dict | None = None) -> None:
+async def registered(conn: asyncpg.Connection, account: dict) -> None:
     data = {"account_id": account["id"], "username": account["username"], "role": account["role"],
             "status": account["status"]}
-    if provisioning:
-        data["provisioning"] = provisioning
     await outbox.append(conn, type="account.registered", subject=_subject(account["id"]), data=data)
 
 

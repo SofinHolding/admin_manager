@@ -54,7 +54,7 @@ Nhận dạng platform/metric/project **không có trong code**: `platform_regis
 
 | Event | Phát bởi | Nhận bởi |
 |---|---|---|
-| `account.registered` (+`provisioning` nếu đăng ký kèm Tool) | identity | integration, analytics, reward |
+| `account.registered` | identity | integration, analytics, reward |
 | `account.verified` | identity | integration |
 | `account.status_changed` | identity | integration, analytics, reward |
 | `account.role_changed`, `account.profile_updated` | identity | analytics, reward |

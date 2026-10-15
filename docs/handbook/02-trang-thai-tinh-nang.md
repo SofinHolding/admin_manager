@@ -16,7 +16,7 @@ Số liệu test tại thời điểm viết: arch 117 · contract 38 · identit
 | 1.4 | RS256/JWKS, phiên `sid` thu hồi được, permission, transactional outbox + feed | ✅ | |
 | 1.5 | Reward bỏ bảng `accounts`/JWT secret chung | ✅ (làm ở Phase 4) | Đã chuyển vào `services/reward-service` với skeleton chuẩn (`src/reward_service/…`) |
 | 1.6 | OIDC (authorize + PKCE, token, userinfo, introspect, revoke, logout, back-channel) | ✅ | Chưa có Relying Party thật nào dùng (ngoài test) |
-| 1.7 | Đăng ký kèm integration + provisioning client tự động | ✅ | |
+| 1.7 | Đăng ký kèm integration + provisioning client tự động | ↩️ thay thế | Gỡ 2026-10-14: Tool cá nhân nay sinh từ capability `tool_integration` (preset `viewer_tool` hoặc admin cấp) — xem `api/integration-api-v1.md` §1-2 |
 | 2 | integration-service core | ✅ | |
 | 2b | jobs/lease + legacy ACL (26 operation) | ✅ / 🟡 | Thiếu canonicalizer `documents→snapshot` (ingest-contract §7) ⛔🔒 |
 | 3 | analytics-service | ✅ | Parity 10 ca với `stats_core` legacy |
@@ -32,13 +32,12 @@ Số liệu test tại thời điểm viết: arch 117 · contract 38 · identit
 |---|:-:|---|
 | Đăng ký bằng invite key, xác thực email, đăng nhập, refresh (xoay), logout, quên/đặt lại/đổi mật khẩu (mã 6 số), sửa hồ sơ | ✅ | Giữ nguyên contract legacy (`{detail}`) |
 | Admin: danh sách/khóa/sửa/xóa user; invite key (role, max_uses, hết hạn) | ✅ | |
-| `integration_policy` + `allowed_apps` trên invite key; đăng ký kèm Tool | ✅ | Policy chỉ kiểm định dạng, **không** gọi Platform Registry (cấm sync liên service) |
+| Preset trên invite key (`viewer/viewer_tool/dash_admin/admin/discord` → role + capability); `PATCH /v1/admin/keys/{key}`; `GET /v1/admin/keys/presets` | ✅ | Thay thế `integration_policy`/đăng ký kèm Tool (gỡ 2026-10-14) — khoá Tool cá nhân nay sinh từ capability `tool_integration` (integration-service) |
 | Token RS256 + JWKS + xoay khóa (`python -m identity_service.keys rotate`), khóa ký mã hóa Fernet trong DB | ✅ | |
 | Phiên `sid`, thu hồi khi logout/khóa/đổi mật khẩu/đổi role | ✅ | Service khác verify offline ⇒ độ trễ thu hồi ≤ TTL token + feed `session.revoked` |
 | Permission catalog + cấp/thu (`reward:access`, `reward:admin`…), shim role `discord`→`reward:access` | ✅ | |
 | OIDC provider + hosted login + CSRF + consent (third-party) + back-channel logout (chống SSRF) | ✅ | Consent không được ghi nhớ; refresh trượt (chưa hạn tuyệt đối cho family) |
 | Outbox + `/internal/v1/feed` (khóa theo bên đọc) | ✅ | |
-| Consumer feed của Integration (kết quả provisioning) | ✅ | |
 | `legacy_sync` shadow (legacy → identity_db) + kiểm parity | ✅ | Chưa chạy trên dữ liệu production 🔒 |
 | Gửi email thật (SMTP) | 🟡 | Adapter SMTP có; DEV dùng `LogMailer` (in token ra log khi `IDENTITY_ENV=dev`). Chưa cấu hình SMTP thật |
 | TTL access token 600 s (quyết định D12) | 🟡 | Hiện **900 s**; test parity khóa giá trị 900. Đổi qua `IDENTITY_ACCESS_TOKEN_TTL_S` + sửa test có chủ đích |
@@ -47,14 +46,17 @@ Số liệu test tại thời điểm viết: arch 117 · contract 38 · identit
 ### integration-service
 | Tính năng | | Ghi chú |
 |---|:-:|---|
-| Client / credential (`mpk_<key_id>.<secret>`, lưu hash, hiện 1 lần, xoay, thu hồi, TTL tùy chọn), scope | ✅ | Chỉ owner cấp credential; client PATCH chỉ admin |
-| Handshake + installation | ✅ | |
+| Client / credential (`mpk_<key_id>.<secret>`, lưu hash, hiện 1 lần, xoay, thu hồi, TTL tùy chọn), scope | ✅ | Client PATCH chỉ admin |
+| Tool cá nhân (`ownership=personal`) tự sinh từ `capability:tool_integration`, khoá chờ chủ nhận (`/me/credential/reveal`, Fernet, hết hạn 7 ngày); thu hồi capability ⇒ tạm dừng + thu hồi khoá | ✅ | Admin cấp/xoay hộ không thấy secret; chuyển chủ `POST /clients/{id}/transfer` (dữ liệu cũ giữ owner cũ) |
+| Công cụ dùng chung (`ownership=shared`): wizard admin `draft → config → activate → cấp khoá`; ghi dữ liệu bắt buộc `X-Delegated-Job` | ✅ | |
+| Connection guide `/me/connection-guide` + `/me/openapi.json` (endpoint theo scope khoá, schema đã resolve, mã lỗi, snapshot + rejections gần nhất) | ✅ | Cần `INTEGRATION_PUBLIC_BASE_URL` để hiện base URL |
+| Handshake + installation; **device binding** 1 khoá : 1 thiết bị, `X-Installation-Id` bắt buộc ngoài handshake | ✅ | `installation_id` không phải bí mật (giới hạn ghi ở integration-api §8) |
 | Platform/Metric Registry (dữ liệu) + admin PUT | ✅ | Thêm platform = dòng dữ liệu |
 | Project (`PUT /projects/{key}`), resource batch, resource ↔ project | ✅ | |
 | Snapshot: tạo → tải lô → commit nguyên tử; `expected_counts`, `accept_partial`, rejections, state machine, `current` | ✅ | Full snapshot chỉ suy luận `removed` trong phạm vi owner+client+platform |
 | Idempotency-Key (mọi endpoint, tùy chọn) | ✅ | Chỉ lưu response thành công, phát lại đúng byte |
 | Outbox + feed `snapshot.committed`, `resource.changed`, `credential.revoked`; canonical export `/internal/v1/canonical/{kind}` + `/summary` (checksum) | ✅ | Revision cấp dưới advisory lock |
-| Provisioning client từ event `account.registered` (+ dead-letter, replay) | ✅ | |
+| Vòng đời client theo account (`account.verified/status_changed/deleted/permission_changed`) + dead-letter, replay | ✅ | |
 | Jobs/lease cho Fallback Tool (claim `SKIP LOCKED`, lease ≤900s, heartbeat, retry/backoff, `dead`) | ✅ | Không phát event `job.*` (hợp đồng feed chưa có) |
 | Legacy ACL: `/v1/resources/*`, `/v1/ops/*`, `/v1/viewer/links*` | ✅ | Một đường ghi (cùng canonical). Khác biệt có chủ đích: `owner*` trong body → 422 |
 | Canonicalizer `documents → snapshot` + DB role `legacy_ingest_writer` | ⛔🔒 | Cần thay đổi hạ tầng và sync server |
@@ -99,7 +101,7 @@ Số liệu test tại thời điểm viết: arch 117 · contract 38 · identit
 | Chuyển sang `/v1/*` qua gateway; lõi HTTP (refresh 401 gộp một lần, timeout, abort) | ✅ | |
 | FilterContext duy nhất đồng bộ URL; hủy request cũ; banner stale/unavailable | ✅ | |
 | Đăng nhập: legacy hoặc OIDC PKCE (`VITE_AUTH_MODE`); refresh token **không** vào `localStorage` | ✅ | OIDC mới test bằng mock, chưa với Identity thật qua trình duyệt |
-| Trang quản trị: invite key (+integration_policy), permission dialog, Integration Clients (API key hiện 1 lần), đăng ký kèm Tool | ✅ | |
+| Trang quản trị: invite key (preset), permission dialog, Integration Clients (API key hiện 1 lần) | ✅ | |
 | Quét bundle không còn secret (`postbuild`) | ✅ | |
 | Thử trên trình duyệt thật với stack thật | ⛔ | Test hiện bằng jsdom + mock `fetch` |
 | Banner 503 riêng cho Reward/Integration; tách chunk bundle (~1 MB) | ⛔ | |

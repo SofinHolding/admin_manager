@@ -39,6 +39,11 @@ Không dùng chéo: token user không phải credential máy, API key không ph�
 - Header: `Authorization: Bearer mpk_...`, `X-Contract-Version: 2026-10-01` (tuỳ chọn; có mà không hỗ trợ → `CONTRACT_VERSION_UNSUPPORTED`),
   `Idempotency-Key` cho mutation.
 - **Ownership suy từ credential** (`owner_account_id` của client). Mọi trường owner trong payload bị schema từ chối.
+- **Device binding**: khoá kích hoạt cho đúng MỘT thiết bị ở `POST /v1/integrations/handshake` đầu tiên; thiết bị khác → `409 CREDENTIAL_DEVICE_BOUND`.
+  Mọi request máy khác handshake phải gửi `X-Installation-Id` = installation đã bind (chưa bind → `403 CREDENTIAL_NOT_ACTIVATED`,
+  vắng/khác → `403 INSTALLATION_MISMATCH`). Đổi máy = xoay khoá. Chi tiết: `integration-api-v1.md` §3, §8.
+- Khoá Tool cá nhân do hệ thống cấp khi tài khoản có `capability:tool_integration`; plaintext chỉ trao cho CHỦ (reveal một lần),
+  không bao giờ cho admin. Khoá của client dùng chung (`ownership=shared`) chỉ ghi dữ liệu qua `X-Delegated-Job`.
 - Scopes: `integration:handshake`, `resources:write`, `snapshots:write`, `metrics:write`, `jobs:claim`, `jobs:complete`,
   `jobs:claim:system` (chỉ `client_kind=fallback_tool` do admin cấp). Scope/platform được enforce ở service đích.
 

@@ -50,7 +50,10 @@ Collector thu thập → gửi snapshot:
   → Nhưng resource thuộc user A !
 ```
 
-**Vấn đề ownership:** Collector dùng credential của mình (owner=system_account) nhưng data phải thuộc user A.
+**Vấn đề ownership:** Collector dùng credential của mình (owner=admin chịu trách nhiệm client dùng chung) nhưng data phải thuộc user A.
+Từ 2026-10-14: client collector là `ownership=shared` (tạo qua wizard admin), mọi lệnh ghi dữ liệu THIẾU `X-Delegated-Job` bị chặn
+(`403 SHARED_CLIENT_REQUIRES_DELEGATION`) và mỗi máy collector cần MỘT khoá riêng (khoá bind 1 thiết bị ở handshake, gửi `X-Installation-Id`
+mọi request sau — `integration-api-v1.md` §3).
 
 **Giải pháp:** Thêm `resource_owner_account_id` vào job. Khi collector commit snapshot cho job này, integration service gán `owner_account_id = job.resource_owner_account_id` thay vì credential's owner.
 

@@ -7,6 +7,7 @@ import re
 
 import pytest
 from conftest import Tool
+from integration_service.clients import policy
 
 pytestmark = pytest.mark.needs_pg
 HS = "/v1/integrations/handshake"
@@ -66,7 +67,7 @@ async def test_revoked_state_is_only_disclosed_with_the_correct_secret(env):
 
 
 async def test_repeated_bad_keys_from_one_ip_get_rate_limited(env):
-    tool = await env.tool()
+    tool = await env.tool(handshake=False)
     bad = "Bearer mpk_" + "a" * 12 + "." + "b" * 43
     codes = [(await raw(env, bad)).status_code for _ in range(31)]
     assert codes[:30] == [401] * 30 and codes[30] == 429
@@ -80,7 +81,7 @@ async def test_repeated_bad_keys_from_one_ip_get_rate_limited(env):
 # ── Scope / platform ────────────────────────────────────────────────────────────
 
 async def test_scope_denial_for_every_endpoint_family(env):
-    only_hs = await env.tool(scopes=["integration:handshake"])
+    only_hs = await env.tool(kind="service", scopes=["integration:handshake"], handshake=False)
     assert (await only_hs.post(HS, hs_body())).status_code == 200
     cases = [("put", "/v1/integrations/projects/p1", {"name": "n"}),
              ("post", "/v1/integrations/resources/batch", {"items": [{"x": 1}]}),
@@ -93,7 +94,7 @@ async def test_scope_denial_for_every_endpoint_family(env):
         r = await (only_hs.get(path) if method == "get" else getattr(only_hs, method)(path, body))
         assert r.status_code == 403 and r.json()["error"]["code"] == "SCOPE_DENIED", path
         assert r.json()["error"]["details"]["required"]
-    only_snap = await env.tool(scopes=["snapshots:write"])
+    only_snap = await env.tool(kind="service", scopes=["snapshots:write"], handshake=False)
     assert (await only_snap.post(HS, hs_body())).json()["error"]["code"] == "SCOPE_DENIED"
     r = await only_snap.post("/v1/integrations/snapshots/snp_" + "0" * 32 + "/metrics", {"items": [{}]})
     assert r.json()["error"]["code"] == "SCOPE_DENIED"           # metrics cần metrics:write riêng
@@ -101,7 +102,11 @@ async def test_scope_denial_for_every_endpoint_family(env):
 
 
 async def test_platform_denial_on_every_entry_point(env):
-    tool = await env.tool(platforms=["facebook"])
+    tool = await env.tool(platforms=["facebook"], device_id="d1")
+    admin = await env.verified_user(role="admin")
+    r = await env.http.patch(f"/v1/integrations/clients/{tool.client_id}", headers=admin["headers"],
+                             json={"allowed_platforms": ["facebook"]})
+    assert r.status_code == 200, r.text
     r = await tool.post(SNAP, snap_body(platform="youtube"))
     assert r.status_code == 403 and r.json()["error"]["code"] == "PLATFORM_NOT_ALLOWED"
     assert (await tool.put("/v1/integrations/projects/p1", {"name": "n", "platform": "youtube"})).status_code == 403
@@ -137,18 +142,43 @@ async def test_snapshot_operations_recheck_platform_after_client_is_narrowed(env
 async def test_a_tool_cannot_touch_another_tools_snapshot(env):
     a, b = await env.tool(), await env.tool()
     sid = (await a.post(SNAP, snap_body())).json()["data"]["snapshot_id"]
-    same_owner = await env.tool(user={"sub": a.owner, "headers": env.user(sub=a.owner)["headers"]})
-    for t in (b, same_owner):                       # owner khác VÀ client khác của cùng owner đều không thấy
-        assert (await t.get(f"/v1/integrations/snapshots/{sid}")).status_code == 404
-        assert (await t.post(f"/v1/integrations/snapshots/{sid}/commit", {})).json()["error"]["code"] == "SNAPSHOT_NOT_FOUND"
-        r = await t.post(f"/v1/integrations/snapshots/{sid}/resources", {"items": [{"external_id": "x"}]})
-        assert r.status_code == 404
+    admin_same = env.user(sub=a.owner, role="admin")
+    r = await env.http.post("/v1/integrations/clients", headers=admin_same["headers"], json={
+        "tool_name": "Same-owner-service", "client_kind": "service",
+        "purpose": "same owner diff client fixture", "platforms": ["facebook"]})
+    assert r.status_code == 201, r.text
+    client_id = r.json()["data"]["client_id"]
+    r = await env.http.put(f"/v1/integrations/clients/{client_id}/config", headers=admin_same["headers"],
+                           json={"allowed_platforms": ["facebook"], "allowed_scopes": policy.default_scopes("service")})
+    assert r.status_code == 200, r.text
+    tool_name = r.json()["data"]["tool_name"]
+    r = await env.http.post(f"/v1/integrations/clients/{client_id}/activate", headers=admin_same["headers"],
+                            json={"confirm_tool_name": tool_name})
+    assert r.status_code == 200, r.text
+    r = await env.http.post(f"/v1/integrations/clients/{client_id}/credentials", headers=admin_same["headers"], json={})
+    assert r.status_code == 201, r.text
+    d = r.json()["data"]
+    same_owner = Tool(http=env.http, client_id=d["client_id"], owner=a.owner, key_id=d["key_id"],
+                      api_key=d["api_key"], scopes=d["scopes"])
+    hs = await env.handshake(same_owner.api_key, platforms=["facebook"])
+    same_owner.installation_id, same_owner.device_id = hs["installation_id"], hs["device_id"]
+    assert (await b.get(f"/v1/integrations/snapshots/{sid}")).status_code == 404
+    assert (await b.post(f"/v1/integrations/snapshots/{sid}/commit", {})).json()["error"]["code"] == "SNAPSHOT_NOT_FOUND"
+    r = await b.post(f"/v1/integrations/snapshots/{sid}/resources", {"items": [{"external_id": "x"}]})
+    assert r.status_code == 404
+    # Client dùng chung khác, CÙNG owner (admin tạo thay a.owner): GET vẫn lọc theo client_id nên không thấy;
+    # thao tác GHI bị chặn SỚM HƠN vì client dùng chung luôn cần X-Delegated-Job — cách ly còn chặt hơn nữa.
+    assert (await same_owner.get(f"/v1/integrations/snapshots/{sid}")).status_code == 404
+    r = await same_owner.post(f"/v1/integrations/snapshots/{sid}/commit", {})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "SHARED_CLIENT_REQUIRES_DELEGATION"
+    r = await same_owner.post(f"/v1/integrations/snapshots/{sid}/resources", {"items": [{"external_id": "x"}]})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "SHARED_CLIENT_REQUIRES_DELEGATION"
 
 
 # ── Contract version ────────────────────────────────────────────────────────────
 
 async def test_contract_version_header(env):
-    tool = await env.tool()
+    tool = await env.tool(handshake=False)
     bad = await tool.post(HS, hs_body(), headers={"X-Contract-Version": "2025-01-01"})
     assert bad.status_code == 400 and bad.json()["error"]["code"] == "CONTRACT_VERSION_UNSUPPORTED"
     ok = await tool.post(HS, hs_body(), headers={"X-Contract-Version": "2026-10-01"})
@@ -161,7 +191,7 @@ async def test_contract_version_header(env):
 
 async def test_rate_limit_per_client_with_retry_after(make_env, mono):
     env, _ = await make_env(rate_limit_per_min=3)
-    t1, t2 = await env.tool(), await env.tool()
+    t1, t2 = await env.tool(handshake=False), await env.tool(handshake=False)
     assert [(await t1.post(HS, hs_body())).status_code for _ in range(3)] == [200, 200, 200]
     r = await t1.post(HS, hs_body())
     assert r.status_code == 429 and r.json()["error"]["code"] == "RATE_LIMITED"
@@ -197,7 +227,7 @@ async def test_validation_errors_never_echo_input_values(env):
 
 async def test_inactive_client_blocks_its_keys_even_if_credentials_were_not_revoked(env):
     """Phòng thủ nhiều lớp: trạng thái client được kiểm ở MỖI request, không chỉ dựa vào việc thu hồi key."""
-    tool = await env.tool()
+    tool = await env.tool(handshake=False)
     for status in ("suspended", "deleted", "pending_email_verification"):
         await env.rows("UPDATE integration_clients SET status = $2 WHERE id = $1", tool.client_id, status)
         r = await tool.post(HS, hs_body())

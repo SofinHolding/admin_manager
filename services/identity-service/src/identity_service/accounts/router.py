@@ -5,12 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, EmailStr, Field
 
-from identity_service.accounts import integration_repository
-from identity_service.deps import current_account, get_container, require_admin
-from identity_service.errors import DomainError
+from identity_service.deps import get_container, require_admin
 
 router = APIRouter(prefix="/v1/admin", tags=["admin-users"])
-me_router = APIRouter(prefix="/v1/accounts", tags=["accounts"])
 
 
 class SetStatusBody(BaseModel):
@@ -44,15 +41,3 @@ async def update_user(user_id: str, body: UpdateUserBody, request: Request,
 @router.delete("/users/{user_id}", summary="Xoá tài khoản")
 async def delete_user(user_id: str, request: Request, admin: dict = Depends(require_admin)) -> dict:
     return await get_container(request).accounts_admin.delete(admin, user_id)
-
-
-@me_router.get("/me/integration", summary="Trạng thái Integration client được tạo kèm đăng ký")
-async def my_integration(request: Request, account: dict = Depends(current_account)) -> dict:
-    async with get_container(request).db.connection() as conn:
-        row = await integration_repository.get_for_account(conn, account["id"])
-    if not row:
-        raise DomainError(404, "Tài khoản không có yêu cầu integration", code="NOT_FOUND")
-    out = {"client_id": row["client_id"], "status": row["status"]}
-    if row["error_code"]:
-        out["error_code"] = row["error_code"]
-    return out

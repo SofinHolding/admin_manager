@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from manager_sdk import Principal
 
 from integration_service.api_models import Envelope, ResourceStateOut, ResourceStatePatch
 from integration_service.api_models import ResourceBatchOut
 from integration_service.credentials.service import MachineContext
+from integration_service.delegation import delegated
 from integration_service.deps import get_container, machine, require_super_admin, user_bearer
 from integration_service import examples as ex
 from integration_service.http_utils import error_responses, ok, ok_response, parse_json_object, raw_body_doc
@@ -26,11 +27,13 @@ _BATCH_EXAMPLE = {"items": [{"platform": "facebook", "resource_type": "page", "e
              description=("Scope `resources:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413). Khoá tự nhiên "
                           "`(owner, platform, resource_type, external_id)`; `observed_at` mới hơn thắng. Mỗi bản ghi lỗi nằm "
                           "trong `rejections` (không bỏ sót im lặng). Trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. "
-                          "Platform ngoài phạm vi => 403 `PLATFORM_NOT_ALLOWED`. Hỗ trợ `Idempotency-Key`."),
+                          "Platform ngoài phạm vi => 403 `PLATFORM_NOT_ALLOWED`. Hỗ trợ `Idempotency-Key`. Client dùng chung "
+                          "(`ownership=shared`) BẮT BUỘC kèm `X-Delegated-Job` nếu không => 403 `SHARED_CLIENT_REQUIRES_DELEGATION`."),
              openapi_extra=raw_body_doc("ResourceUpsertBatch", _BATCH_EXAMPLE),
              responses={200: ok_response(Envelope[ResourceBatchOut], "Kết quả theo bản ghi", ex.RESOURCE_BATCH),
                         **error_responses(400, 401, 403, 409, 413, 422, 429, 503)})
-async def resources_batch(request: Request, ctx: MachineContext = Depends(machine("resources:write"))):
+async def resources_batch(request: Request,
+                          ctx: MachineContext = Depends(delegated("resources:write", require_for_shared=True))):
     c = get_container(request)
     raw = await request.body()
 
@@ -51,3 +54,40 @@ async def admin_patch_resource(request: Request, resource_id: str, body: Resourc
     async with c.audit.scope(request, "resource.set_state", actor_account_id=principal.sub, resource_id=resource_id):
         result = await c.resources.admin_set_state(resource_id, body.state)
     return ok(result)
+
+
+@router.get("/resources", summary="Danh sách resource (machine)",
+            description=(
+                "Scope `jobs:claim`. "
+                "**`fallback_tool`** (key tool dùng chung): thấy TẤT CẢ owner; "
+                "`owner_account_id` để lọc thêm khi pull từng user. "
+                "**Các client khác**: chỉ thấy resource của chính key đó."
+            ),
+            responses={200: ok_response(Envelope[dict], "Danh sách resource",
+                           {"items": [], "is_shared": True, "owner_account_id": "acc_example"}),
+                       **error_responses(401, 403, 503)})
+async def list_own_resources(
+    request: Request,
+    platform: str = Query(""),
+    resource_type: str = Query(""),
+    owner_account_id: str = Query("", description="Lọc theo owner (chỉ có hiệu lực với fallback_tool key)"),
+    ctx: MachineContext = Depends(machine("jobs:claim")),
+) -> dict:
+    c = get_container(request)
+    return ok(await c.resources.list_for_owner(
+        ctx, platform=platform, resource_type=resource_type, owner_account_id=owner_account_id,
+    ))
+
+
+@router.get("/resource-owners", summary="Danh sách user có resource (machine)",
+            description=(
+                "Scope `jobs:claim`. "
+                "**`fallback_tool`**: trả tất cả owner trong hệ thống kèm số resource. "
+                "**Các client khác**: trả chính owner của key."
+            ),
+            responses={200: ok_response(Envelope[dict], "Danh sách owner",
+                           {"users": [{"id": "acc_example", "username": "alice", "resource_count": 3}]}),
+                       **error_responses(401, 403, 503)})
+async def list_resource_owners(request: Request, ctx: MachineContext = Depends(machine("jobs:claim"))) -> dict:
+    c = get_container(request)
+    return ok(await c.resources.list_resource_owners(ctx))

@@ -50,7 +50,13 @@ def test_frozen_openapi_has_every_endpoint_required_by_the_integration_api(spec)
                 ("post", "/v1/integrations/jobs/claim"), ("post", "/v1/integrations/jobs/{job_id}/complete"),
                 ("post", "/v1/integrations/jobs/{job_id}/fail"), ("post", "/v1/integrations/jobs/{job_id}/heartbeat"),
                 ("post", "/v1/integrations/jobs"), ("get", "/v1/integrations/jobs"),
-                ("get", "/v1/integrations/jobs/{job_id}"), ("post", "/v1/integrations/jobs/{job_id}/cancel")}
+                ("get", "/v1/integrations/jobs/{job_id}"), ("post", "/v1/integrations/jobs/{job_id}/cancel"),
+                # 2026-10-14: Tool cá nhân (guide/reveal) + wizard client dùng chung + chuyển chủ
+                ("get", "/v1/integrations/me/connection-guide"), ("get", "/v1/integrations/me/openapi.json"),
+                ("post", "/v1/integrations/me/credential/reveal"),
+                ("put", "/v1/integrations/clients/{client_id}/config"),
+                ("post", "/v1/integrations/clients/{client_id}/activate"),
+                ("post", "/v1/integrations/clients/{client_id}/transfer")}
     have = {(m, p) for p, ops in spec["paths"].items() for m in ops}
     assert required <= have, sorted(required - have)
 

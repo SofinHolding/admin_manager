@@ -57,14 +57,14 @@ class ProjectService:
             raise forbidden(ErrorCode.PLATFORM_NOT_ALLOWED, "Platform không nằm trong phạm vi client được phép")
         now = self._now()
         await outbox.acquire_order_lock(conn)
-        existing = await repository.get(conn, ctx.owner_account_id, project_key)
+        existing = await repository.get(conn, ctx.effective_owner, project_key)
         fields = dict(platform=body.platform, name=body.name, country_code=body.country_code, enabled=body.enabled,
                       metadata=body.metadata)
         if existing and not existing["removed"] and all(existing[k] == v for k, v in fields.items()):
             return {"created": False, "changed": False, "project": public_project(existing)}
         (rev,) = await outbox.next_revisions(conn, 1)
         if existing is None:
-            row = await repository.insert(conn, id=new_id("prj"), owner=ctx.owner_account_id, client_id=ctx.client_id,
+            row = await repository.insert(conn, id=new_id("prj"), owner=ctx.effective_owner, client_id=ctx.client_id,
                                           project_key=project_key, revision=rev, now=now, **fields)
             created = True
         else:

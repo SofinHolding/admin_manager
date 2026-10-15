@@ -36,10 +36,12 @@ ALL_CAPABILITIES_DESC: dict[str, str] = {
 }
 
 # Mục 3 của design spec: capability mặc định cấp lúc đăng ký theo role.
+# viewer có manual_channel_mgmt (tự nhập kênh); admin KHÔNG có tool_integration (khoá Tool cá nhân chỉ sinh
+# từ capability đó — admin không tự động có, phải được cấp riêng như mọi tài khoản khác).
 DEFAULT_CAPABILITIES: dict[str, tuple[str, ...]] = {
-    "viewer": (CAP_WEB_ACCESS, CAP_DASHBOARD_ACCESS),
+    "viewer": (CAP_WEB_ACCESS, CAP_DASHBOARD_ACCESS, CAP_MANUAL_CHANNEL_MGMT),
     "dash_admin": (CAP_WEB_ACCESS, CAP_DASHBOARD_ACCESS),
-    "admin": ALL_CAPABILITIES,
+    "admin": tuple(c for c in ALL_CAPABILITIES if c != CAP_TOOL_INTEGRATION),
     "discord": (),
 }
 

@@ -115,7 +115,7 @@ async def test_failed_requests_are_not_stored_so_a_fixed_retry_works(env):
     assert bad.status_code == 422
     good = await tool.post(S, snap_body(), idem=k)                           # cùng key, body đã sửa => chạy bình thường
     assert good.status_code == 201 and "idempotent-replayed" not in good.headers
-    denied = await tool.post(S, snap_body(platform="youtube"), idem=key())
+    denied = await tool.post(S, snap_body(platform="threads"), idem=key())   # platform ngoài registry
     assert denied.status_code == 403
     assert await env.scalar("SELECT count(*) FROM idempotency_keys") == 1
 

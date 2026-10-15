@@ -12,7 +12,7 @@ from manager_sdk import AuthError, Principal, make_dependencies
 
 from integration_service.container import Container
 from integration_service.credentials.service import MachineContext
-from integration_service.errors import forbidden
+from integration_service.errors import Extra, forbidden
 from integration_service.http_utils import client_ip
 
 _INSTALLATION_ID = re.compile(r"^ins_[0-9a-f]{32}$")
@@ -48,25 +48,36 @@ async def require_tool_integration(principal: Principal = Depends(require_user))
     return principal
 
 def machine(scope: str):
-    """Dependency mặt phẳng MÁY: API key + scope. Token user (JWT) ở đây => AUTH_INVALID."""
+    """Dependency mặt phẳng MÁY: API key + scope. Token user (JWT) ở đây => AUTH_INVALID.
+
+    Mọi scope KHÁC `integration:handshake`: credential phải đã bind thiết bị (handshake trước đó) — chưa bind =>
+    403 `CREDENTIAL_NOT_ACTIVATED`; `X-Installation-Id` vắng hoặc khác installation đã bind => 403
+    `INSTALLATION_MISMATCH`. `ctx.installation_id` sau đó LUÔN là `bound_installation_id` (không tin header)."""
 
     async def dep(request: Request, authorization: str = Header("", include_in_schema=False),
                   x_contract_version: str | None = Header(None, description="Phiên bản hợp đồng, vd 2026-10-01"),
-                  x_installation_id: str | None = Header(None, description="installation_id từ handshake (cho audit)"),
+                  x_installation_id: str | None = Header(None, description="installation_id đã bind lúc handshake — bắt buộc ngoài /handshake"),
                   idempotency_key: str | None = Header(
                       None, alias="Idempotency-Key", description="8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi"),
                   _bearer=Depends(machine_bearer)) -> MachineContext:
         request.state.plane = "machine"  # để handler lỗi validation trả RECORD_VALIDATION_FAILED
         container = get_container(request)
         ctx = await container.credentials.authenticate(authorization, client_ip(request), x_contract_version)
-        if x_installation_id and _INSTALLATION_ID.match(x_installation_id):
-            ctx = dataclasses.replace(ctx, installation_id=x_installation_id)
         if scope not in ctx.scopes:
             await container.audit.record(
                 action="auth.scope_denied", result=ErrorCode.SCOPE_DENIED.value, request=request, status_code=403,
                 detail={"required": scope, "path": request.url.path}, account_id=ctx.owner_account_id,
                 client_id=ctx.client_id, key_id=ctx.key_id)
             raise forbidden(ErrorCode.SCOPE_DENIED, f"Thiếu scope {scope}", {"required": scope})
+        if scope != "integration:handshake":
+            if ctx.bound_device_id is None:
+                raise forbidden(Extra.CREDENTIAL_NOT_ACTIVATED,
+                                "Credential chưa handshake/bind thiết bị — gọi /v1/integrations/handshake trước")
+            if not x_installation_id or not _INSTALLATION_ID.match(x_installation_id) \
+                    or x_installation_id != ctx.bound_installation_id:
+                raise forbidden(Extra.INSTALLATION_MISMATCH,
+                                "X-Installation-Id vắng hoặc khác installation đã bind cho credential này")
+            ctx = dataclasses.replace(ctx, installation_id=ctx.bound_installation_id)
         return ctx
 
     return dep

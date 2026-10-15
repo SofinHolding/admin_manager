@@ -11,7 +11,7 @@ pytestmark = pytest.mark.needs_pg
 async def test_full_happy_path(env):
     tool = await env.tool()
     hs = await tool.post("/v1/integrations/handshake", {
-        "installation": {"device_id": "dev-1", "hostname": "PC", "os": "windows", "app_version": "1"},
+        "installation": {"device_id": tool.device_id, "hostname": "PC", "os": "windows", "app_version": "1"},
         "platforms": ["facebook"], "capabilities": ["snapshots.push", "resources.push", "unknown.cap"]})
     assert hs.status_code == 200, hs.text
     data = hs.json()["data"]

@@ -57,9 +57,11 @@ def test_manager_source_has_no_knowledge_of_the_new_tool():
 
 
 def test_owner_was_provisioned_a_client_without_manual_steps(world):
+    """Mã mời preset `viewer_tool` ⇒ capability:tool_integration ⇒ Integration tự tạo Tool cá nhân (không ai tạo tay)."""
     client = world["client"]
-    assert client["tool_name"] == TOOL_NAME and client["created_from"] == "provisioning"
-    assert client["owner_account_id"] and client["allowed_platforms"] == [TOOL_PLATFORM]
+    assert client["ownership"] == "personal" and client["client_kind"] == "primary_tool"
+    assert client["created_from"] == "provisioning" and client["tool_name"] == "Tool cá nhân"
+    assert client["owner_account_id"] and TOOL_PLATFORM in client["allowed_platforms"]
 
 
 def test_handshake_binds_installation_and_owner_comes_from_the_credential(world):
@@ -74,7 +76,9 @@ def test_snapshot_commit_then_dashboard_shows_exact_numbers_with_no_manager_chan
     assert out["totals"]["resources"] == 2 and out["totals"]["content"] == 3
     owner = world["owner"]
     s = wait_for(lambda: (lambda d: d if d["total_views"] == 1750 else None)(summary(api, owner)), what="Analytics kéo canonical")
-    assert s["videos_posted"] == 2 and s["freshness"]["stale"] is False and s["freshness"]["snapshot_id"] == out["snapshot_id"]
+    # videos_posted = số BÀI theo ngày đăng (3: x-p-1, x-p-3 ngày hôm qua; x-p-2 hôm kia). 2 event post_ok cùng ngày với bài
+    # nên bị bỏ qua (event chỉ là nguồn dự phòng cho ngày không có bài).
+    assert s["videos_posted"] == 3 and s["freshness"]["stale"] is False and s["freshness"]["snapshot_id"] == out["snapshot_id"]
     channels = {c["id"]: c for c in top(api, owner)}
     assert set(channels) == {"x-ch-1", "x-ch-2"}
     assert channels["x-ch-1"]["views"] == 1500 and channels["x-ch-1"]["platform"] == TOOL_PLATFORM
@@ -114,7 +118,8 @@ def test_tool_cannot_write_outside_its_allowed_platform_or_spoof_owner(world, st
         tool.run(lambda c: c.create_snapshot(platform="facebook", snapshot_type="delta", observed_at="2026-10-05T00:00:00Z",
                                              report_timezone="UTC", expected_counts={}))
     assert exc.value.status == 403 and exc.value.code in {"PLATFORM_NOT_ALLOWED", "SCOPE_DENIED"}
-    r = httpx.post(stack.url("gateway", "/v1/integrations/resources/batch"), headers={"Authorization": f"Bearer {tool.api_key}"},
+    r = httpx.post(stack.url("gateway", "/v1/integrations/resources/batch"),
+                   headers={"Authorization": f"Bearer {tool.api_key}", "X-Installation-Id": tool.installation_id or ""},
                    json={"items": [{"external_id": "evil", "resource_type": "channel", "owner_account_id": "someone-else",
                                     "observed_at": "2026-10-05T00:00:00Z"}]})
     assert r.status_code == 422, r.text

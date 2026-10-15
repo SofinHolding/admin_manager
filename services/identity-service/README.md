@@ -13,13 +13,12 @@ Nguồn sự thật duy nhất cho account, đăng nhập/đăng ký, token, rol
 
 | Module | Phase | Trách nhiệm |
 |---|---|---|
-| `auth` | 1.2 | register (kèm integration tuỳ chọn), login, logout, refresh, verify-email, forgot/reset/change password |
-| `accounts` | 1.2 | profile, quản trị user, `GET /v1/accounts/me/integration` |
-| `registration_keys` | 1.2/1.7 | invite key, `integration_policy`, `allowed_apps` |
+| `auth` | 1.2 | register, login, logout, refresh, verify-email, forgot/reset/change password |
+| `accounts` | 1.2 | profile, quản trị user |
+| `registration_keys` | 1.2/2 | invite key, preset (role + capability), `allowed_apps` |
 | `tokens` | 1.4 | phát hành JWT RS256, JWKS, xoay khóa ký (`python -m identity_service.keys list\|rotate`) |
 | `permissions` | 1.4 | role, permission catalog và grant |
 | `oidc` | 1.6 | discovery, authorize (+PKCE), trang đăng nhập hosted, token, userinfo, introspect, revoke, RP-initiated logout, back-channel logout, Admin API client |
-| `feed_consumer` | 1.7 | kéo feed Integration → trạng thái provisioning |
 | `audit` | 1.2 | audit đăng nhập và thay đổi quyền |
 | `outbox` | 1.4 | transactional outbox và feed nội bộ `/internal/v1/feed` |
 | `notifications` | 1.2 | adapter gửi email (verify, reset) |
@@ -52,24 +51,28 @@ Endpoint (đều theo chuẩn; mã lỗi RFC 6749/6750/7009/7662):
 - Access token OIDC có `aud=[manager-api, <audience của client>]`, `client_id`, `scope`, `sid`; id_token `aud=client_id`.
   Chỉ access token (`typ=at+jwt`) được các endpoint API chấp nhận; id_token/logout_token cùng khoá ký không dùng thay được.
 
-## Đăng ký kèm Integration (Phase 1.7)
+## Gói quyền (preset) trên invite key (cập nhật 2026-10-14)
 
-`POST /v1/auth/register` nhận thêm `integration: {create, tool_name, client_kind, platforms[], scopes?[]}` (tuỳ chọn). Validate
-**đồng bộ, cục bộ** theo `integration_policy` của key (`allow_integration_registration`, `allowed_platforms`, `allowed_scopes`,
-`max_integration_clients`): sai ⇒ lỗi `PLATFORM_NOT_ALLOWED`/`SCOPE_DENIED`/`INTEGRATION_NOT_ALLOWED`/`INTEGRATION_LIMIT_EXCEEDED`,
-**không tạo account, không tiêu key**. Đúng ⇒ một transaction: account + `integration_provisioning` (client_id `cli_` + 24 hex)
-+ outbox `account.registered` kèm `provisioning`. Không yêu cầu ⇒ response y hệt legacy.
-`allowed_apps` trên key tự cấp permission `<app>:access` (app phải có trong catalog). Consumer (`feed_consumer`) kéo
-`integration.client.provisioned|provision_failed` từ `IDENTITY_INTEGRATION_FEED_URL`/`_KEY` (thiếu ⇒ tắt); con trỏ bền,
-idempotent theo event id, retry/backoff, dead-letter (`python -m identity_service.feed_consumer replay`).
+`registration_keys/presets.py` là nguồn sự thật DUY NHẤT cho `role + capability` của mỗi preset:
+`viewer`, `viewer_tool` (= viewer + `capability:tool_integration`), `dash_admin`, `admin` (mọi capability TRỪ
+`tool_integration`), `discord`. `POST /v1/admin/keys` nhận `{preset?, role?, ...}` (`extra="forbid"`: gửi
+`capability_grant`/`integration_policy` ⇒ 422); có preset thì role suy từ preset (gửi role khác ⇒ 422); không gửi
+preset (client legacy) thì cột `preset` NULL, key dùng default của role và phản hồi giữ y hệt legacy. `PATCH /v1/admin/keys/{key}` sửa `preset/label/max_uses/expires_days`
+(key `revoked` ⇒ 409; `max_uses < used_count` ⇒ 422; `dash_admin` không đặt/sửa preset/role `admin` ⇒ 403).
+`GET /v1/admin/keys/presets` liệt kê preset cho UI. Khoá Tool cá nhân CHỈ sinh ra từ sự kiện
+`account.permission_changed` khi tài khoản có `capability:tool_integration` (xem integration-service) — Identity
+không còn tạo Integration client / theo dõi provisioning kèm đăng ký (đã gỡ bỏ `integration_policy`,
+`POST /v1/auth/register` với `integration`, `GET /v1/accounts/me/integration`, module `feed_consumer`).
 
 ## Dữ liệu và sự kiện (theo `infra/service-registry.json`)
 
 - Bảng sở hữu: `accounts`, `invite_keys`, `refresh_tokens`, `permissions`, `account_permissions`, `signing_keys`, `sessions`, `auth_audit`,
   `outbox`, `oidc_clients`, `sso_sessions`, `oidc_auth_codes`, `oidc_refresh_tokens`, `oidc_session_clients`,
   `oidc_backchannel_deliveries`, `oidc_cursor`, `integration_provisioning`, `feed_cursor`, `processed_events`, `dead_letters`
+  (4 bảng cuối: sổ sách của `feed_consumer` cũ, đã gỡ khỏi code 2026-10-14 — GIỮ NGUYÊN trong schema, không còn đọc/ghi;
+  dọn vật lý phải qua migration riêng có phương án rollback).
 - Phát event: `account.registered`, `account.verified`, `account.status_changed`, `account.deleted`, `account.permission_changed`, `session.revoked`
-- Nhận event: `integration.client.provisioned`, `integration.client.provision_failed`
+- Nhận event: (không — Identity không còn tiêu thụ event từ service khác kể từ khi gỡ `feed_consumer`)
 
 ## Chạy
 

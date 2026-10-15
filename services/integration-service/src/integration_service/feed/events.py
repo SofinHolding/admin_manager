@@ -33,12 +33,6 @@ async def client_provisioned(conn: asyncpg.Connection, *, client_id: str, accoun
                         data={"client_id": client_id, "account_id": account_id, "status": status})
 
 
-async def client_provision_failed(conn: asyncpg.Connection, *, client_id: str, account_id: str,
-                                  error_code: str) -> None:
-    await outbox.append(conn, type="integration.client.provision_failed", subject=f"cli:{client_id}",
-                        data={"client_id": client_id, "account_id": account_id, "error_code": error_code})
-
-
 async def credential_revoked(conn: asyncpg.Connection, *, client_id: str, key_id: str) -> None:
     await outbox.append(conn, type="credential.revoked", subject=f"cli:{client_id}",
                         data={"client_id": client_id, "key_id": key_id})

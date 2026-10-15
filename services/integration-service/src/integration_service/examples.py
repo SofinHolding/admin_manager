@@ -8,19 +8,33 @@ _CLI = "cli_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f"
 _KEY = "AbCdEfGhIjKl"
 _SNP = "snp_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f"
 
-CLIENT = {"client_id": _CLI, "owner_account_id": _ACC, "tool_name": "My Upload Tool", "client_kind": "primary_tool",
-          "status": "active", "contract_version": "2026-10-01", "allowed_platforms": ["facebook", "youtube"],
+CLIENT = {"client_id": _CLI, "owner_account_id": _ACC, "tool_name": "Tool cá nhân", "client_kind": "primary_tool",
+          "status": "active", "ownership": "personal", "purpose": "", "contract_version": "2026-10-01",
+          "allowed_platforms": ["facebook", "youtube"],
           "allowed_scopes": ["integration:handshake", "metrics:write", "resources:write", "snapshots:write"],
-          "created_from": "api", "created_at": _T, "updated_at": _T}
+          "created_from": "provisioning", "configured_at": None, "activated_at": _T, "activated_by": None,
+          "created_at": _T, "updated_at": _T}
+CLIENT_DRAFT = {"client_id": _CLI, "owner_account_id": _ACC, "tool_name": "Fallback Collector",
+                "client_kind": "fallback_tool", "status": "draft", "ownership": "shared",
+                "purpose": "Thu thập dữ liệu hộ user khi primary tool lỗi", "contract_version": "2026-10-01",
+                "allowed_platforms": [], "allowed_scopes": [], "created_from": "api", "configured_at": None,
+                "activated_at": None, "activated_by": None, "created_at": _T, "updated_at": _T}
 CLIENT_DETAIL = {**CLIENT, "installations": [{"installation_id": "ins_0123456789abcdef0123456789abcdef", "device_id": "device-abc",
                                               "hostname": "PC-01", "os": "windows", "app_version": "2.4.0",
                                               "capabilities": ["snapshots.push"], "status": "active",
                                               "first_seen_at": _T, "last_seen_at": _T}],
                  "credentials": [{"key_id": _KEY, "scopes": ["snapshots:write"], "status": "active", "label": "pc-01",
-                                  "expires_at": None, "last_used_at": _T, "created_at": _T, "revoked_at": None}]}
+                                  "expires_at": None, "last_used_at": _T, "created_at": _T, "revoked_at": None,
+                                  "reveal_state": None, "reveal_expires_at": None, "revealed_at": None,
+                                  "bound_device_id": "device-abc", "bound_installation_id": "ins_0123456789abcdef0123456789abcdef",
+                                  "activated_at": _T}]}
 CREDENTIAL_ISSUED = {"client_id": _CLI, "key_id": _KEY, "api_key": "mpk_" + _KEY + ".<43 ký tự secret, chỉ hiện một lần>",
                      "scopes": ["integration:handshake", "snapshots:write"], "expires_at": "2027-01-03T10:00:00Z",
-                     "contract_version": "2026-10-01", "allowed_platforms": ["facebook"]}
+                     "contract_version": "2026-10-01", "allowed_platforms": ["facebook"], "reveal_state": None}
+CREDENTIAL_ISSUED_PENDING = {"client_id": _CLI, "key_id": _KEY, "api_key": None,
+                             "scopes": ["integration:handshake", "snapshots:write"], "expires_at": None,
+                             "contract_version": "2026-10-01", "allowed_platforms": ["facebook"],
+                             "reveal_state": "pending"}
 CREDENTIAL_ROTATED = {**CREDENTIAL_ISSUED, "previous_key_id": "ZyXwVuTsRqPo", "previous_key_expires_at": _T}
 CREDENTIAL_REVOKED = {"client_id": _CLI, "key_id": _KEY, "status": "revoked", "already_revoked": False}
 HANDSHAKE = {"client_id": _CLI, "installation_id": "ins_0123456789abcdef0123456789abcdef", "installation_created": True,
@@ -79,3 +93,26 @@ JOB_TRANSITION = {"job_id": _JOB, "status": "done", "attempts": 1, "max_attempts
                   "lease_until": None, "completed_at": _T, "replayed": False}
 WORKER_REGISTER = {"registration_id": "wkr_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f", "heartbeat_interval_s": 30}
 WORKER_HEARTBEAT = {"ok": True, "next_heartbeat_in_s": 30}
+
+CONNECTION_GUIDE = {
+    "base_url": "https://api.manager.example.com", "contract_version": "2026-10-01",
+    "auth": {"header": "Authorization", "format": "Bearer mpk_<key_id>.<secret>"},
+    "required_headers": [
+        {"name": "Authorization", "required_when": "luôn", "description": "mpk_<key_id>.<secret>"},
+        {"name": "X-Contract-Version", "required_when": "khuyến nghị", "description": "vd 2026-10-01"},
+        {"name": "X-Installation-Id", "required_when": "mọi endpoint máy trừ /handshake", "description": "installation_id trả về lúc handshake"},
+        {"name": "Idempotency-Key", "required_when": "mọi POST/PUT ghi", "description": "8-128 ký tự [A-Za-z0-9_.:-]"}],
+    "client": CLIENT,
+    "credential": {"key_id": _KEY, "status": "active", "reveal_state": "revealed", "reveal_expires_at": None,
+                   "bound_device_id": "device-abc", "bound_installation_id": "ins_0123456789abcdef0123456789abcdef",
+                   "activated_at": _T, "last_used_at": _T, "expires_at": None,
+                   "scopes": ["integration:handshake", "snapshots:write"]},
+    "installations": [], "endpoints": [{
+        "method": "POST", "path": "/v1/integrations/handshake", "scope": "integration:handshake",
+        "summary": "Handshake", "description": "Khai báo thiết bị, bind credential.",
+        "request_schema": None, "example_request": None, "example_response": HANDSHAKE,
+        "error_codes": ["CREDENTIAL_DEVICE_BOUND"]}],
+    "limits": {"batch_max_items": 500, "body_max_bytes": 2 * 1024 * 1024},
+    "error_codes": [{"code": "CREDENTIAL_NOT_ACTIVATED", "http_status": 403, "meaning": "Chưa handshake/bind thiết bị"}],
+    "recent_snapshots": []}
+CLIENT_TRANSFERRED = {**CLIENT, "owner_account_id": "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d"}

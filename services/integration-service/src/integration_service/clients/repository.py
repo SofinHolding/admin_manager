@@ -8,14 +8,14 @@ import asyncpg
 
 
 async def insert(conn: asyncpg.Connection, *, id: str, owner_account_id: str, tool_name: str, client_kind: str,
-                 status: str, allowed_platforms: list[str], allowed_scopes: list[str], created_from: str,
-                 contract_version: str, now: datetime) -> dict:
+                 status: str, ownership: str, allowed_platforms: list[str], allowed_scopes: list[str],
+                 created_from: str, contract_version: str, now: datetime, purpose: str = "") -> dict:
     row = await conn.fetchrow(
-        "INSERT INTO integration_clients (id, owner_account_id, tool_name, client_kind, status, contract_version, "
-        "allowed_platforms, allowed_scopes, created_from, created_at, updated_at) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) RETURNING *",
-        id, owner_account_id, tool_name, client_kind, status, contract_version, allowed_platforms, allowed_scopes,
-        created_from, now)
+        "INSERT INTO integration_clients (id, owner_account_id, tool_name, client_kind, status, ownership, purpose, "
+        "contract_version, allowed_platforms, allowed_scopes, created_from, created_at, updated_at) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) RETURNING *",
+        id, owner_account_id, tool_name, client_kind, status, ownership, purpose, contract_version,
+        allowed_platforms, allowed_scopes, created_from, now)
     return dict(row)
 
 
@@ -27,8 +27,13 @@ async def get(conn: asyncpg.Connection, client_id: str, *, lock: bool = False) -
 
 async def list_for(conn: asyncpg.Connection, *, owner: str | None, status: str | None, limit: int, offset: int) -> list[dict]:
     rows = await conn.fetch(
-        "SELECT * FROM integration_clients WHERE ($1::text IS NULL OR owner_account_id = $1) "
-        "AND ($2::text IS NULL OR status = $2) ORDER BY created_at, id LIMIT $3 OFFSET $4", owner, status, limit, offset)
+        "SELECT ic.*, ap.username AS owner_username, ab.username AS activated_by_username "
+        "FROM integration_clients ic "
+        "LEFT JOIN account_projection ap ON ap.account_id = ic.owner_account_id "
+        "LEFT JOIN account_projection ab ON ab.account_id = ic.activated_by "
+        "WHERE ($1::text IS NULL OR ic.owner_account_id = $1) "
+        "AND ($2::text IS NULL OR ic.status = $2) ORDER BY ic.created_at, ic.id LIMIT $3 OFFSET $4",
+        owner, status, limit, offset)
     return [dict(r) for r in rows]
 
 
@@ -59,6 +64,47 @@ async def update_fields(conn: asyncpg.Connection, client_id: str, fields: dict, 
         sets.append(f"{key} = ${len(args)}")
     sets.append("updated_at = $2")
     row = await conn.fetchrow(f"UPDATE integration_clients SET {', '.join(sets)} WHERE id = $1 RETURNING *", *args)
+    return dict(row)
+
+async def get_personal(conn: asyncpg.Connection, owner: str, *, lock: bool = False) -> dict | None:
+    """Client personal đang chiếm chỗ unique index (pending_email_verification/active) của owner, nếu có."""
+    row = await conn.fetchrow(
+        "SELECT * FROM integration_clients WHERE owner_account_id = $1 AND ownership = 'personal' "
+        "AND status IN ('pending_email_verification', 'active')" + (" FOR UPDATE" if lock else ""), owner)
+    return dict(row) if row else None
+
+
+async def get_suspended_personal_by_capability(conn: asyncpg.Connection, owner: str, *,
+                                               lock: bool = False) -> dict | None:
+    """Client personal đã suspended do thu hồi capability:tool_integration — ứng viên kích hoạt lại khi cấp lại."""
+    row = await conn.fetchrow(
+        "SELECT * FROM integration_clients WHERE owner_account_id = $1 AND ownership = 'personal' "
+        "AND status = 'suspended' AND suspended_by = 'capability' ORDER BY created_at LIMIT 1"
+        + (" FOR UPDATE" if lock else ""), owner)
+    return dict(row) if row else None
+
+
+async def configure(conn: asyncpg.Connection, client_id: str, *, allowed_platforms: list[str],
+                    allowed_scopes: list[str], now: datetime) -> dict:
+    """Bước 2 wizard dùng chung: ghi platform/scope + `configured_at` (chỉ gọi khi client đang `draft`)."""
+    row = await conn.fetchrow(
+        "UPDATE integration_clients SET allowed_platforms = $2, allowed_scopes = $3, configured_at = $4, "
+        "updated_at = $4 WHERE id = $1 RETURNING *", client_id, allowed_platforms, allowed_scopes, now)
+    return dict(row)
+
+
+async def activate(conn: asyncpg.Connection, client_id: str, *, activated_by: str, now: datetime) -> dict:
+    """Bước 3 wizard: draft/configured -> active, ghi `activated_at/activated_by`."""
+    row = await conn.fetchrow(
+        "UPDATE integration_clients SET status = 'active', suspended_by = NULL, activated_at = $3, "
+        "activated_by = $2, updated_at = $3 WHERE id = $1 RETURNING *", client_id, activated_by, now)
+    return dict(row)
+
+
+async def transfer_owner(conn: asyncpg.Connection, client_id: str, new_owner: str, now: datetime) -> dict:
+    row = await conn.fetchrow(
+        "UPDATE integration_clients SET owner_account_id = $2, updated_at = $3 WHERE id = $1 RETURNING *",
+        client_id, new_owner, now)
     return dict(row)
 
 

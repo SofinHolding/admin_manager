@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
-from conftest import ISSUER, devenv
+from conftest import ISSUER, REVEAL_KEY, devenv
 
 ROOT = Path(__file__).resolve().parents[3]
 SERVICE = ROOT / "services" / "integration-service"
@@ -136,11 +136,12 @@ class Proc:
 # ── Không cần DB ────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("env,needle", [
-    ({}, "INTEGRATION_DATABASE_URL"),
-    ({"INTEGRATION_DATABASE_URL": DEAD_DSN}, "INTEGRATION_ISSUER"),
-    ({"INTEGRATION_DATABASE_URL": DEAD_DSN, "INTEGRATION_ISSUER": ISSUER}, "INTEGRATION_IDENTITY_JWKS_URL"),
+    ({"INTEGRATION_REVEAL_KEY": REVEAL_KEY}, "INTEGRATION_DATABASE_URL"),
+    ({"INTEGRATION_DATABASE_URL": DEAD_DSN, "INTEGRATION_REVEAL_KEY": REVEAL_KEY}, "INTEGRATION_ISSUER"),
+    ({"INTEGRATION_DATABASE_URL": DEAD_DSN, "INTEGRATION_ISSUER": ISSUER, "INTEGRATION_REVEAL_KEY": REVEAL_KEY},
+     "INTEGRATION_IDENTITY_JWKS_URL"),
     ({"INTEGRATION_DATABASE_URL": DEAD_DSN, "INTEGRATION_ISSUER": ISSUER, "INTEGRATION_IDENTITY_JWKS_URL": "http://x/j",
-      "INTEGRATION_ENV": "production"}, "https://"),
+      "INTEGRATION_REVEAL_KEY": REVEAL_KEY, "INTEGRATION_ENV": "production"}, "https://"),
     ({"INTEGRATION_DATABASE_URL": "sqlite:///x.db"}, "PostgreSQL"),
     ({"INTEGRATION_DATABASE_URL": DEAD_DSN, "INTEGRATION_ISSUER": ISSUER, "INTEGRATION_IDENTITY_JWKS_URL": "http://x/j",
       "INTEGRATION_FEED_KEY_ANALYTICS": "ngan"}, "INTEGRATION_FEED_KEY_ANALYTICS"),
@@ -151,15 +152,17 @@ def test_service_refuses_to_start_without_required_config(env, needle):
 
 
 def test_migrate_job_fails_fast_on_missing_config_and_dead_database():
-    cfg = run_py("import sys; from integration_service import migrate; sys.exit(migrate.main())")
+    cfg = run_py("import sys; from integration_service import migrate; sys.exit(migrate.main())",
+                 INTEGRATION_REVEAL_KEY=REVEAL_KEY)
     assert cfg.returncode == 2 and "INTEGRATION_DATABASE_URL" in cfg.stderr
     dead = run_py("import sys; from integration_service import migrate; sys.exit(migrate.main())",
-                  INTEGRATION_DATABASE_URL=DEAD_DSN)
+                  INTEGRATION_DATABASE_URL=DEAD_DSN, INTEGRATION_REVEAL_KEY=REVEAL_KEY)
     assert dead.returncode == 1
 
 
 def test_service_with_dead_database_stays_alive_and_fails_fast_with_503(tmp_path):
-    p = Proc(tmp_path, INTEGRATION_DATABASE_URL=DEAD_DSN, INTEGRATION_IDENTITY_JWKS_URL="http://127.0.0.1:1/jwks").start()
+    p = Proc(tmp_path, INTEGRATION_DATABASE_URL=DEAD_DSN, INTEGRATION_IDENTITY_JWKS_URL="http://127.0.0.1:1/jwks",
+             INTEGRATION_REVEAL_KEY=REVEAL_KEY).start()
     try:
         assert httpx.get(p.url("/health/live"), timeout=2).status_code == 200
         ready = httpx.get(p.url("/health/ready"), timeout=5)
@@ -189,19 +192,19 @@ async def test_end_to_end_as_a_real_process_with_identity_provisioning(db, ident
     fake = FakeIdentityServer(identity)
     dsn = devenv.pg_dsn("integration")
     password = dsn.split("://")[1].split(":")[1].split("@")[0]
-    account, client_id = uuid.uuid4().hex, "cli_" + uuid.uuid4().hex
-    fake.add("account.registered", {"account_id": account, "username": "tool_owner", "role": "viewer", "status": "pending",
-                                    "provisioning": {"client_id": client_id, "tool_name": "Tool X", "client_kind": "primary_tool",
-                                                     "platforms": ["facebook"], "scopes": []}})
+    account = uuid.uuid4().hex
+    fake.add("account.registered", {"account_id": account, "username": "tool_owner", "role": "viewer", "status": "pending"})
     p = Proc(tmp_path, INTEGRATION_DATABASE_URL=dsn, INTEGRATION_IDENTITY_JWKS_URL=f"{fake.url}/.well-known/jwks.json",
              INTEGRATION_FEED_KEY_ANALYTICS=READER_KEY, INTEGRATION_IDENTITY_FEED_URL=fake.url,
-             INTEGRATION_IDENTITY_FEED_KEY=FEED_KEY, INTEGRATION_PROVISIONING_POLL_S="0.1")
+             INTEGRATION_IDENTITY_FEED_KEY=FEED_KEY, INTEGRATION_PROVISIONING_POLL_S="0.1",
+             INTEGRATION_REVEAL_KEY=REVEAL_KEY)
     mig = subprocess.run([sys.executable, "-m", "integration_service.migrate"], cwd=SERVICE, env=p.env,
                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     assert mig.returncode == 0, mig.stderr
     p.start()
     try:
-        user = {"Authorization": f"Bearer {identity.token(sub=account, role='viewer')}"}
+        admin = {"Authorization": f"Bearer {identity.token(sub='acc_' + uuid.uuid4().hex, role='admin')}"}
+        user = {"Authorization": f"Bearer {identity.token(sub=account, role='viewer', perms=['capability:tool_integration'])}"}
 
         def wait_for(predicate, what, timeout=20.0):
             deadline = time.time() + timeout
@@ -212,22 +215,35 @@ async def test_end_to_end_as_a_real_process_with_identity_provisioning(db, ident
                 time.sleep(0.2)
             raise AssertionError(f"quá hạn chờ: {what}\n{p.logs()[-2000:]}")
 
+        def client_id_of():
+            r = httpx.get(p.url("/v1/integrations/clients"), headers=admin, params={"owner": account}, timeout=5)
+            items = r.json()["data"]["items"] if r.status_code == 200 else []
+            return items[0]["client_id"] if items else None
+
+        time.sleep(0.5)
+        assert client_id_of() is None, "chưa có capability:tool_integration thì chưa được tạo client cá nhân"
+
+        fake.add("account.permission_changed",
+                 {"account_id": account, "permission": "capability:tool_integration", "granted": True})
+        client_id = wait_for(client_id_of, "client cá nhân được provision từ capability:tool_integration")
+
         def client_status():
             r = httpx.get(p.url(f"/v1/integrations/clients/{client_id}"), headers=user, timeout=5)
             return r.json()["data"]["status"] if r.status_code == 200 else None
 
-        assert wait_for(client_status, "client được provision từ feed Identity") == "pending_email_verification"
-        r = httpx.post(p.url(f"/v1/integrations/clients/{client_id}/credentials"), headers=user, json={}, timeout=5)
+        assert wait_for(client_status, "client ở trạng thái chờ xác minh email") == "pending_email_verification"
+        r = httpx.post(p.url("/v1/integrations/me/credential/reveal"), headers=user, json={}, timeout=5)
         assert r.status_code == 403 and r.json()["error"]["code"] == "EMAIL_NOT_VERIFIED"
         fake.add("account.verified", {"account_id": account})
         wait_for(lambda: client_status() == "active", "client active sau account.verified")
 
-        r = httpx.post(p.url(f"/v1/integrations/clients/{client_id}/credentials"), headers=user, json={}, timeout=5)
-        assert r.status_code == 201
+        r = httpx.post(p.url("/v1/integrations/me/credential/reveal"), headers=user, json={}, timeout=5)
+        assert r.status_code == 200, r.text
         api_key = r.json()["data"]["api_key"]
         tool = {"Authorization": f"Bearer {api_key}"}
         hs = httpx.post(p.url("/v1/integrations/handshake"), headers=tool, json={"installation": {"device_id": "e2e"}}, timeout=5)
         assert hs.status_code == 200 and hs.json()["data"]["owner_account_id"] == account
+        tool = {**tool, "X-Installation-Id": hs.json()["data"]["installation_id"]}
 
         snap = httpx.post(p.url("/v1/integrations/snapshots"), headers={**tool, "Idempotency-Key": "e2e-" + uuid.uuid4().hex},
                           timeout=5, json={"platform": "facebook", "snapshot_type": "full", "observed_at": "2026-10-05T10:00:00Z",
@@ -278,7 +294,7 @@ async def test_real_process_reports_not_ready_until_migrated_then_ready(db, iden
         async with db.connection() as conn:     # mô phỏng DB chưa migrate: đổi tên bảng migration
             await conn.execute("ALTER TABLE schema_migrations RENAME TO schema_migrations_off")
         p = Proc(tmp_path, INTEGRATION_DATABASE_URL=devenv.pg_dsn("integration"),
-                 INTEGRATION_IDENTITY_JWKS_URL=f"{fake.url}/.well-known/jwks.json").start()
+                 INTEGRATION_IDENTITY_JWKS_URL=f"{fake.url}/.well-known/jwks.json", INTEGRATION_REVEAL_KEY=REVEAL_KEY).start()
         try:
             assert httpx.get(p.url("/health/ready"), timeout=5).status_code == 503
             async with db.connection() as conn:

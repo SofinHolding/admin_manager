@@ -8,7 +8,13 @@ BASE_SCOPES = ("integration:handshake", "resources:write", "snapshots:write", "m
 FALLBACK_SCOPES = ("jobs:claim", "jobs:complete")
 ALL_SCOPES = frozenset(BASE_SCOPES + FALLBACK_SCOPES + (SYSTEM_SCOPE,))
 
-CLIENT_STATUSES = ("pending_email_verification", "active", "suspended", "deleted")
+
+def ownership_for_kind(client_kind: str) -> str:
+    """personal <=> primary_tool (tự provision); shared <=> fallback_tool/service (wizard admin)."""
+    return "personal" if client_kind == "primary_tool" else "shared"
+
+
+CLIENT_STATUSES = ("draft", "pending_email_verification", "active", "suspended", "deleted")
 
 
 def default_scopes(client_kind: str) -> list[str]:

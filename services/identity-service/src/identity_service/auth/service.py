@@ -22,9 +22,10 @@ from datetime import datetime, timedelta
 
 import asyncpg
 
-from identity_service.accounts import integration_repository as integration_repo, repository as accounts
+from identity_service.accounts import repository as accounts
 from identity_service.audit import repository as audit
-from identity_service.auth import refresh_repository as refresh_tokens, session_repository as sessions
+from identity_service.auth import refresh_repository as refresh_tokens
+from identity_service.auth import session_repository as sessions
 from identity_service.config import Settings
 from identity_service.db import Database
 from identity_service.errors import DomainError
@@ -33,10 +34,17 @@ from identity_service.outbox import events
 from identity_service.permissions import repository as perms_repo
 from identity_service.permissions.capabilities import default_for_role
 from identity_service.permissions.service import effective_permissions
+from identity_service.registration_keys import repository as keys
+from identity_service.security import (
+    hash_password,
+    hash_token,
+    iso,
+    new_numeric_code,
+    new_token,
+    utcnow,
+    verify_password,
+)
 from identity_service.tokens.service import TokenService
-from identity_service.registration_keys import policy as key_policy, repository as keys
-from identity_service.security import (hash_password, hash_token, iso, new_numeric_code, new_token,
-                                       utcnow, verify_password)
 
 logger = logging.getLogger("identity.auth")
 
@@ -117,8 +125,7 @@ class AuthService:
 
     # ── đăng ký ─────────────────────────────────────────────────────────────────
 
-    async def register(self, *, key: str, username: str, password: str, email: str,
-                       integration: dict | None = None) -> dict:
+    async def register(self, *, key: str, username: str, password: str, email: str) -> dict:
         key, username, email = key.strip(), username.strip(), email.strip()
         now = self.now()
         pw_hash = await asyncio.to_thread(hash_password, password)
@@ -131,9 +138,6 @@ class AuthService:
                 raise DomainError(400, "Mã mời không hợp lệ hoặc đã hết lượt")
             if key_row["expires_at"] is not None and key_row["expires_at"] <= now:
                 raise DomainError(400, "Mã mời đã hết hạn")
-            # Kiểm chính sách integration ĐỒNG BỘ, CỤC BỘ, TRƯỚC khi tiêu hao key/tạo account: sai thì không để lại gì.
-            plan = (key_policy.plan_registration(keys.parse_policy(key_row.get("integration_policy")), integration)
-                    if integration else None)
             apps = list(key_row.get("allowed_apps") or [])
             for app in apps:
                 if not await perms_repo.get(conn, f"{app}:access"):
@@ -157,13 +161,12 @@ class AuthService:
             await audit.record(conn, account_id=account["id"], event_type="register", now=now,
                                target_type="account", target_id=account["id"],
                                payload={"role": account["role"]})
-            if plan:
-                await integration_repo.create(conn, account_id=account["id"], now=now, **plan)
-            await events.registered(conn, account, provisioning=plan)
+            await events.registered(conn, account)
             for app in apps:  # SSO (D11): key phát cho app nào chỉ cấp `<app>:access` của app đó
                 if await perms_repo.grant(conn, account["id"], f"{app}:access", "registration"):
                     await events.permission_changed(conn, account["id"], f"{app}:access", True)
-            # Phase 2 (capability-model-v1.md §4): default theo role + extra/override từ capability_grant của key.
+            # Phase 2 (capability-model-v1.md §4): default theo role + extra/override từ capability_grant của key
+            # (key có preset luôn mang capability_grant override_defaults=true — xem registration_keys/presets.py).
             cap_grant = keys.parse_capability_grant(key_row.get("capability_grant"))
             caps = set(default_for_role(account["role"]))
             if cap_grant:
@@ -174,13 +177,8 @@ class AuthService:
                     await events.permission_changed(conn, account["id"], cap, True)
 
         await self._safe_send(self.mailer.send_verify, account["email"], verify_token, account["username"])
-        result = {"ok": True, "email": account["email"],
-                  "message": "Đã gửi email xác thực. Kiểm tra hộp thư để kích hoạt tài khoản."}
-        if plan:  # CHỈ khi client yêu cầu; không yêu cầu => phản hồi y hệt legacy
-            result["integration"] = {"client_id": plan["client_id"], "tool_name": plan["tool_name"],
-                                     "client_kind": plan["client_kind"],
-                                     "credential_status": "pending_email_verification", "provisioning": "pending"}
-        return result
+        return {"ok": True, "email": account["email"],
+               "message": "Đã gửi email xác thực. Kiểm tra hộp thư để kích hoạt tài khoản."}
 
     # ── xác thực email ──────────────────────────────────────────────────────────
 
@@ -192,10 +190,15 @@ class AuthService:
             issued = account["verify_token_at"]
             if issued is None or self.now() - issued > VERIFY_TOKEN_TTL:
                 raise DomainError(400, "Link xác thực đã hết hạn. Đăng nhập và yêu cầu gửi lại.")
+            previous_status = account["status"]
             await accounts.mark_verified(conn, account["id"])
             await audit.record(conn, account_id=account["id"], event_type="email_verified",
                                now=self.now(), target_type="account", target_id=account["id"])
             await events.verified(conn, account["id"])
+            # Khi pending→active, emit status_changed để analytics/integration cập nhật account_projection.
+            # suspended không đổi status nên không emit (mark_verified giữ nguyên status suspended).
+            if previous_status == "pending":
+                await events.status_changed(conn, account["id"], "active", "pending")
         return {"ok": True, "message": "Xác thực email thành công. Đăng nhập ngay."}
 
     async def resend_verify(self, email: str) -> dict:

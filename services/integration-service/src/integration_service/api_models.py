@@ -23,16 +23,40 @@ class Envelope(BaseModel, Generic[T]):
 # ── Client / credential (mặt phẳng USER) ────────────────────────────────────────────
 
 ClientKind = Literal["primary_tool", "fallback_tool", "service"]
-ClientStatus = Literal["pending_email_verification", "active", "suspended", "deleted"]
+ClientStatus = Literal["draft", "pending_email_verification", "active", "suspended", "deleted"]
+Ownership = Literal["personal", "shared"]
 
 
-class ClientCreate(BaseModel):
-    """Owner = `sub` của token; KHÔNG nhận owner từ body."""
+class ClientWizardCreate(BaseModel):
+    """Bước 1 wizard (CHỈ admin). Client tạo ở `draft`; platforms/scopes gán ở bước `PUT .../config`."""
     model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {
-        "tool_name": "My Upload Tool", "client_kind": "primary_tool", "platforms": ["facebook", "youtube"]}})
+        "tool_name": "Fallback Collector", "client_kind": "fallback_tool",
+        "purpose": "Thu thập dữ liệu hộ user khi primary tool lỗi", "platforms": ["facebook"]}})
     tool_name: Annotated[str, StringConstraints(min_length=1, max_length=200)]
-    client_kind: ClientKind
-    platforms: list[Key] = Field(min_length=1, max_length=20)
+    client_kind: Literal["fallback_tool", "service"]
+    purpose: Annotated[str, StringConstraints(min_length=1, max_length=500)]
+    platforms: list[Key] = Field(default_factory=list, max_length=20)
+
+
+class ClientConfigure(BaseModel):
+    """Bước 2 wizard (CHỈ admin, chỉ khi client `draft`)."""
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {
+        "allowed_platforms": ["facebook"], "allowed_scopes": ["integration:handshake", "resources:write",
+        "snapshots:write", "metrics:write", "jobs:claim", "jobs:complete"]}})
+    allowed_platforms: list[Key] = Field(min_length=1, max_length=20)
+    allowed_scopes: list[Annotated[str, StringConstraints(max_length=64)]] = Field(min_length=1, max_length=20)
+
+
+class ClientActivate(BaseModel):
+    """Bước 3 wizard (CHỈ admin): `confirm_tool_name` phải khớp `tool_name` — chống kích hoạt nhầm."""
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {"confirm_tool_name": "Fallback Collector"}})
+    confirm_tool_name: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+
+
+class ClientTransferRequest(BaseModel):
+    """Chuyển chủ client PERSONAL (CHỈ admin)."""
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {"new_owner_account_id": "acc_example"}})
+    new_owner_account_id: Annotated[str, StringConstraints(min_length=1, max_length=64)]
 
 
 class ClientPatch(BaseModel):
@@ -43,18 +67,37 @@ class ClientPatch(BaseModel):
     tool_name: Annotated[str, StringConstraints(min_length=1, max_length=200)] | None = None
 
 
+class CredentialSummaryOut(BaseModel):
+    """Tóm tắt credential trong `GET /clients` (list) — không có scopes/label/created_at đầy đủ."""
+    key_id: str
+    status: Literal["active", "revoked"]
+    reveal_state: Literal["pending", "revealed", "expired"] | None = None
+    bound_device_id: str | None = None
+    activated_at: datetime | None = None
+    last_used_at: datetime | None
+    expires_at: datetime | None
+
+
 class ClientOut(BaseModel):
     client_id: str
     owner_account_id: str
     tool_name: str
     client_kind: ClientKind
     status: ClientStatus
+    ownership: Ownership
+    purpose: str
     contract_version: str
     allowed_platforms: list[str]
     allowed_scopes: list[str]
     created_from: Literal["api", "provisioning"]
+    configured_at: datetime | None = None
+    activated_at: datetime | None = None
+    activated_by: str | None = None
     created_at: datetime
     updated_at: datetime
+    owner_username: str | None = None
+    activated_by_username: str | None = None     # username của admin kích hoạt (thay vì lộ account_id)
+    credentials: list[CredentialSummaryOut] | None = None
 
 
 class CredentialInfo(BaseModel):
@@ -66,6 +109,12 @@ class CredentialInfo(BaseModel):
     last_used_at: datetime | None
     created_at: datetime
     revoked_at: datetime | None = None
+    reveal_state: Literal["pending", "revealed", "expired"] | None = None
+    reveal_expires_at: datetime | None = None
+    revealed_at: datetime | None = None
+    bound_device_id: str | None = None
+    bound_installation_id: str | None = None
+    activated_at: datetime | None = None
 
 
 class InstallationInfoOut(BaseModel):
@@ -99,14 +148,16 @@ class RotateRequest(BaseModel):
 
 
 class CredentialIssued(BaseModel):
-    """`api_key` CHỈ xuất hiện ở response này; DB chỉ lưu sha256(secret)."""
+    """`api_key` CHỈ xuất hiện khi CHỦ (hoặc máy, lúc reveal) tự nhận plaintext. Admin cấp/xoay HỘ trên client
+    personal => `api_key=null`, `reveal_state="pending"` (chủ phải gọi `/me/credential/reveal`)."""
     client_id: str
     key_id: str
-    api_key: str
+    api_key: str | None = None
     scopes: list[str]
     expires_at: datetime | None
     contract_version: str
     allowed_platforms: list[str]
+    reveal_state: Literal["pending", "revealed", "expired"] | None = None
     previous_key_id: str | None = None
     previous_key_expires_at: datetime | None = None
 
@@ -279,4 +330,56 @@ class AuditEntry(BaseModel):
 class AuditPage(BaseModel):
     entries: list[AuditEntry]
     next_before_id: int | None
+
+
+# ── Connection Guide (mặt phẳng USER `/v1/integrations/me/*`) ───────────────────────
+
+class ConnectionGuideAuth(BaseModel):
+    header: Literal["Authorization"]
+    format: str
+
+
+class ConnectionGuideHeader(BaseModel):
+    name: str
+    required_when: str
+    description: str
+
+
+class ConnectionGuideEndpoint(BaseModel):
+    method: str
+    path: str
+    scope: str
+    summary: str
+    description: str
+    request_schema: dict | None = None
+    example_request: dict | None = None
+    example_response: dict | None = None
+    error_codes: list[str] = Field(default_factory=list)
+
+
+class ConnectionGuideErrorCode(BaseModel):
+    code: str
+    http_status: int
+    meaning: str
+
+
+class ConnectionGuideLimits(BaseModel):
+    batch_max_items: int
+    body_max_bytes: int
+
+
+class ConnectionGuideOut(BaseModel):
+    """`GET /v1/integrations/me/connection-guide` — tự mô tả cách gọi API cho CHỦ client personal (chỉ endpoint mà
+    scope của credential hiện có cho phép; `handshake` luôn có)."""
+    base_url: str | None
+    contract_version: str
+    auth: ConnectionGuideAuth
+    required_headers: list[ConnectionGuideHeader]
+    client: ClientOut
+    credential: CredentialInfo | None
+    installations: list[InstallationInfoOut]
+    endpoints: list[ConnectionGuideEndpoint]
+    limits: ConnectionGuideLimits
+    error_codes: list[ConnectionGuideErrorCode]
+    recent_snapshots: list[dict]
 

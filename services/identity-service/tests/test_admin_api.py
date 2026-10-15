@@ -37,6 +37,7 @@ async def test_create_list_revoke_key(client, db, mailer):
                           json={"role": "viewer", "label": "Team BR", "max_uses": 3, "expires_days": 30})
     key = r.json()
     assert r.status_code == 200 and re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4}", key["key"])
+    # Client legacy chỉ gửi role => phản hồi y hệt contract legacy (không có `preset`).
     assert set(key) == {"key", "role", "label", "max_uses", "used_count", "created_at", "expires_at", "status"}
     assert (key["role"], key["label"], key["max_uses"], key["used_count"], key["status"]) == \
         ("viewer", "Team BR", 3, 0, "active")
@@ -57,7 +58,9 @@ import re  # noqa: E402  (đặt cuối để test đọc liền mạch)
 
 @pytest.mark.parametrize("body", [
     {"role": "root"}, {"max_uses": 0}, {"max_uses": 1001}, {"expires_days": 0}, {"expires_days": 366},
-    {"label": "x" * 201},
+    {"label": "x" * 201}, {"preset": "khong_ton_tai"},
+    {"capability_grant": {"capabilities": ["capability:tool_integration"]}},
+    {"integration_policy": {"allow_integration_registration": True}},
 ])
 async def test_create_key_validation(client, db, mailer, body):
     a = await _admin(client, db, mailer)
@@ -80,7 +83,125 @@ async def test_admin_can_mint_admin_key(client, db, mailer):
 async def test_created_key_defaults_match_legacy(client, db, mailer):
     a = await _admin(client, db, mailer)
     k = (await client.post("/v1/admin/keys", headers=a["auth"], json={})).json()
-    assert (k["role"], k["max_uses"], k["label"]) == ("viewer", 1, "")
+    assert (k["role"], k["max_uses"], k["label"]) == ("viewer", 1, "") and "preset" not in k
+
+
+# ── preset (role + capability) ────────────────────────────────────────────────────
+
+async def test_preset_key_grants_role_and_capabilities_on_register(client, db, mailer):
+    a = await _admin(client, db, mailer)
+    r = await client.post("/v1/admin/keys", headers=a["auth"], json={"preset": "viewer_tool", "max_uses": 2})
+    assert r.status_code == 200, r.text
+    created = r.json()
+    assert created["preset"] == "viewer_tool" and created["role"] == "viewer"
+    reg = await register(client, db, username="co_tool", key=created["key"])
+    assert reg.status_code == 200, reg.text
+    async with db.connection() as conn:
+        aid = await conn.fetchval("SELECT id FROM accounts WHERE username = 'co_tool'")
+        caps = {row["permission"] for row in
+               await conn.fetch("SELECT permission FROM account_permissions WHERE account_id = $1", aid)}
+        ev = await conn.fetchrow(
+            "SELECT 1 FROM outbox WHERE type = 'account.permission_changed' AND data->>'account_id' = $1 "
+            "AND data->>'permission' = 'capability:tool_integration' AND (data->>'granted')::boolean", aid)
+    assert "capability:tool_integration" in caps
+    assert ev is not None
+
+
+async def test_admin_preset_excludes_tool_integration(client, db, mailer):
+    a = await _admin(client, db, mailer)
+    r = await client.post("/v1/admin/keys", headers=a["auth"], json={"preset": "admin"})
+    assert r.status_code == 200, r.text
+    reg = await register(client, db, username="admin_moi", key=r.json()["key"])
+    assert reg.status_code == 200, reg.text
+    async with db.connection() as conn:
+        aid = await conn.fetchval("SELECT id FROM accounts WHERE username = 'admin_moi'")
+        caps = {row["permission"] for row in
+               await conn.fetch("SELECT permission FROM account_permissions WHERE account_id = $1", aid)}
+    assert "capability:tool_integration" not in caps
+    assert "capability:api_write" in caps
+
+
+async def test_dash_admin_cannot_create_admin_preset_key(client, db, mailer):
+    d = await _admin(client, db, mailer, "dash_preset", role="dash_admin")
+    r = await client.post("/v1/admin/keys", headers=d["auth"], json={"preset": "admin"})
+    assert r.status_code == 403
+
+
+async def test_preset_role_mismatch_rejected(client, db, mailer):
+    a = await _admin(client, db, mailer)
+    r = await client.post("/v1/admin/keys", headers=a["auth"], json={"preset": "viewer_tool", "role": "admin"})
+    assert r.status_code == 422
+
+
+async def test_get_presets_lists_all_five(client, db, mailer):
+    a = await _admin(client, db, mailer)
+    r = await client.get("/v1/admin/keys/presets", headers=a["auth"])
+    assert r.status_code == 200, r.text
+    presets = r.json()["presets"]
+    assert {p["key"] for p in presets} == {"viewer", "viewer_tool", "dash_admin", "admin", "discord"}
+    admin_preset = next(p for p in presets if p["key"] == "admin")
+    assert admin_preset["admin_only"] is True
+    assert "capability:tool_integration" not in admin_preset["capabilities"]
+    viewer_tool = next(p for p in presets if p["key"] == "viewer_tool")
+    assert viewer_tool["role"] == "viewer" and "capability:tool_integration" in viewer_tool["capabilities"]
+
+
+# ── PATCH /v1/admin/keys/{key} ────────────────────────────────────────────────────
+
+async def test_patch_key_preset_updates_role_and_grant(client, db, mailer):
+    a = await _admin(client, db, mailer)
+    created = (await client.post("/v1/admin/keys", headers=a["auth"], json={"role": "viewer"})).json()
+    r = await client.patch(f"/v1/admin/keys/{created['key']}", headers=a["auth"], json={"preset": "viewer_tool"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["preset"] == "viewer_tool" and body["role"] == "viewer"
+    assert "capability:tool_integration" in body["capability_grant"]["capabilities"]
+
+
+async def test_patch_key_does_not_retroactively_change_registered_accounts(client, db, mailer):
+    a = await _admin(client, db, mailer)
+    created = (await client.post("/v1/admin/keys", headers=a["auth"],
+                                 json={"role": "viewer", "max_uses": 2})).json()
+    reg = await register(client, db, username="truoc_khi_sua", key=created["key"])
+    assert reg.status_code == 200, reg.text
+    patched = await client.patch(f"/v1/admin/keys/{created['key']}", headers=a["auth"],
+                                 json={"preset": "viewer_tool"})
+    assert patched.status_code == 200, patched.text
+    async with db.connection() as conn:
+        aid = await conn.fetchval("SELECT id FROM accounts WHERE username = 'truoc_khi_sua'")
+        caps = {row["permission"] for row in
+               await conn.fetch("SELECT permission FROM account_permissions WHERE account_id = $1", aid)}
+    assert "capability:tool_integration" not in caps
+
+
+async def test_patch_key_max_uses_below_used_count_rejected(client, db, mailer):
+    a = await _admin(client, db, mailer)
+    created = (await client.post("/v1/admin/keys", headers=a["auth"],
+                                 json={"role": "viewer", "max_uses": 3})).json()
+    for i in range(2):
+        r = await register(client, db, username=f"dung_{i}", key=created["key"])
+        assert r.status_code == 200, r.text
+    r = await client.patch(f"/v1/admin/keys/{created['key']}", headers=a["auth"], json={"max_uses": 1})
+    assert r.status_code == 422
+
+
+async def test_patch_revoked_key_rejected(client, db, mailer):
+    a = await _admin(client, db, mailer)
+    created = (await client.post("/v1/admin/keys", headers=a["auth"], json={"role": "viewer"})).json()
+    assert (await client.delete(f"/v1/admin/keys/{created['key']}", headers=a["auth"])).status_code == 200
+    r = await client.patch(f"/v1/admin/keys/{created['key']}", headers=a["auth"], json={"label": "moi"})
+    assert r.status_code == 409
+
+
+async def test_dash_admin_cannot_patch_admin_key_or_set_admin_preset(client, db, mailer):
+    a = await _admin(client, db, mailer)
+    admin_key = (await client.post("/v1/admin/keys", headers=a["auth"], json={"role": "admin"})).json()
+    viewer_key = (await client.post("/v1/admin/keys", headers=a["auth"], json={"role": "viewer"})).json()
+    d = await _admin(client, db, mailer, "dash_patch", role="dash_admin")
+    r1 = await client.patch(f"/v1/admin/keys/{admin_key['key']}", headers=d["auth"], json={"label": "x"})
+    assert r1.status_code == 403
+    r2 = await client.patch(f"/v1/admin/keys/{viewer_key['key']}", headers=d["auth"], json={"preset": "admin"})
+    assert r2.status_code == 403
 
 
 # ── quản lý user ────────────────────────────────────────────────────────────────

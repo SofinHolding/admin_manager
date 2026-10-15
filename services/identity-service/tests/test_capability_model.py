@@ -61,9 +61,9 @@ async def test_catalog_is_seeded_with_capability_permissions(client, db, mailer)
 # ── Default theo role lúc đăng ký ────────────────────────────────────────────────
 
 @pytest.mark.parametrize("role,expected", [
-    ("viewer", {"capability:web_access", "capability:dashboard_access"}),
+    ("viewer", {"capability:web_access", "capability:dashboard_access", "capability:manual_channel_mgmt"}),
     ("dash_admin", {"capability:web_access", "capability:dashboard_access"}),
-    ("admin", ALL_CAPS),
+    ("admin", ALL_CAPS - {"capability:tool_integration"}),
     ("discord", set()),
 ])
 async def test_registration_grants_default_capabilities_by_role(client, db, mailer, role, expected):
@@ -82,7 +82,7 @@ async def test_capability_grant_adds_to_role_defaults_when_not_overriding(client
     await register_verified_with_key(client, db, mailer, username="them_quyen", key=key, role="viewer")
     aid = await account_id(db, "them_quyen")
     assert await granted_caps(db, aid) == {"capability:web_access", "capability:dashboard_access",
-                                           "capability:tool_integration"}
+                                           "capability:manual_channel_mgmt", "capability:tool_integration"}
 
 
 async def test_capability_grant_overrides_role_defaults_when_requested(client, db, mailer):
@@ -104,23 +104,28 @@ async def test_jwt_perms_reflect_granted_capabilities_after_login(client, db, ma
     assert {"capability:web_access", "capability:dashboard_access", "capability:tool_integration"} <= set(c["perms"])
 
 
-# ── Admin tạo key: capability_grant được chuẩn hoá + trả lại nguyên vẹn ──────────
+# ── Admin tạo key: preset thay thế capability_grant trực tiếp (capability-model-v1.md, mục preset) ──────────
 
-async def test_admin_created_key_echoes_capability_grant(client, db, mailer):
+async def test_admin_created_key_with_preset_echoes_capability_grant(client, db, mailer):
     a = await admin(client, db, mailer)
-    grant = {"capabilities": ["capability:tool_integration", "capability:api_write"], "override_defaults": False}
-    r = await client.post("/v1/admin/keys", headers=a["auth"], json={"capability_grant": grant})
+    r = await client.post("/v1/admin/keys", headers=a["auth"], json={"preset": "viewer_tool"})
     assert r.status_code == 200, r.text
-    assert r.json()["capability_grant"] == grant
+    body = r.json()
+    assert body["preset"] == "viewer_tool" and body["role"] == "viewer"
+    assert body["capability_grant"] == {
+        "capabilities": ["capability:web_access", "capability:dashboard_access",
+                         "capability:manual_channel_mgmt", "capability:tool_integration"],
+        "override_defaults": True}
 
 
-async def test_admin_key_capability_grant_must_exist_in_catalog(client, db, mailer):
+async def test_admin_key_rejects_raw_capability_grant_and_integration_policy(client, db, mailer):
     a = await admin(client, db, mailer)
     before = await client.get("/v1/admin/keys", headers=a["auth"])
     before_count = len(before.json()["keys"])
-    r = await client.post("/v1/admin/keys", headers=a["auth"],
-                          json={"capability_grant": {"capabilities": ["capability:does_not_exist"]}})
-    assert r.status_code == 422
+    for body in ({"capability_grant": {"capabilities": ["capability:tool_integration"]}},
+                 {"integration_policy": {"allow_integration_registration": True}}):
+        r = await client.post("/v1/admin/keys", headers=a["auth"], json=body)
+        assert r.status_code == 422
     after = await client.get("/v1/admin/keys", headers=a["auth"])
     assert len(after.json()["keys"]) == before_count
 
@@ -139,7 +144,7 @@ async def test_admin_can_grant_list_and_revoke_a_capability(client, db, mailer):
 
     listed = await client.get(f"/v1/admin/accounts/{uid}/capabilities", headers=a["auth"])
     assert set(listed.json()["capabilities"]) == {"capability:web_access", "capability:dashboard_access",
-                                                  "capability:tool_integration"}
+                                                  "capability:manual_channel_mgmt", "capability:tool_integration"}
 
     revoked = await client.delete(f"/v1/admin/accounts/{uid}/capabilities/capability:tool_integration",
                                   headers=a["auth"])

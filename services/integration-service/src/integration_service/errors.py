@@ -26,7 +26,15 @@ class Extra(str, Enum):
     IDEMPOTENCY_IN_PROGRESS = "IDEMPOTENCY_IN_PROGRESS"      # 409 yêu cầu trùng khoá đang xử lý
     UNSUPPORTED_ENCODING = "UNSUPPORTED_ENCODING"            # 415
     JOB_INVALID_STATE = "JOB_INVALID_STATE"                  # 409 chuyển trạng thái job không hợp lệ (vd complete job đã failed)
-    JOB_NOT_ELIGIBLE = "JOB_NOT_ELIGIBLE"                    # 409 resource không ở execution_mode=fallback_tool / đã gỡ / bị tắt
+    JOB_NOT_ELIGIBLE = "JOB_NOT_ELIGIBLE"                     # 409 resource không ở execution_mode=fallback_tool / đã gỡ / bị tắt
+    CREDENTIAL_DEVICE_BOUND = "CREDENTIAL_DEVICE_BOUND"       # 409 credential đã bind thiết bị khác (handshake)
+    CREDENTIAL_NOT_ACTIVATED = "CREDENTIAL_NOT_ACTIVATED"     # 403 credential chưa handshake/bind thiết bị
+    INSTALLATION_MISMATCH = "INSTALLATION_MISMATCH"           # 403 X-Installation-Id vắng/khác installation đã bind
+    SHARED_CLIENT_REQUIRES_DELEGATION = "SHARED_CLIENT_REQUIRES_DELEGATION"  # 403 client shared ghi dữ liệu thiếu X-Delegated-Job
+    CLIENT_NOT_READY = "CLIENT_NOT_READY"                     # 409 client shared còn draft (chưa configure/activate)
+    REVEAL_NOT_AVAILABLE = "REVEAL_NOT_AVAILABLE"             # 404 không có credential đang chờ reveal
+    REVEAL_EXPIRED = "REVEAL_EXPIRED"                         # 410 reveal đã hết hạn
+    PERSONAL_CLIENT_EXISTS = "PERSONAL_CLIENT_EXISTS"         # 409 owner đích đã có client personal pending/active
 
 
 Code = ErrorCode | Extra
@@ -51,6 +59,10 @@ def forbidden(code: Code, message: str, details: dict | None = None) -> ApiProbl
 
 def conflict(code: Code, message: str, details: dict | None = None) -> ApiProblem:
     return ApiProblem(code, message, status_code=409, details=details)
+
+
+def gone(code: Code, message: str, details: dict | None = None) -> ApiProblem:
+    return ApiProblem(code, message, status_code=410, details=details)
 
 
 def unauthorized(message: str = "Thiếu hoặc sai thông tin xác thực", code: Code = ErrorCode.AUTH_INVALID) -> ApiProblem:

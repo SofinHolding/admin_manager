@@ -16,35 +16,39 @@ hoặc dùng `infra/scripts/dev_stack.py` (nạp env + migrate + chạy cả b�
 **Biến môi trường chính:** `IDENTITY_DATABASE_URL` (bắt buộc), `IDENTITY_KEY_ENCRYPTION_KEY` (Fernet — mã hóa khóa ký private trong DB; **mất khóa này = mất khả năng ký**), `IDENTITY_ISSUER`,
 `IDENTITY_AUDIENCE` (mặc định `manager-api`), `IDENTITY_ENV` (`dev|test|production`; dev in token email ra log), `IDENTITY_ACCESS_TOKEN_ALG` (`RS256` mặc định; `HS256` chỉ để sống chung legacy, cần `IDENTITY_JWT_COMPAT_SECRET`),
 `IDENTITY_ACCESS_TOKEN_TTL_S` (mặc định 900), `IDENTITY_JWKS_GRACE_SECONDS`, `IDENTITY_FEED_KEY_<READER>` (mỗi bên đọc feed một khóa ≥24 ký tự: `ANALYTICS`, `INTEGRATION`, `REWARD`),
-`IDENTITY_INTEGRATION_FEED_URL/KEY` (consumer provisioning; thiếu ⇒ tắt, service vẫn chạy), `IDENTITY_WEB_REDIRECT_URIS`, `IDENTITY_BACKCHANNEL_*`, `IDENTITY_SSO_TTL_S`, `IDENTITY_AUTH_CODE_TTL_S`.
+`IDENTITY_WEB_REDIRECT_URIS`, `IDENTITY_BACKCHANNEL_*`, `IDENTITY_SSO_TTL_S`, `IDENTITY_AUTH_CODE_TTL_S`.
 
 | Module | Việc |
 |---|---|
 | `auth` | register/login/logout/refresh/verify-email/forgot/reset/change-password (giữ contract legacy); `authenticate()` dùng chung với OIDC; rate limit đăng nhập trong bộ nhớ; hash giả chống dò username qua thời gian |
-| `accounts` | hồ sơ, admin user, trạng thái; `integration_repository` (provisioning của tài khoản) |
-| `registration_keys` | invite key; `policy.py`: `normalize_policy` (admin tạo key) + `plan_registration` (kiểm `requested ⊆ policy` **trước** khi tiêu key) |
+| `accounts` | hồ sơ, admin user, trạng thái |
+| `registration_keys` | invite key; `presets.py` (preset → role + capability, nguồn sự thật duy nhất); `policy.py`: `normalize_apps` |
 | `tokens` | `KeyStore` (khóa active duy nhất — chỉ mục unique một phần; khóa retired vẫn publish trong ân hạn), `TokenService` (`sign`, `verify_own`; access token bắt buộc `typ=at+jwt`), JWKS |
 | `permissions` | catalog (`admin_only`), cấp/thu, `perms` trong token, shim `discord`→`reward:access` |
 | `oidc` | discovery, authorize(+PKCE S256 bắt buộc, `state` bắt buộc), login hosted (CSRF, cookie SSO HttpOnly), token, userinfo, introspect (client phải xác thực), revoke, logout (open-redirect an toàn), back-channel (IP đã kiểm duyệt, chống DNS rebinding, không theo redirect), registry client (`oidc_clients.py seed-dev`) |
 | `outbox` | ghi event trong cùng transaction; `/internal/v1/feed` |
 | `audit` | `auth_audit` |
 | `notifications` | `SmtpMailer` / `LogMailer` (port/adapter) |
-| `feed_consumer` | kéo feed Integration → cập nhật `integration_provisioning` (idempotent, cursor bền, dead-letter, replay: `python -m identity_service.feed_consumer replay`) |
 | (gốc) `legacy_sync.py`, `keys.py` | đồng bộ một chiều legacy→identity_db + parity; CLI `keys rotate|list` |
 
-**Bảng sở hữu (20):** `accounts, invite_keys, refresh_tokens, permissions, account_permissions, oidc_clients, signing_keys, auth_audit, outbox, sessions, integration_provisioning, feed_cursor, processed_events, dead_letters, oidc_auth_codes, oidc_refresh_tokens, sso_sessions, oidc_session_clients, oidc_backchannel_deliveries, oidc_cursor`.
-Migration: `0001_init` · `0002_tokens_permissions_outbox` · `0003_oidc` · `0004_registration_integration`.
+**Bảng sở hữu (20):** `accounts, invite_keys, refresh_tokens, permissions, account_permissions, oidc_clients, signing_keys, auth_audit, outbox, sessions, integration_provisioning, feed_cursor, processed_events, dead_letters, oidc_auth_codes, oidc_refresh_tokens, sso_sessions, oidc_session_clients, oidc_backchannel_deliveries, oidc_cursor`
+(4 bảng `integration_provisioning/feed_cursor/processed_events/dead_letters`: sổ sách của `feed_consumer` cũ,
+gỡ khỏi code 2026-10-14 — GIỮ NGUYÊN trong schema, không còn đọc/ghi; dọn vật lý phải qua migration riêng có
+phương án rollback).
+Migration: `0001_init` · `0002_tokens_permissions_outbox` · `0003_oidc` · `0004_registration_integration` ·
+`0005_capabilities` · `0006_admin_only_capabilities` · `0007_invite_presets`.
 
-**Endpoint:** `/v1/auth/*` (legacy-compatible) · `/v1/accounts/me/integration`, `/v1/accounts/{id}/permissions` · `/v1/admin/{users,keys,permissions,accounts/{id}/permissions/{perm},oidc/clients}` ·
+**Endpoint:** `/v1/auth/*` (legacy-compatible) · `/v1/accounts/{id}/permissions` ·
+`/v1/admin/{users,keys,keys/presets,permissions,accounts/{id}/permissions/{perm},oidc/clients}` ·
 `/.well-known/{jwks.json,openid-configuration}` · `/oauth/{authorize,login,token,userinfo,introspect,revoke,logout}` · nội bộ `/internal/v1/feed` (không qua gateway, `X-Service-Key`).
 
-**Event phát:** `account.registered` (kèm `provisioning{client_id,tool_name,client_kind,platforms,scopes}` nếu đăng ký kèm Tool), `account.verified`, `account.status_changed`, `account.role_changed`, `account.profile_updated`, `account.permission_changed`, `account.deleted`, `session.revoked`.
-**Event nhận:** `integration.client.provisioned`, `integration.client.provision_failed`.
+**Event phát:** `account.registered`, `account.verified`, `account.status_changed`, `account.role_changed`, `account.profile_updated`, `account.permission_changed`, `account.deleted`, `session.revoked`.
+**Event nhận:** (không — gỡ `feed_consumer` 2026-10-14, Identity không còn tiêu thụ event từ service khác).
 
 **Điểm tinh tế:**
 - Phiên SSO cũng là một dòng `sessions` (`client_type='sso'`) nên đổi mật khẩu/khóa/đổi role/thu hồi làm chết cả cookie SSO. Đăng nhập lại luôn cấp cookie mới (chống session fixation).
 - Auth code bị dùng lại ⇒ thu hồi cả family + phiên + refresh và phát `session.revoked`. Hai refresh đồng thời cùng một token bị coi là dùng lại (chặt chẽ có chủ đích).
-- Đăng ký kèm integration chạy trong **một transaction** (có test gài trigger làm lỗi bước cuối để chứng minh rollback). Không yêu cầu `integration` ⇒ response y hệt legacy.
+- Đăng ký chạy trong **một transaction** (key consume + tạo account + cấp capability/permission đều rollback cùng nhau nếu lỗi).
 - Thu hồi một access token ⇒ kết thúc cả grant (token gắn `sid`).
 - Log truy cập uvicorn che query nhạy cảm (`id_token_hint`, `code`, `token`…) bằng `logredact.py`.
 - Test dùng chung `identity_db` DEV: **không chạy song song** hai bộ test identity.
@@ -55,13 +59,16 @@ Migration: `0001_init` · `0002_tokens_permissions_outbox` · `0003_oidc` · `00
 
 **Cổng duy nhất cho Tool/hệ thống ngoài.** Hai mặt phẳng xác thực tách biệt: USER (JWT RS256 qua JWKS) cho quản trị; MÁY (API key `mpk_`) cho ingest/jobs. Xem [05](05-xac-thuc-va-bao-mat.md).
 
-**Biến môi trường chính:** `INTEGRATION_DATABASE_URL`, `INTEGRATION_ISSUER`, `INTEGRATION_AUDIENCE`, `INTEGRATION_IDENTITY_JWKS_URL`, `INTEGRATION_FEED_KEY_<READER>` (`ANALYTICS`, `IDENTITY`),
-`INTEGRATION_IDENTITY_FEED_URL/KEY` (consumer provisioning; thiếu ⇒ tắt), `INTEGRATION_RATE_LIMIT_PER_MIN` (600), `INTEGRATION_SNAPSHOT_TTL_S` (21600), `INTEGRATION_MAX_BODY_BYTES` (2 MiB, hỗ trợ gzip),
+**Biến môi trường chính:** `INTEGRATION_DATABASE_URL`, `INTEGRATION_ISSUER`, `INTEGRATION_AUDIENCE`, `INTEGRATION_IDENTITY_JWKS_URL`, `INTEGRATION_FEED_KEY_<READER>` (`ANALYTICS`),
+`INTEGRATION_IDENTITY_FEED_URL/KEY` (consumer vòng đời account/capability; thiếu ⇒ tắt), `INTEGRATION_REVEAL_KEY` (Fernet, BẮT BUỘC khi phục vụ), `INTEGRATION_PUBLIC_BASE_URL` (base URL hiện trong connection guide), `CREDENTIAL_REVEAL_TTL_DAYS` (7),
+`INTEGRATION_RATE_LIMIT_PER_MIN` (600), `INTEGRATION_SNAPSHOT_TTL_S` (21600), `INTEGRATION_MAX_BODY_BYTES` (2 MiB, hỗ trợ gzip),
 `INTEGRATION_MAX_CLIENTS_PER_OWNER` (20), `INTEGRATION_MAX_CREDENTIALS_PER_CLIENT` (10), `INTEGRATION_CREDENTIAL_DEFAULT_TTL_DAYS`, `INTEGRATION_MAINTENANCE_INTERVAL_S` (60), `INTEGRATION_JOB_*`, `INTEGRATION_LEGACY_REDEEM_*`.
 
 | Module | Việc |
 |---|---|
-| `clients`, `credentials`, `installations` | client ↔ account; API key (hash, hiện 1 lần, xoay, thu hồi); handshake + thiết bị. Scope mặc định: `integration:handshake, resources:write, snapshots:write, metrics:write`; fallback: `jobs:claim, jobs:complete`; `jobs:claim:system` chỉ admin cấp |
+| `clients`, `credentials`, `installations` | client `personal` (tự sinh từ capability, tối đa 1/account) và `shared` (wizard admin `draft → config → activate`); API key (hash, hiện 1 lần cho chủ, reveal Fernet cho khoá cấp hộ, xoay, thu hồi, chuyển chủ); handshake + **device binding** 1 khoá : 1 thiết bị. Scope mặc định: `integration:handshake, resources:write, snapshots:write, metrics:write`; fallback: `jobs:claim, jobs:complete`; `jobs:claim:system` chỉ admin cấp |
+| `guide` | `/v1/integrations/me/connection-guide` + `/me/openapi.json`: danh mục endpoint máy ↔ scope tường minh (`guide/catalog.py`, test đối chiếu route thật), schema request resolve từ OpenAPI |
+| `provisioning` | consumer feed Identity: `account_projection` + vòng đời client theo account; `account.permission_changed(tool_integration)` cấp ⇒ Tool cá nhân + khoá chờ nhận, thu hồi ⇒ tạm dừng + thu hồi khoá |
 | `platforms` | Platform Registry + Metric Registry — **dữ liệu**, thêm bằng `PUT /v1/integrations/admin/{platforms,metrics}/{key}` (role admin) |
 | `projects`, `resources` | project/source namespace (tự upsert), resource (page/channel/profile), `execution_mode`, `origin` |
 | `snapshots`, `ingest` | state machine `building → committing → committed | failed | abandoned`; `ingest.validate/merge` (LWW, absolute, null≠0, removed suy luận, events bất biến); commit nguyên tử |
@@ -76,13 +83,13 @@ Migration: `0001_init` · `0002_tokens_permissions_outbox` · `0003_oidc` · `00
 
 **Bảng sở hữu (32):** `integration_clients, integration_credentials, installations, platform_registry, metric_registry, projects, resources, resource_project_bindings, snapshots, snapshot_items, content_items, daily_metrics, activity_events, idempotency_keys, jobs, audit_log, account_projection, outbox, feed_cursor, processed_events, dead_letters, user_channel_groups` + nhóm `legacy_ingest`:
 `documents, user_meta, account_links, link_codes, platform_policies, resource_sources, resource_assignments, operation_batches, operation_items, operation_audit_log`.
-Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` · `0004_projection_status_seq` · `0005_channel_subscriptions` · `0006_delegated_ingestion` · `0007_user_channel_groups` (nhóm quốc gia viewer).
+Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` · `0004_projection_status_seq` · `0005_channel_subscriptions` · `0006_delegated_ingestion` · `0007_user_channel_groups` (nhóm quốc gia viewer) · `0008_tool_ownership` (ownership, `draft`, reveal, device binding, 1 personal/account).
 
 **Endpoint (máy, `Authorization: Bearer mpk_…`):** `POST /v1/integrations/handshake`, `PUT /projects/{key}`, `POST /resources/batch`, `POST /snapshots`, `POST /snapshots/{id}/{resources|content|metrics|events|commit}`, `GET /snapshots/{id}`,
-`POST /jobs/claim`, `/jobs/{id}/{complete|fail|heartbeat}`.
-**Endpoint (user, token RS256):** `/v1/integrations/clients[...]` (+ `/credentials`, `/rotate`), `/audit`, `/admin/{platforms,metrics,resources}`, `/jobs` (tạo/liệt kê/hủy). **Legacy (user token):** `/v1/resources/*`, `/v1/ops/*`, `/v1/viewer/links*`. **Nội bộ:** `/internal/v1/{feed,canonical/{kind},canonical/summary}`.
+`POST /jobs/claim`, `/jobs/{id}/{complete|fail|heartbeat}` — mọi endpoint trừ handshake cần `X-Installation-Id` của thiết bị đã bind.
+**Endpoint (user, token RS256):** `/v1/integrations/clients[...]` (+ `/config`, `/activate`, `/transfer`, `/credentials`, `/rotate`), `/me/{connection-guide,openapi.json,credential/reveal}`, `/audit`, `/admin/{platforms,metrics,resources}`, `/jobs` (tạo/liệt kê/hủy). **Legacy (user token):** `/v1/resources/*`, `/v1/ops/*`, `/v1/viewer/links*`. **Nội bộ:** `/internal/v1/{feed,canonical/{kind},canonical/summary}`.
 
-**Event phát:** `snapshot.committed`, `resource.changed`, `integration.client.provisioned`, `integration.client.provision_failed`, `credential.revoked`. **Nhận:** `account.registered|verified|status_changed|deleted` (→ bảng `account_projection`).
+**Event phát:** `snapshot.committed`, `resource.changed`, `integration.client.provisioned`, `credential.revoked`. **Nhận:** `account.registered|verified|status_changed|deleted|permission_changed` (→ `account_projection` + vòng đời client).
 
 **Điểm tinh tế:**
 - **Ownership suy ra từ credential.** Bất kỳ `owner*` nào ở body ingest/legacy ⇒ `422 RECORD_VALIDATION_FAILED` cho cả request.
@@ -93,9 +100,10 @@ Migration: `0001_init` · `0002_jobs` · `0003_legacy_ingest` · `0004_projectio
 - Snapshot `full` chỉ suy luận `removed` cho bản ghi có `observed_at` **<= observed_at của snapshot** (bản ghi mới hơn do batch/delta ghi trong lúc snapshot đang building là bằng chứng Tool còn thấy nó). Bản ghi con (content/metrics/events) không gắn được vào resource đã `removed` (`RESOURCE_UNKNOWN`: gửi lại resource để hồi sinh) và không đoán khi nhiều `resource_type` cùng `external_id` còn sống.
 - Tool đẩy một khóa resource ⇒ Tool **tiếp quản** (`origin='tool'`, kể cả resource nhập tay trước đó và kể cả dữ liệu y hệt): Legacy chỉ thấy/sửa `origin<>'tool'` nên không còn ghi đè dữ liệu Tool.
 - Xoay/thu hồi credential: chỉ chủ client hoặc role `admin` (`dash_admin` chỉ xem ⇒ 403 `SCOPE_DENIED`).
-- Replay dead-letter của provisioning: `account.registered` cũ chỉ điền chỗ trống của `account_projection`; `account.status_changed` cũ bị bỏ nếu `status_seq` đã mới hơn (migration `0004`).
+- Replay dead-letter: `account.registered` cũ chỉ điền chỗ trống của `account_projection`; `account.status_changed` cũ bị bỏ nếu `status_seq` đã mới hơn (migration `0004`).
+- Plaintext khoá chỉ tới tay chủ Tool cá nhân (hoặc admin với client dùng chung). Khoá cấp hộ lưu bản mã hoá Fernet tới khi chủ `reveal` (xoá ngay sau đó) hoặc hết hạn.
 - Snapshot `full` cũ hơn snapshot đã commit chỉ bỏ phần suy luận `removed` (warning `SNAPSHOT_SUPERSEDED`), không lật `current` lùi. Resource nhập tay (`origin<>'tool'`) không bị snapshot `full` của Tool xóa.
-- Mã lỗi riêng của service khai ở `integration_service/errors.py::Extra` (chưa có trong `manager_contracts.ErrorCode`): `PAYLOAD_TOO_LARGE, EMAIL_NOT_VERIFIED, CLIENT_NOT_ACTIVE, ACCOUNT_INACTIVE, CLIENT_NOT_FOUND, CREDENTIAL_NOT_FOUND, LIMIT_EXCEEDED, SNAPSHOT_NOT_WRITABLE, SNAPSHOT_COMMIT_IN_PROGRESS, UNSUPPORTED_ENCODING, JOB_INVALID_STATE, JOB_NOT_ELIGIBLE`.
+- Mã lỗi riêng của service khai ở `integration_service/errors.py::Extra` (chưa có trong `manager_contracts.ErrorCode`): `PAYLOAD_TOO_LARGE, EMAIL_NOT_VERIFIED, CLIENT_NOT_ACTIVE, ACCOUNT_INACTIVE, CLIENT_NOT_FOUND, CREDENTIAL_NOT_FOUND, LIMIT_EXCEEDED, SNAPSHOT_NOT_WRITABLE, SNAPSHOT_COMMIT_IN_PROGRESS, UNSUPPORTED_ENCODING, JOB_INVALID_STATE, JOB_NOT_ELIGIBLE, CREDENTIAL_DEVICE_BOUND, CREDENTIAL_NOT_ACTIVATED, INSTALLATION_MISMATCH, SHARED_CLIENT_REQUIRES_DELEGATION, CLIENT_NOT_READY, REVEAL_NOT_AVAILABLE, REVEAL_EXPIRED, PERSONAL_CLIENT_EXISTS`.
 - OpenAPI đóng băng ở `docs/api/openapi/integration-service.v1.json`; **thêm path = additive OK; đổi/xóa = breaking ⇒ contract version mới** (test `tests/contract/test_integration_openapi_frozen.py`).
 
 ---
@@ -173,10 +181,10 @@ Skeleton chuẩn như mọi service: mã ở `src/reward_service/{api,domain,eng
 
 React + Vite + TypeScript. Dev: `npm run dev` (bind `127.0.0.1:5174`, proxy `/v1`, `/oauth`, `/.well-known` → gateway `:8400`). Cổng chất lượng: `npm run typecheck`, `npm test` (vitest), `npm run build` (+ `postbuild` quét bundle).
 
-- `src/lib/http.ts` (Bearer, refresh 401 gộp một lần, timeout, AbortController, bóc envelope) · `src/lib/errors.ts` (hiểu cả envelope mới và `{detail}` legacy) · `src/api.ts` (`analyticsApi, authApi, adminApi, permissionsApi, integrationApi, accountsApi`) · `src/reward/api.ts`.
+- `src/lib/http.ts` (Bearer, refresh 401 gộp một lần, timeout, AbortController, bóc envelope) · `src/lib/errors.ts` (hiểu cả envelope mới và `{detail}` legacy) · `src/api.ts` (`analyticsApi, authApi, adminApi, permissionsApi, integrationApi`) · `src/reward/api.ts`.
 - `src/filters/` (`filterState.ts` thuần 8 tham số, `FilterContext.tsx` nguồn sự thật duy nhất đồng bộ URL, `useAnalyticsQuery.ts` hủy request cũ/giữ dữ liệu cuối khi 503, `freshness.ts`, `compareDimensions.ts`).
 - `src/auth/` (`tokenStore.ts`, `oidc.ts` PKCE S256 + state + nonce, `permissions.ts`), `src/auth.tsx`; `VITE_AUTH_MODE=oidc` bật SSO.
-- `routes/`: Dashboard, Admin (invite key + `PermissionsDialog`), `IntegrationClientsPage` (`/integrations`), Register (đăng ký kèm Tool), Groups, Resources, Profile, Reset/Verify, `OidcCallbackPage`. `components/SecretOnceDialog` (API key hiện đúng một lần, không vào storage).
+- `routes/`: Dashboard, Admin (mã mời theo preset + `PermissionsDialog` + tab "Công cụ dùng chung" wizard 4 bước), `MyToolsPage` (`/my-tools`, trang "Tích hợp Tool" dựng toàn bộ từ `connection-guide`: khóa/reveal/rotate/revoke, endpoint/schema/ví dụ curl-Python, openapi.json/.env, snapshot gần nhất), Register (không còn mục đăng ký kèm Tool), Groups, Resources, Profile, Reset/Verify, `OidcCallbackPage`. `/integrations` redirect sang `/my-tools`. `components/SecretOnceDialog` (API key hiện đúng một lần, không vào storage).
 - **Giao diện v1** (`docs/architecture/ui-design-v1.md`): thanh bên theo việc + thanh tab/ngăn kéo trên điện thoại (`src/nav.ts`, `Layout.tsx`), bộ kit dùng chung `src/components/kit.tsx`, token ở `src/index.css`, chữ Be Vietnam Pro tự host, nền 15px (người dùng chọn cỡ chữ chuẩn/lớn/rất lớn và sáng/tối/theo máy ở `lib/preferences.ts` — ngoại lệ DUY NHẤT được dùng `localStorage`, có test khóa). Trang mới phải dùng kit và theo quy tắc viết/vai trò ở tài liệu đó.
 - Quy tắc cứng: không `dangerouslySetInnerHTML/innerHTML` (test quét nguồn); refresh token **không** vào `localStorage`; quét bundle không được có secret.
 

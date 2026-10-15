@@ -4,10 +4,20 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 
-from identity_service.auth.schemas import (ChangePasswordBody, CheckEmailBody, CheckUsernameBody,
-                                           ForgotPasswordBody, LoginBody, LogoutBody, RefreshBody,
-                                           RegisterBody, ResendVerifyBody, ResetPasswordBody,
-                                           UpdateProfileBody, ValidateKeyBody)
+from identity_service.auth.schemas import (
+    ChangePasswordBody,
+    CheckEmailBody,
+    CheckUsernameBody,
+    ForgotPasswordBody,
+    LoginBody,
+    LogoutBody,
+    RefreshBody,
+    RegisterBody,
+    ResendVerifyBody,
+    ResetPasswordBody,
+    UpdateProfileBody,
+    ValidateKeyBody,
+)
 from identity_service.deps import client_ip, current_account, get_container
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
@@ -38,9 +48,8 @@ async def check_email(body: CheckEmailBody, request: Request) -> dict:
 async def register(body: RegisterBody, request: Request) -> dict:
     c = get_container(request)
     c.limiter.check(client_ip(request), "register", 3, 3600)
-    integration = body.integration.model_dump() if body.integration and body.integration.create else None
     return await c.auth.register(key=body.key, username=body.username, password=body.password,
-                                 email=body.email, integration=integration)
+                                 email=body.email)
 
 
 @router.get("/verify-email", summary="Xác thực email (click link từ email)")

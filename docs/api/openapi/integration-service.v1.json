@@ -198,6 +198,106 @@
         "title": "BatchResult",
         "type": "object"
       },
+      "ChannelGroupCreate": {
+        "additionalProperties": false,
+        "example": {
+          "country_code": "VN",
+          "name": "Vietnam"
+        },
+        "properties": {
+          "country_code": {
+            "default": "",
+            "maxLength": 10,
+            "title": "Country Code",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ChannelGroupCreate",
+        "type": "object"
+      },
+      "ChannelGroupOut": {
+        "properties": {
+          "country_code": {
+            "title": "Country Code",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_account_id": {
+            "title": "Owner Account Id",
+            "type": "string"
+          },
+          "sort_order": {
+            "title": "Sort Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "owner_account_id",
+          "name",
+          "country_code",
+          "sort_order",
+          "created_at"
+        ],
+        "title": "ChannelGroupOut",
+        "type": "object"
+      },
+      "ChannelGroupUpdate": {
+        "additionalProperties": false,
+        "example": {
+          "name": "Vietnam (Nam)"
+        },
+        "properties": {
+          "country_code": {
+            "anyOf": [
+              {
+                "maxLength": 10,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country Code"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "ChannelGroupUpdate",
+        "type": "object"
+      },
       "ClaimedJob": {
         "properties": {
           "attempt": {
@@ -263,54 +363,96 @@
         "title": "ClaimedJob",
         "type": "object"
       },
-      "ClientCreate": {
+      "ClientActivate": {
         "additionalProperties": false,
-        "description": "Owner = `sub` của token; KHÔNG nhận owner từ body.",
+        "description": "Bước 3 wizard (CHỈ admin): `confirm_tool_name` phải khớp `tool_name` — chống kích hoạt nhầm.",
         "example": {
-          "client_kind": "primary_tool",
-          "platforms": [
-            "facebook",
-            "youtube"
-          ],
-          "tool_name": "My Upload Tool"
+          "confirm_tool_name": "Fallback Collector"
         },
         "properties": {
-          "client_kind": {
-            "enum": [
-              "primary_tool",
-              "fallback_tool",
-              "service"
-            ],
-            "title": "Client Kind",
+          "confirm_tool_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Confirm Tool Name",
             "type": "string"
-          },
-          "platforms": {
+          }
+        },
+        "required": [
+          "confirm_tool_name"
+        ],
+        "title": "ClientActivate",
+        "type": "object"
+      },
+      "ClientConfigure": {
+        "additionalProperties": false,
+        "description": "Bước 2 wizard (CHỈ admin, chỉ khi client `draft`).",
+        "example": {
+          "allowed_platforms": [
+            "facebook"
+          ],
+          "allowed_scopes": [
+            "integration:handshake",
+            "resources:write",
+            "snapshots:write",
+            "metrics:write",
+            "jobs:claim",
+            "jobs:complete"
+          ]
+        },
+        "properties": {
+          "allowed_platforms": {
             "items": {
               "pattern": "^[a-z][a-z0-9_]{0,63}$",
               "type": "string"
             },
             "maxItems": 20,
             "minItems": 1,
-            "title": "Platforms",
+            "title": "Allowed Platforms",
             "type": "array"
           },
-          "tool_name": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Tool Name",
-            "type": "string"
+          "allowed_scopes": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Allowed Scopes",
+            "type": "array"
           }
         },
         "required": [
-          "tool_name",
-          "client_kind",
-          "platforms"
+          "allowed_platforms",
+          "allowed_scopes"
         ],
-        "title": "ClientCreate",
+        "title": "ClientConfigure",
         "type": "object"
       },
       "ClientDetailOut": {
         "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "activated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated By"
+          },
           "allowed_platforms": {
             "items": {
               "type": "string"
@@ -337,6 +479,18 @@
             ],
             "title": "Client Kind",
             "type": "string"
+          },
+          "configured_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured At"
           },
           "contract_version": {
             "title": "Contract Version",
@@ -373,8 +527,32 @@
             "title": "Owner Account Id",
             "type": "string"
           },
+          "owner_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Username"
+          },
+          "ownership": {
+            "enum": [
+              "personal",
+              "shared"
+            ],
+            "title": "Ownership",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
           "status": {
             "enum": [
+              "draft",
               "pending_email_verification",
               "active",
               "suspended",
@@ -399,20 +577,45 @@
           "tool_name",
           "client_kind",
           "status",
+          "ownership",
+          "purpose",
           "contract_version",
           "allowed_platforms",
           "allowed_scopes",
           "created_from",
           "created_at",
           "updated_at",
-          "installations",
-          "credentials"
+          "credentials",
+          "installations"
         ],
         "title": "ClientDetailOut",
         "type": "object"
       },
       "ClientOut": {
         "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "activated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated By"
+          },
           "allowed_platforms": {
             "items": {
               "type": "string"
@@ -440,6 +643,18 @@
             "title": "Client Kind",
             "type": "string"
           },
+          "configured_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured At"
+          },
           "contract_version": {
             "title": "Contract Version",
             "type": "string"
@@ -457,12 +672,50 @@
             "title": "Created From",
             "type": "string"
           },
+          "credentials": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CredentialSummaryOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credentials"
+          },
           "owner_account_id": {
             "title": "Owner Account Id",
             "type": "string"
           },
+          "owner_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Username"
+          },
+          "ownership": {
+            "enum": [
+              "personal",
+              "shared"
+            ],
+            "title": "Ownership",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          },
           "status": {
             "enum": [
+              "draft",
               "pending_email_verification",
               "active",
               "suspended",
@@ -487,6 +740,8 @@
           "tool_name",
           "client_kind",
           "status",
+          "ownership",
+          "purpose",
           "contract_version",
           "allowed_platforms",
           "allowed_scopes",
@@ -570,6 +825,76 @@
           }
         },
         "title": "ClientPatch",
+        "type": "object"
+      },
+      "ClientTransferRequest": {
+        "additionalProperties": false,
+        "description": "Chuyển chủ client PERSONAL (CHỈ admin).",
+        "example": {
+          "new_owner_account_id": "acc_example"
+        },
+        "properties": {
+          "new_owner_account_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "New Owner Account Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_owner_account_id"
+        ],
+        "title": "ClientTransferRequest",
+        "type": "object"
+      },
+      "ClientWizardCreate": {
+        "additionalProperties": false,
+        "description": "Bước 1 wizard (CHỈ admin). Client tạo ở `draft`; platforms/scopes gán ở bước `PUT .../config`.",
+        "example": {
+          "client_kind": "fallback_tool",
+          "platforms": [
+            "facebook"
+          ],
+          "purpose": "Thu thập dữ liệu hộ user khi primary tool lỗi",
+          "tool_name": "Fallback Collector"
+        },
+        "properties": {
+          "client_kind": {
+            "enum": [
+              "fallback_tool",
+              "service"
+            ],
+            "title": "Client Kind",
+            "type": "string"
+          },
+          "platforms": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Platforms",
+            "type": "array"
+          },
+          "purpose": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Purpose",
+            "type": "string"
+          },
+          "tool_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_name",
+          "client_kind",
+          "purpose"
+        ],
+        "title": "ClientWizardCreate",
         "type": "object"
       },
       "CommitOut": {
@@ -669,6 +994,255 @@
           }
         },
         "title": "CommitRequest",
+        "type": "object"
+      },
+      "ConnectionGuideAuth": {
+        "properties": {
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "header": {
+            "const": "Authorization",
+            "title": "Header",
+            "type": "string"
+          }
+        },
+        "required": [
+          "header",
+          "format"
+        ],
+        "title": "ConnectionGuideAuth",
+        "type": "object"
+      },
+      "ConnectionGuideEndpoint": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "error_codes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Error Codes",
+            "type": "array"
+          },
+          "example_request": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Example Request"
+          },
+          "example_response": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Example Response"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "request_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Schema"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "scope",
+          "summary",
+          "description"
+        ],
+        "title": "ConnectionGuideEndpoint",
+        "type": "object"
+      },
+      "ConnectionGuideErrorCode": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "http_status": {
+            "title": "Http Status",
+            "type": "integer"
+          },
+          "meaning": {
+            "title": "Meaning",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "http_status",
+          "meaning"
+        ],
+        "title": "ConnectionGuideErrorCode",
+        "type": "object"
+      },
+      "ConnectionGuideHeader": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required_when": {
+            "title": "Required When",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "required_when",
+          "description"
+        ],
+        "title": "ConnectionGuideHeader",
+        "type": "object"
+      },
+      "ConnectionGuideLimits": {
+        "properties": {
+          "batch_max_items": {
+            "title": "Batch Max Items",
+            "type": "integer"
+          },
+          "body_max_bytes": {
+            "title": "Body Max Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_max_items",
+          "body_max_bytes"
+        ],
+        "title": "ConnectionGuideLimits",
+        "type": "object"
+      },
+      "ConnectionGuideOut": {
+        "description": "`GET /v1/integrations/me/connection-guide` — tự mô tả cách gọi API cho CHỦ client personal (chỉ endpoint mà\nscope của credential hiện có cho phép; `handshake` luôn có).",
+        "properties": {
+          "auth": {
+            "$ref": "#/components/schemas/ConnectionGuideAuth"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "client": {
+            "$ref": "#/components/schemas/ClientOut"
+          },
+          "contract_version": {
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CredentialInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGuideEndpoint"
+            },
+            "title": "Endpoints",
+            "type": "array"
+          },
+          "error_codes": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGuideErrorCode"
+            },
+            "title": "Error Codes",
+            "type": "array"
+          },
+          "installations": {
+            "items": {
+              "$ref": "#/components/schemas/InstallationInfoOut"
+            },
+            "title": "Installations",
+            "type": "array"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ConnectionGuideLimits"
+          },
+          "recent_snapshots": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Recent Snapshots",
+            "type": "array"
+          },
+          "required_headers": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGuideHeader"
+            },
+            "title": "Required Headers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "base_url",
+          "contract_version",
+          "auth",
+          "required_headers",
+          "client",
+          "credential",
+          "installations",
+          "endpoints",
+          "limits",
+          "error_codes",
+          "recent_snapshots"
+        ],
+        "title": "ConnectionGuideOut",
         "type": "object"
       },
       "ContentBatch": {
@@ -877,6 +1451,40 @@
       },
       "CredentialInfo": {
         "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "bound_device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound Device Id"
+          },
+          "bound_installation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound Installation Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -913,6 +1521,46 @@
               }
             ],
             "title": "Last Used At"
+          },
+          "reveal_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reveal Expires At"
+          },
+          "reveal_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "revealed",
+                  "expired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reveal State"
+          },
+          "revealed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revealed At"
           },
           "revoked_at": {
             "anyOf": [
@@ -955,7 +1603,7 @@
         "type": "object"
       },
       "CredentialIssued": {
-        "description": "`api_key` CHỈ xuất hiện ở response này; DB chỉ lưu sha256(secret).",
+        "description": "`api_key` CHỈ xuất hiện khi CHỦ (hoặc máy, lúc reveal) tự nhận plaintext. Admin cấp/xoay HỘ trên client\npersonal => `api_key=null`, `reveal_state=\"pending\"` (chủ phải gọi `/me/credential/reveal`).",
         "properties": {
           "allowed_platforms": {
             "items": {
@@ -965,8 +1613,15 @@
             "type": "array"
           },
           "api_key": {
-            "title": "Api Key",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
           },
           "client_id": {
             "title": "Client Id",
@@ -1015,6 +1670,22 @@
             ],
             "title": "Previous Key Id"
           },
+          "reveal_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "revealed",
+                  "expired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reveal State"
+          },
           "scopes": {
             "items": {
               "type": "string"
@@ -1026,7 +1697,6 @@
         "required": [
           "client_id",
           "key_id",
-          "api_key",
           "scopes",
           "expires_at",
           "contract_version",
@@ -1062,6 +1732,94 @@
           "already_revoked"
         ],
         "title": "CredentialRevoked",
+        "type": "object"
+      },
+      "CredentialSummaryOut": {
+        "description": "Tóm tắt credential trong `GET /clients` (list) — không có scopes/label/created_at đầy đủ.",
+        "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "bound_device_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound Device Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "reveal_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pending",
+                  "revealed",
+                  "expired"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reveal State"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "revoked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key_id",
+          "status",
+          "last_used_at",
+          "expires_at"
+        ],
+        "title": "CredentialSummaryOut",
         "type": "object"
       },
       "Envelope_AuditPage_": {
@@ -1104,6 +1862,27 @@
           "meta"
         ],
         "title": "Envelope[BatchResult]",
+        "type": "object"
+      },
+      "Envelope_ChannelGroupOut_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ChannelGroupOut"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OkMeta"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "Envelope[ChannelGroupOut]",
         "type": "object"
       },
       "Envelope_ClientDetailOut_": {
@@ -1167,6 +1946,27 @@
           "meta"
         ],
         "title": "Envelope[CommitOut]",
+        "type": "object"
+      },
+      "Envelope_ConnectionGuideOut_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConnectionGuideOut"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OkMeta"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "Envelope[ConnectionGuideOut]",
         "type": "object"
       },
       "Envelope_CredentialIssued_": {
@@ -1503,6 +2303,54 @@
           "meta"
         ],
         "title": "Envelope[WorkerRegisterOut]",
+        "type": "object"
+      },
+      "Envelope_dict_": {
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OkMeta"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "Envelope[dict]",
+        "type": "object"
+      },
+      "Envelope_list_ChannelGroupOut__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelGroupOut"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OkMeta"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "Envelope[list[ChannelGroupOut]]",
         "type": "object"
       },
       "Envelope_list_ClientOut__": {
@@ -4006,11 +4854,15 @@
       "BATCH_TOO_LARGE",
       "CLIENT_NOT_ACTIVE",
       "CLIENT_NOT_FOUND",
+      "CLIENT_NOT_READY",
       "CONTRACT_VERSION_UNSUPPORTED",
+      "CREDENTIAL_DEVICE_BOUND",
+      "CREDENTIAL_NOT_ACTIVATED",
       "CREDENTIAL_NOT_FOUND",
       "EMAIL_NOT_VERIFIED",
       "IDEMPOTENCY_CONFLICT",
       "IDEMPOTENCY_IN_PROGRESS",
+      "INSTALLATION_MISMATCH",
       "JOB_INVALID_STATE",
       "JOB_LEASE_EXPIRED",
       "JOB_NOT_ELIGIBLE",
@@ -4020,6 +4872,7 @@
       "METRIC_UNKNOWN",
       "NOT_FOUND",
       "PAYLOAD_TOO_LARGE",
+      "PERSONAL_CLIENT_EXISTS",
       "PLATFORM_NOT_ALLOWED",
       "PROJECT_VALIDATION_FAILED",
       "RATE_LIMITED",
@@ -4028,8 +4881,11 @@
       "RESOURCE_CONFLICT",
       "RESOURCE_UNKNOWN",
       "RESOURCE_VALIDATION_FAILED",
+      "REVEAL_EXPIRED",
+      "REVEAL_NOT_AVAILABLE",
       "SCOPE_DENIED",
       "SERVER_ERROR",
+      "SHARED_CLIENT_REQUIRES_DELEGATION",
       "SNAPSHOT_ALREADY_COMMITTED",
       "SNAPSHOT_COMMIT_IN_PROGRESS",
       "SNAPSHOT_INCOMPLETE",
@@ -5048,7 +5904,7 @@
     },
     "/v1/integrations/clients": {
       "get": {
-        "description": "User thường chỉ thấy client của mình. `admin`/`dash_admin` thấy tất cả, lọc bằng `owner`. Không bao giờ trả secret/hash.",
+        "description": "User thường chỉ thấy client của mình. `admin`/`dash_admin` thấy tất cả, lọc bằng `owner`. Mỗi item kèm `ownership`, `purpose`, `credentials` (tóm tắt, chưa revoked). Không bao giờ trả secret/hash.",
         "operationId": "list_clients_v1_integrations_clients_get",
         "parameters": [
           {
@@ -5127,6 +5983,7 @@
                 "example": {
                   "data": [
                     {
+                      "activated_at": "2026-10-05T10:00:00Z",
                       "allowed_platforms": [
                         "facebook",
                         "youtube"
@@ -5141,10 +5998,12 @@
                       "client_kind": "primary_tool",
                       "contract_version": "2026-10-01",
                       "created_at": "2026-10-05T10:00:00Z",
-                      "created_from": "api",
+                      "created_from": "provisioning",
                       "owner_account_id": "3f2a9c1e5b7d4e8f9a0b1c2d3e4f5a6b",
+                      "ownership": "personal",
+                      "purpose": "",
                       "status": "active",
-                      "tool_name": "My Upload Tool",
+                      "tool_name": "Tool cá nhân",
                       "updated_at": "2026-10-05T10:00:00Z"
                     }
                   ],
@@ -5299,7 +6158,7 @@
         ]
       },
       "post": {
-        "description": "Owner = `sub` của access token (không nhận từ body). `platforms` bị cắt theo Platform Registry; scope mặc định theo `client_kind`. Client ở trạng thái `pending_email_verification` cho tới khi email của account được xác thực (xem `account.verified`).",
+        "description": "CHỈ role `admin`. `client_kind` chỉ `fallback_tool`/`service` (`primary_tool` => 422, tự provision từ capability). Owner = admin gọi (người chịu trách nhiệm). Tạo ở trạng thái `draft` — chưa cấp được credential cho tới khi `PUT .../config` rồi `POST .../activate`.",
         "operationId": "create_client_v1_integrations_clients_post",
         "parameters": [
           {
@@ -5317,7 +6176,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ClientCreate"
+                "$ref": "#/components/schemas/ClientWizardCreate"
               }
             }
           },
@@ -5329,24 +6188,18 @@
               "application/json": {
                 "example": {
                   "data": {
-                    "allowed_platforms": [
-                      "facebook",
-                      "youtube"
-                    ],
-                    "allowed_scopes": [
-                      "integration:handshake",
-                      "metrics:write",
-                      "resources:write",
-                      "snapshots:write"
-                    ],
+                    "allowed_platforms": [],
+                    "allowed_scopes": [],
                     "client_id": "cli_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f",
-                    "client_kind": "primary_tool",
+                    "client_kind": "fallback_tool",
                     "contract_version": "2026-10-01",
                     "created_at": "2026-10-05T10:00:00Z",
                     "created_from": "api",
                     "owner_account_id": "3f2a9c1e5b7d4e8f9a0b1c2d3e4f5a6b",
-                    "status": "active",
-                    "tool_name": "My Upload Tool",
+                    "ownership": "shared",
+                    "purpose": "Thu thập dữ liệu hộ user khi primary tool lỗi",
+                    "status": "draft",
+                    "tool_name": "Fallback Collector",
                     "updated_at": "2026-10-05T10:00:00Z"
                   },
                   "meta": {
@@ -5360,7 +6213,7 @@
                 }
               }
             },
-            "description": "Client đã tạo"
+            "description": "Client draft"
           },
           "401": {
             "content": {
@@ -5403,6 +6256,27 @@
               }
             },
             "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
           },
           "409": {
             "content": {
@@ -5494,7 +6368,7 @@
             "UserAccessToken": []
           }
         ],
-        "summary": "Tạo Integration Client",
+        "summary": "Bước 1 — Tạo client dùng chung (admin)",
         "tags": [
           "clients"
         ]
@@ -5502,7 +6376,7 @@
     },
     "/v1/integrations/clients/{client_id}": {
       "get": {
-        "description": "Chủ client hoặc admin. Kèm installations và credentials (key_id, scopes, last_used_at, status).",
+        "description": "Chủ client hoặc admin. Kèm installations và credentials (key_id, scopes, last_used_at, status, reveal_state, bound_device_id, activated_at).",
         "operationId": "get_client_v1_integrations_clients__client_id__get",
         "parameters": [
           {
@@ -5531,6 +6405,7 @@
               "application/json": {
                 "example": {
                   "data": {
+                    "activated_at": "2026-10-05T10:00:00Z",
                     "allowed_platforms": [
                       "facebook",
                       "youtube"
@@ -5545,9 +6420,12 @@
                     "client_kind": "primary_tool",
                     "contract_version": "2026-10-01",
                     "created_at": "2026-10-05T10:00:00Z",
-                    "created_from": "api",
+                    "created_from": "provisioning",
                     "credentials": [
                       {
+                        "activated_at": "2026-10-05T10:00:00Z",
+                        "bound_device_id": "device-abc",
+                        "bound_installation_id": "ins_0123456789abcdef0123456789abcdef",
                         "created_at": "2026-10-05T10:00:00Z",
                         "key_id": "AbCdEfGhIjKl",
                         "label": "pc-01",
@@ -5574,8 +6452,10 @@
                       }
                     ],
                     "owner_account_id": "3f2a9c1e5b7d4e8f9a0b1c2d3e4f5a6b",
+                    "ownership": "personal",
+                    "purpose": "",
                     "status": "active",
-                    "tool_name": "My Upload Tool",
+                    "tool_name": "Tool cá nhân",
                     "updated_at": "2026-10-05T10:00:00Z"
                   },
                   "meta": {
@@ -5729,7 +6609,7 @@
         ]
       },
       "patch": {
-        "description": "Chỉ role `admin`. `status` (suspended/deleted thu hồi MỌI credential), `allowed_scopes` (`jobs:claim:system` chỉ cho `fallback_tool`), `allowed_platforms`, `tool_name`.",
+        "description": "Chỉ role `admin`. `status` (suspended/deleted thu hồi MỌI credential; sang `active` khi đang `draft` => 409 `CLIENT_NOT_READY`, dùng `.../activate`), `allowed_scopes` (`jobs:claim:system` chỉ cho `fallback_tool`), `allowed_platforms`, `tool_name`.",
         "operationId": "patch_client_v1_integrations_clients__client_id__patch",
         "parameters": [
           {
@@ -5768,6 +6648,7 @@
               "application/json": {
                 "example": {
                   "data": {
+                    "activated_at": "2026-10-05T10:00:00Z",
                     "allowed_platforms": [
                       "facebook",
                       "youtube"
@@ -5782,10 +6663,12 @@
                     "client_kind": "primary_tool",
                     "contract_version": "2026-10-01",
                     "created_at": "2026-10-05T10:00:00Z",
-                    "created_from": "api",
+                    "created_from": "provisioning",
                     "owner_account_id": "3f2a9c1e5b7d4e8f9a0b1c2d3e4f5a6b",
+                    "ownership": "personal",
+                    "purpose": "",
                     "status": "suspended",
-                    "tool_name": "My Upload Tool",
+                    "tool_name": "Tool cá nhân",
                     "updated_at": "2026-10-05T10:00:00Z"
                   },
                   "meta": {
@@ -5939,9 +6822,481 @@
         ]
       }
     },
+    "/v1/integrations/clients/{client_id}/activate": {
+      "post": {
+        "description": "CHỈ role `admin`. Cần `configured_at` đã có (bước 2); `confirm_tool_name` PHẢI khớp `tool_name` (chống kích hoạt nhầm client). Sau bước này mới cấp được credential.",
+        "operationId": "activate_client_v1_integrations_clients__client_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientActivate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "activated_at": "2026-10-05T10:00:00Z",
+                    "allowed_platforms": [
+                      "facebook",
+                      "youtube"
+                    ],
+                    "allowed_scopes": [
+                      "integration:handshake",
+                      "metrics:write",
+                      "resources:write",
+                      "snapshots:write"
+                    ],
+                    "client_id": "cli_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f",
+                    "client_kind": "primary_tool",
+                    "contract_version": "2026-10-01",
+                    "created_at": "2026-10-05T10:00:00Z",
+                    "created_from": "provisioning",
+                    "owner_account_id": "3f2a9c1e5b7d4e8f9a0b1c2d3e4f5a6b",
+                    "ownership": "personal",
+                    "purpose": "",
+                    "status": "active",
+                    "tool_name": "Tool cá nhân",
+                    "updated_at": "2026-10-05T10:00:00Z"
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ClientOut_"
+                }
+              }
+            },
+            "description": "Client active"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_ALREADY_COMMITTED",
+                    "details": {},
+                    "message": "Snapshot đã được commit"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Xung đột trạng thái / IDEMPOTENCY_CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RATE_LIMITED",
+                    "details": {},
+                    "message": "Vượt giới hạn request của client"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RATE_LIMITED (kèm Retry-After)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Bước 3 — Kích hoạt (admin)",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
+    "/v1/integrations/clients/{client_id}/config": {
+      "put": {
+        "description": "CHỈ role `admin`, CHỈ khi client đang `draft` (ngược lại 409 `CLIENT_NOT_READY`). `allowed_scopes` theo policy kind (`jobs:claim:system`/`jobs:*` chỉ `fallback_tool`).",
+        "operationId": "configure_client_v1_integrations_clients__client_id__config_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientConfigure"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "allowed_platforms": [
+                      "facebook"
+                    ],
+                    "allowed_scopes": [
+                      "integration:handshake",
+                      "resources:write",
+                      "snapshots:write",
+                      "metrics:write",
+                      "jobs:claim",
+                      "jobs:complete"
+                    ],
+                    "client_id": "cli_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f",
+                    "client_kind": "fallback_tool",
+                    "contract_version": "2026-10-01",
+                    "created_at": "2026-10-05T10:00:00Z",
+                    "created_from": "api",
+                    "owner_account_id": "3f2a9c1e5b7d4e8f9a0b1c2d3e4f5a6b",
+                    "ownership": "shared",
+                    "purpose": "Thu thập dữ liệu hộ user khi primary tool lỗi",
+                    "status": "draft",
+                    "tool_name": "Fallback Collector",
+                    "updated_at": "2026-10-05T10:00:00Z"
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ClientOut_"
+                }
+              }
+            },
+            "description": "Client đã cấu hình"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_ALREADY_COMMITTED",
+                    "details": {},
+                    "message": "Snapshot đã được commit"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Xung đột trạng thái / IDEMPOTENCY_CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RATE_LIMITED",
+                    "details": {},
+                    "message": "Vượt giới hạn request của client"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RATE_LIMITED (kèm Retry-After)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Bước 2 — Cấu hình platform/scope (admin)",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
     "/v1/integrations/clients/{client_id}/credentials": {
       "post": {
-        "description": "Chủ client, client `active`, email đã xác thực. Trả `api_key` (`mpk_<key_id>.<secret>`) **một lần duy nhất**; server chỉ lưu key_id + sha256(secret). Scope yêu cầu không được vượt `allowed_scopes` của client.",
+        "description": "Chủ hoặc admin, client `active` (`draft` => 409 `CLIENT_NOT_READY`), email đã xác thực. CHỦ nhận `api_key` (`mpk_<key_id>.<secret>`) **một lần duy nhất**. Admin cấp HỘ trên client `personal` KHÔNG thấy `api_key` — response có `reveal_state=\"pending\"`, chủ tự nhận qua `POST /v1/integrations/me/credential/reveal`. Admin cấp trên client `shared` nhận `api_key` như bình thường. Server chỉ lưu key_id + sha256(secret). Scope yêu cầu không được vượt `allowed_scopes` của client.",
         "operationId": "issue_credential_v1_integrations_clients__client_id__credentials_post",
         "parameters": [
           {
@@ -6591,6 +7946,242 @@
         ]
       }
     },
+    "/v1/integrations/clients/{client_id}/transfer": {
+      "post": {
+        "description": "CHỈ role `admin`, CHỈ client `ownership=personal`. Thu hồi mọi credential cũ, đổi `owner_account_id`, cấp credential mới `reveal_state=pending` cho chủ mới (chủ mới tự `reveal`). Dữ liệu đã ingest trước đó GIỮ owner cũ. Đích đã có client personal pending/active => 409 `PERSONAL_CLIENT_EXISTS`.",
+        "operationId": "transfer_client_v1_integrations_clients__client_id__transfer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientTransferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "activated_at": "2026-10-05T10:00:00Z",
+                    "allowed_platforms": [
+                      "facebook",
+                      "youtube"
+                    ],
+                    "allowed_scopes": [
+                      "integration:handshake",
+                      "metrics:write",
+                      "resources:write",
+                      "snapshots:write"
+                    ],
+                    "client_id": "cli_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f",
+                    "client_kind": "primary_tool",
+                    "contract_version": "2026-10-01",
+                    "created_at": "2026-10-05T10:00:00Z",
+                    "created_from": "provisioning",
+                    "owner_account_id": "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d",
+                    "ownership": "personal",
+                    "purpose": "",
+                    "status": "active",
+                    "tool_name": "Tool cá nhân",
+                    "updated_at": "2026-10-05T10:00:00Z"
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ClientOut_"
+                }
+              }
+            },
+            "description": "Client sau khi chuyển chủ"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_ALREADY_COMMITTED",
+                    "details": {},
+                    "message": "Snapshot đã được commit"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Xung đột trạng thái / IDEMPOTENCY_CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RATE_LIMITED",
+                    "details": {},
+                    "message": "Vượt giới hạn request của client"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RATE_LIMITED (kèm Retry-After)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Chuyển chủ client cá nhân (admin)",
+        "tags": [
+          "clients"
+        ]
+      }
+    },
     "/v1/integrations/handshake": {
       "post": {
         "description": "Scope `integration:handshake`. Tạo/cập nhật installation theo `(client, device_id)`. `tool_name` chỉ là metadata — ownership suy ra từ API key. Trả giao của capabilities khai báo và được phép; platform ngoài phạm vi client => `PLATFORM_NOT_ALLOWED`.",
@@ -6615,7 +8206,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -6628,7 +8219,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -7318,7 +8909,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -7331,7 +8922,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -8000,7 +9591,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -8013,7 +9604,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -8264,7 +9855,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -8277,7 +9868,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -8528,7 +10119,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -8541,7 +10132,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -8759,9 +10350,669 @@
         ]
       }
     },
+    "/v1/integrations/me/connection-guide": {
+      "get": {
+        "description": "Chủ client personal (cần `capability:tool_integration`). 404 `CLIENT_NOT_FOUND` nếu chưa có Tool cá nhân. Chỉ liệt kê endpoint mà scope của credential hiện có cho phép (`handshake` luôn có).",
+        "operationId": "connection_guide_v1_integrations_me_connection_guide_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "auth": {
+                      "format": "Bearer mpk_<key_id>.<secret>",
+                      "header": "Authorization"
+                    },
+                    "base_url": "https://api.manager.example.com",
+                    "client": {
+                      "activated_at": "2026-10-05T10:00:00Z",
+                      "allowed_platforms": [
+                        "facebook",
+                        "youtube"
+                      ],
+                      "allowed_scopes": [
+                        "integration:handshake",
+                        "metrics:write",
+                        "resources:write",
+                        "snapshots:write"
+                      ],
+                      "client_id": "cli_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f",
+                      "client_kind": "primary_tool",
+                      "contract_version": "2026-10-01",
+                      "created_at": "2026-10-05T10:00:00Z",
+                      "created_from": "provisioning",
+                      "owner_account_id": "3f2a9c1e5b7d4e8f9a0b1c2d3e4f5a6b",
+                      "ownership": "personal",
+                      "purpose": "",
+                      "status": "active",
+                      "tool_name": "Tool cá nhân",
+                      "updated_at": "2026-10-05T10:00:00Z"
+                    },
+                    "contract_version": "2026-10-01",
+                    "credential": {
+                      "activated_at": "2026-10-05T10:00:00Z",
+                      "bound_device_id": "device-abc",
+                      "bound_installation_id": "ins_0123456789abcdef0123456789abcdef",
+                      "key_id": "AbCdEfGhIjKl",
+                      "last_used_at": "2026-10-05T10:00:00Z",
+                      "reveal_state": "revealed",
+                      "scopes": [
+                        "integration:handshake",
+                        "snapshots:write"
+                      ],
+                      "status": "active"
+                    },
+                    "endpoints": [
+                      {
+                        "description": "Khai báo thiết bị, bind credential.",
+                        "error_codes": [
+                          "CREDENTIAL_DEVICE_BOUND"
+                        ],
+                        "example_response": {
+                          "accepted_capabilities": [
+                            "resources.push",
+                            "snapshots.push"
+                          ],
+                          "accepted_contract_version": "2026-10-01",
+                          "allowed_capabilities": [
+                            "metrics.push",
+                            "resources.push",
+                            "snapshots.push"
+                          ],
+                          "allowed_platforms": [
+                            "facebook"
+                          ],
+                          "allowed_scopes": [
+                            "integration:handshake",
+                            "metrics:write",
+                            "resources:write",
+                            "snapshots:write"
+                          ],
+                          "client_id": "cli_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f",
+                          "installation_created": true,
+                          "installation_id": "ins_0123456789abcdef0123456789abcdef",
+                          "owner_account_id": "3f2a9c1e5b7d4e8f9a0b1c2d3e4f5a6b",
+                          "server_time": "2026-10-05T10:00:00Z"
+                        },
+                        "method": "POST",
+                        "path": "/v1/integrations/handshake",
+                        "scope": "integration:handshake",
+                        "summary": "Handshake"
+                      }
+                    ],
+                    "error_codes": [
+                      {
+                        "code": "CREDENTIAL_NOT_ACTIVATED",
+                        "http_status": 403,
+                        "meaning": "Chưa handshake/bind thiết bị"
+                      }
+                    ],
+                    "installations": [],
+                    "limits": {
+                      "batch_max_items": 500,
+                      "body_max_bytes": 2097152
+                    },
+                    "recent_snapshots": [],
+                    "required_headers": [
+                      {
+                        "description": "mpk_<key_id>.<secret>",
+                        "name": "Authorization",
+                        "required_when": "luôn"
+                      },
+                      {
+                        "description": "vd 2026-10-01",
+                        "name": "X-Contract-Version",
+                        "required_when": "khuyến nghị"
+                      },
+                      {
+                        "description": "installation_id trả về lúc handshake",
+                        "name": "X-Installation-Id",
+                        "required_when": "mọi endpoint máy trừ /handshake"
+                      },
+                      {
+                        "description": "8-128 ký tự [A-Za-z0-9_.:-]",
+                        "name": "Idempotency-Key",
+                        "required_when": "mọi POST/PUT ghi"
+                      }
+                    ]
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ConnectionGuideOut_"
+                }
+              }
+            },
+            "description": "Hướng dẫn kết nối"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RATE_LIMITED",
+                    "details": {},
+                    "message": "Vượt giới hạn request của client"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RATE_LIMITED (kèm Retry-After)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Hướng dẫn kết nối Tool cá nhân",
+        "tags": [
+          "guide"
+        ]
+      }
+    },
+    "/v1/integrations/me/credential/reveal": {
+      "post": {
+        "description": "Chủ client personal. Credential `reveal_state=pending` chưa hết hạn và client `active` => trả plaintext MỘT LẦN rồi xoá ciphertext (`reveal_state=revealed`). Hết hạn => 410 `REVEAL_EXPIRED`. Không có pending => 404 `REVEAL_NOT_AVAILABLE`. Email chưa xác thực => 403 `EMAIL_NOT_VERIFIED`.",
+        "operationId": "reveal_credential_v1_integrations_me_credential_reveal_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "allowed_platforms": [
+                      "facebook"
+                    ],
+                    "api_key": "mpk_AbCdEfGhIjKl.<43 ký tự secret, chỉ hiện một lần>",
+                    "client_id": "cli_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f",
+                    "contract_version": "2026-10-01",
+                    "expires_at": "2027-01-03T10:00:00Z",
+                    "key_id": "AbCdEfGhIjKl",
+                    "scopes": [
+                      "integration:handshake",
+                      "snapshots:write"
+                    ]
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_CredentialIssued_"
+                }
+              }
+            },
+            "description": "Credential plaintext"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SERVER_ERROR",
+                    "details": {},
+                    "message": "Lỗi"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Lỗi"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RATE_LIMITED",
+                    "details": {},
+                    "message": "Vượt giới hạn request của client"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RATE_LIMITED (kèm Retry-After)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Nhận plaintext credential cấp hộ",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
+    "/v1/integrations/me/openapi.json": {
+      "get": {
+        "description": "Chủ client personal. Chỉ gồm endpoint ở connection-guide + components cần thiết.",
+        "operationId": "me_openapi_v1_integrations_me_openapi_json_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "OpenAPI rút gọn"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RATE_LIMITED",
+                    "details": {},
+                    "message": "Vượt giới hạn request của client"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RATE_LIMITED (kèm Retry-After)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "OpenAPI rút gọn cho Tool cá nhân",
+        "tags": [
+          "guide"
+        ]
+      }
+    },
     "/v1/integrations/projects/{project_key}": {
       "put": {
-        "description": "Scope `resources:write`. `project_key` dạng `^[a-z][a-z0-9_]{0,63}$`, phạm vi theo owner (suy từ API key). Tạo nếu chưa có, cập nhật nếu có — không có bước Admin mapping. Hỗ trợ `Idempotency-Key`.",
+        "description": "Scope `resources:write`. `project_key` dạng `^[a-z][a-z0-9_]{0,63}$`, phạm vi theo owner (suy từ API key). Tạo nếu chưa có, cập nhật nếu có — không có bước Admin mapping. Hỗ trợ `Idempotency-Key`. Client dùng chung (`ownership=shared`) BẮT BUỘC kèm `X-Delegated-Job` nếu không => 403 `SHARED_CLIENT_REQUIRES_DELEGATION`.",
         "operationId": "put_project_v1_integrations_projects__project_key__put",
         "parameters": [
           {
@@ -8772,6 +11023,24 @@
               "pattern": "^[a-z][a-z0-9_]{0,63}$",
               "title": "Project Key",
               "type": "string"
+            }
+          },
+          {
+            "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+            "in": "header",
+            "name": "X-Delegated-Job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+              "title": "X-Delegated-Job"
             }
           },
           {
@@ -8793,7 +11062,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -8806,7 +11075,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -9032,10 +11301,10 @@
         ]
       }
     },
-    "/v1/integrations/resources/batch": {
-      "post": {
-        "description": "Scope `resources:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413). Khoá tự nhiên `(owner, platform, resource_type, external_id)`; `observed_at` mới hơn thắng. Mỗi bản ghi lỗi nằm trong `rejections` (không bỏ sót im lặng). Trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Platform ngoài phạm vi => 403 `PLATFORM_NOT_ALLOWED`. Hỗ trợ `Idempotency-Key`.",
-        "operationId": "resources_batch_v1_integrations_resources_batch_post",
+    "/v1/integrations/resource-owners": {
+      "get": {
+        "description": "Scope `jobs:claim`. **`fallback_tool`**: trả tất cả owner trong hệ thống kèm số resource. **Các client khác**: trả chính owner của key.",
+        "operationId": "list_resource_owners_v1_integrations_resource_owners_get",
         "parameters": [
           {
             "description": "Phiên bản hợp đồng, vd 2026-10-01",
@@ -9056,7 +11325,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -9069,7 +11338,425 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
+              "title": "X-Installation-Id"
+            }
+          },
+          {
+            "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "users": [
+                      {
+                        "id": "acc_example",
+                        "resource_count": 3,
+                        "username": "alice"
+                      }
+                    ]
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_dict_",
+                  "additionalProperties": true,
+                  "title": "Response List Resource Owners V1 Integrations Resource Owners Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Danh sách owner"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "MachineApiKey": []
+          }
+        ],
+        "summary": "Danh sách user có resource (machine)",
+        "tags": [
+          "machine"
+        ]
+      }
+    },
+    "/v1/integrations/resources": {
+      "get": {
+        "description": "Scope `jobs:claim`. **`fallback_tool`** (key tool dùng chung): thấy TẤT CẢ owner; `owner_account_id` để lọc thêm khi pull từng user. **Các client khác**: chỉ thấy resource của chính key đó.",
+        "operationId": "list_own_resources_v1_integrations_resources_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource_type",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Resource Type",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Lọc theo owner (chỉ có hiệu lực với fallback_tool key)",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "Lọc theo owner (chỉ có hiệu lực với fallback_tool key)",
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Phiên bản hợp đồng, vd 2026-10-01",
+            "in": "header",
+            "name": "x-contract-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Phiên bản hợp đồng, vd 2026-10-01",
+              "title": "X-Contract-Version"
+            }
+          },
+          {
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
+            "in": "header",
+            "name": "x-installation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
+              "title": "X-Installation-Id"
+            }
+          },
+          {
+            "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "is_shared": true,
+                    "items": [],
+                    "owner_account_id": "acc_example"
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_dict_",
+                  "additionalProperties": true,
+                  "title": "Response List Own Resources V1 Integrations Resources Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Danh sách resource"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "MachineApiKey": []
+          }
+        ],
+        "summary": "Danh sách resource (machine)",
+        "tags": [
+          "machine"
+        ]
+      }
+    },
+    "/v1/integrations/resources/batch": {
+      "post": {
+        "description": "Scope `resources:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413). Khoá tự nhiên `(owner, platform, resource_type, external_id)`; `observed_at` mới hơn thắng. Mỗi bản ghi lỗi nằm trong `rejections` (không bỏ sót im lặng). Trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Platform ngoài phạm vi => 403 `PLATFORM_NOT_ALLOWED`. Hỗ trợ `Idempotency-Key`. Client dùng chung (`ownership=shared`) BẮT BUỘC kèm `X-Delegated-Job` nếu không => 403 `SHARED_CLIENT_REQUIRES_DELEGATION`.",
+        "operationId": "resources_batch_v1_integrations_resources_batch_post",
+        "parameters": [
+          {
+            "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+            "in": "header",
+            "name": "X-Delegated-Job",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "job_id đã claim (PHASE 4, chỉ fallback_tool) — gán owner dữ liệu từ job.resource_owner_id",
+              "title": "X-Delegated-Job"
+            }
+          },
+          {
+            "description": "Phiên bản hợp đồng, vd 2026-10-01",
+            "in": "header",
+            "name": "x-contract-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Phiên bản hợp đồng, vd 2026-10-01",
+              "title": "X-Contract-Version"
+            }
+          },
+          {
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
+            "in": "header",
+            "name": "x-installation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -9393,7 +12080,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -9406,7 +12093,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -9711,7 +12398,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -9724,7 +12411,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -10000,7 +12687,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -10013,7 +12700,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -10308,7 +12995,7 @@
     },
     "/v1/integrations/snapshots/{snapshot_id}/content": {
       "post": {
-        "description": "Scope `snapshots:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413, hỗ trợ gzip). Mỗi bản ghi sai nằm trong `rejections` (không bỏ sót im lặng); trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Giá trị metric là SỐ TUYỆT ĐỐI (ghi đè, không cộng); `null` = chưa thu thập, `0` = đã thu thập và bằng 0. Hỗ trợ `Idempotency-Key`.",
+        "description": "Scope `snapshots:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413, hỗ trợ gzip). Mỗi bản ghi sai nằm trong `rejections` (không bỏ sót im lặng); trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Giá trị metric là SỐ TUYỆT ĐỐI (ghi đè, không cộng); `null` = chưa thu thập, `0` = đã thu thập và bằng 0. Hỗ trợ `Idempotency-Key`. Client dùng chung (`ownership=shared`) BẮT BUỘC kèm `X-Delegated-Job` nếu không => 403 `SHARED_CLIENT_REQUIRES_DELEGATION`.",
         "operationId": "snapshot_content_v1_integrations_snapshots__snapshot_id__content_post",
         "parameters": [
           {
@@ -10357,7 +13044,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -10370,7 +13057,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -10655,7 +13342,7 @@
     },
     "/v1/integrations/snapshots/{snapshot_id}/events": {
       "post": {
-        "description": "Scope `snapshots:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413, hỗ trợ gzip). Mỗi bản ghi sai nằm trong `rejections` (không bỏ sót im lặng); trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Giá trị metric là SỐ TUYỆT ĐỐI (ghi đè, không cộng); `null` = chưa thu thập, `0` = đã thu thập và bằng 0. Hỗ trợ `Idempotency-Key`.",
+        "description": "Scope `snapshots:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413, hỗ trợ gzip). Mỗi bản ghi sai nằm trong `rejections` (không bỏ sót im lặng); trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Giá trị metric là SỐ TUYỆT ĐỐI (ghi đè, không cộng); `null` = chưa thu thập, `0` = đã thu thập và bằng 0. Hỗ trợ `Idempotency-Key`. Client dùng chung (`ownership=shared`) BẮT BUỘC kèm `X-Delegated-Job` nếu không => 403 `SHARED_CLIENT_REQUIRES_DELEGATION`.",
         "operationId": "snapshot_events_v1_integrations_snapshots__snapshot_id__events_post",
         "parameters": [
           {
@@ -10704,7 +13391,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -10717,7 +13404,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -10988,7 +13675,7 @@
     },
     "/v1/integrations/snapshots/{snapshot_id}/metrics": {
       "post": {
-        "description": "Scope `metrics:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413, hỗ trợ gzip). Mỗi bản ghi sai nằm trong `rejections` (không bỏ sót im lặng); trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Giá trị metric là SỐ TUYỆT ĐỐI (ghi đè, không cộng); `null` = chưa thu thập, `0` = đã thu thập và bằng 0. Hỗ trợ `Idempotency-Key`.",
+        "description": "Scope `metrics:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413, hỗ trợ gzip). Mỗi bản ghi sai nằm trong `rejections` (không bỏ sót im lặng); trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Giá trị metric là SỐ TUYỆT ĐỐI (ghi đè, không cộng); `null` = chưa thu thập, `0` = đã thu thập và bằng 0. Hỗ trợ `Idempotency-Key`. Client dùng chung (`ownership=shared`) BẮT BUỘC kèm `X-Delegated-Job` nếu không => 403 `SHARED_CLIENT_REQUIRES_DELEGATION`.",
         "operationId": "snapshot_metrics_v1_integrations_snapshots__snapshot_id__metrics_post",
         "parameters": [
           {
@@ -11037,7 +13724,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -11050,7 +13737,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -11321,7 +14008,7 @@
     },
     "/v1/integrations/snapshots/{snapshot_id}/resources": {
       "post": {
-        "description": "Scope `snapshots:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413, hỗ trợ gzip). Mỗi bản ghi sai nằm trong `rejections` (không bỏ sót im lặng); trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Giá trị metric là SỐ TUYỆT ĐỐI (ghi đè, không cộng); `null` = chưa thu thập, `0` = đã thu thập và bằng 0. Hỗ trợ `Idempotency-Key`.",
+        "description": "Scope `snapshots:write`. Tối đa 500 bản ghi (`BATCH_TOO_LARGE`), body ≤ 2 MiB (413, hỗ trợ gzip). Mỗi bản ghi sai nằm trong `rejections` (không bỏ sót im lặng); trường `owner_*` => 422 `RECORD_VALIDATION_FAILED`. Giá trị metric là SỐ TUYỆT ĐỐI (ghi đè, không cộng); `null` = chưa thu thập, `0` = đã thu thập và bằng 0. Hỗ trợ `Idempotency-Key`. Client dùng chung (`ownership=shared`) BẮT BUỘC kèm `X-Delegated-Job` nếu không => 403 `SHARED_CLIENT_REQUIRES_DELEGATION`.",
         "operationId": "snapshot_resources_v1_integrations_snapshots__snapshot_id__resources_post",
         "parameters": [
           {
@@ -11370,7 +14057,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -11383,7 +14070,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -11676,7 +14363,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -11689,7 +14376,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -11915,7 +14602,7 @@
             }
           },
           {
-            "description": "installation_id từ handshake (cho audit)",
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
             "in": "header",
             "name": "x-installation-id",
             "required": false,
@@ -11928,7 +14615,7 @@
                   "type": "null"
                 }
               ],
-              "description": "installation_id từ handshake (cho audit)",
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
               "title": "X-Installation-Id"
             }
           },
@@ -12124,7 +14811,7 @@
     "/v1/integrations/{client_id}/credentials": {
       "post": {
         "deprecated": true,
-        "description": "Chủ client, client `active`, email đã xác thực. Trả `api_key` (`mpk_<key_id>.<secret>`) **một lần duy nhất**; server chỉ lưu key_id + sha256(secret). Scope yêu cầu không được vượt `allowed_scopes` của client.",
+        "description": "Chủ hoặc admin, client `active` (`draft` => 409 `CLIENT_NOT_READY`), email đã xác thực. CHỦ nhận `api_key` (`mpk_<key_id>.<secret>`) **một lần duy nhất**. Admin cấp HỘ trên client `personal` KHÔNG thấy `api_key` — response có `reveal_state=\"pending\"`, chủ tự nhận qua `POST /v1/integrations/me/credential/reveal`. Admin cấp trên client `shared` nhận `api_key` như bình thường. Server chỉ lưu key_id + sha256(secret). Scope yêu cầu không được vượt `allowed_scopes` của client.",
         "operationId": "issue_credential_alias_v1_integrations__client_id__credentials_post",
         "parameters": [
           {
@@ -12352,6 +15039,589 @@
         "summary": "Cấp API key (alias tương thích tài liệu cũ)",
         "tags": [
           "credentials"
+        ]
+      }
+    },
+    "/v1/user/channel-groups": {
+      "get": {
+        "description": "Chỉ thấy nhóm của chính mình (owner suy từ `sub` của access token).",
+        "operationId": "list_groups_v1_user_channel_groups_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": [
+                    {
+                      "country_code": "VN",
+                      "created_at": "2026-10-12T00:00:00Z",
+                      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                      "name": "Vietnam",
+                      "owner_account_id": "acc_abc123",
+                      "sort_order": 0
+                    }
+                  ],
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_list_ChannelGroupOut__"
+                }
+              }
+            },
+            "description": "Danh sách nhóm"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Danh sách nhóm quốc gia + kênh",
+        "tags": [
+          "channel-groups"
+        ]
+      },
+      "post": {
+        "description": "Owner = `sub` của access token (không nhận từ body). Tên trùng trong phạm vi owner => 409.",
+        "operationId": "create_group_v1_user_channel_groups_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelGroupCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "country_code": "VN",
+                    "created_at": "2026-10-12T00:00:00Z",
+                    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "name": "Vietnam",
+                    "owner_account_id": "acc_abc123",
+                    "sort_order": 0
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ChannelGroupOut_"
+                }
+              }
+            },
+            "description": "Nhóm đã tạo"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_ALREADY_COMMITTED",
+                    "details": {},
+                    "message": "Snapshot đã được commit"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Xung đột trạng thái / IDEMPOTENCY_CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Tạo nhóm quốc gia + kênh",
+        "tags": [
+          "channel-groups"
+        ]
+      }
+    },
+    "/v1/user/channel-groups/{group_id}": {
+      "delete": {
+        "description": "Chỉ chủ nhóm mới xoá được. Không tìm thấy => 404.",
+        "operationId": "delete_group_v1_user_channel_groups__group_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "deleted": true
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_dict_"
+                }
+              }
+            },
+            "description": "Đã xoá"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Xoá nhóm quốc gia + kênh",
+        "tags": [
+          "channel-groups"
+        ]
+      },
+      "patch": {
+        "description": "Chỉ chủ nhóm mới sửa được. Không tìm thấy => 404. Đổi sang tên đã dùng => 409.",
+        "operationId": "update_group_v1_user_channel_groups__group_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelGroupUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "country_code": "VN",
+                    "created_at": "2026-10-12T00:00:00Z",
+                    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "name": "Vietnam",
+                    "owner_account_id": "acc_abc123",
+                    "sort_order": 0
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ChannelGroupOut_"
+                }
+              }
+            },
+            "description": "Nhóm sau khi sửa"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_NOT_FOUND",
+                    "details": {},
+                    "message": "Không tìm thấy snapshot"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Không tìm thấy"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SNAPSHOT_ALREADY_COMMITTED",
+                    "details": {},
+                    "message": "Snapshot đã được commit"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Xung đột trạng thái / IDEMPOTENCY_CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Sửa nhóm quốc gia + kênh",
+        "tags": [
+          "channel-groups"
         ]
       }
     }

@@ -13,8 +13,11 @@ from integration_service.http_utils import error_responses, ok, ok_response
 
 router = APIRouter(prefix="/v1/integrations", tags=["credentials"], dependencies=[Depends(user_bearer)])
 
-_ISSUE_DOC = ("Chủ client, client `active`, email đã xác thực. Trả `api_key` (`mpk_<key_id>.<secret>`) **một lần duy nhất**; "
-              "server chỉ lưu key_id + sha256(secret). Scope yêu cầu không được vượt `allowed_scopes` của client.")
+_ISSUE_DOC = ("Chủ hoặc admin, client `active` (`draft` => 409 `CLIENT_NOT_READY`), email đã xác thực. CHỦ nhận "
+             "`api_key` (`mpk_<key_id>.<secret>`) **một lần duy nhất**. Admin cấp HỘ trên client `personal` KHÔNG "
+             "thấy `api_key` — response có `reveal_state=\"pending\"`, chủ tự nhận qua `POST /v1/integrations/me/"
+             "credential/reveal`. Admin cấp trên client `shared` nhận `api_key` như bình thường. Server chỉ lưu "
+             "key_id + sha256(secret). Scope yêu cầu không được vượt `allowed_scopes` của client.")
 
 
 async def _issue(request: Request, client_id: str, body: CredentialCreate, principal: Principal):
@@ -71,3 +74,19 @@ async def revoke_credential(request: Request, client_id: str, key_id: str,
                              key_id=key_id):
         result = await c.credentials.revoke(principal, client_id, key_id)
     return ok(result)
+
+
+@router.post("/me/credential/reveal", summary="Nhận plaintext credential cấp hộ",
+             description=("Chủ client personal. Credential `reveal_state=pending` chưa hết hạn và client `active` => "
+                          "trả plaintext MỘT LẦN rồi xoá ciphertext (`reveal_state=revealed`). Hết hạn => 410 "
+                          "`REVEAL_EXPIRED`. Không có pending => 404 `REVEAL_NOT_AVAILABLE`. Email chưa xác thực => "
+                          "403 `EMAIL_NOT_VERIFIED`."),
+             responses={200: ok_response(Envelope[CredentialIssued], "Credential plaintext", ex.CREDENTIAL_ISSUED),
+                        **error_responses(401, 403, 404, 410, 429, 503)})
+async def reveal_credential(request: Request, principal: Principal = Depends(require_tool_integration)):
+    c = get_container(request)
+    async with c.audit.scope(request, "credential.reveal", actor_account_id=principal.sub,
+                             account_id=principal.sub) as extra:
+        issued = await c.credentials.reveal(principal)
+        extra["key_id"] = issued["key_id"]
+    return ok(issued, headers={"Cache-Control": "no-store"})

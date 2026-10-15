@@ -23,9 +23,9 @@ async def tables_intact(env) -> None:
 
 async def test_hostile_strings_in_every_input_are_stored_as_data(env):
     tool = await env.tool()
-    user = env.user(sub=tool.owner)
-    r = await env.http.post("/v1/integrations/clients", headers=user["headers"], json={
-        "tool_name": INJECTION, "client_kind": "primary_tool", "platforms": ["facebook"]})
+    admin = await env.verified_user(role="admin")
+    r = await env.http.post("/v1/integrations/clients", headers=admin["headers"], json={
+        "tool_name": INJECTION, "client_kind": "fallback_tool", "purpose": INJECTION, "platforms": ["facebook"]})
     assert r.status_code == 201 and r.json()["data"]["tool_name"] == INJECTION
     assert (await tool.put("/v1/integrations/projects/itl", {"name": INJECTION, "metadata": {"k": INJECTION}})).status_code == 200
     sid = await new_snapshot(tool, type="delta", expected={"resources": 1, "content": 1})
@@ -36,7 +36,6 @@ async def test_hostile_strings_in_every_input_are_stored_as_data(env):
     assert item["external_id"] == INJECTION and item["display_name"] == INJECTION
     assert (await canonical(env, "content"))["items"][0]["external_id"] == INJECTION
     # query / path / header độc hại
-    admin = await env.verified_user(role="admin")
     for params in ({"owner": INJECTION}, {"status": INJECTION}, {"limit": "1; DROP TABLE x"}):
         r = await env.http.get("/v1/integrations/clients", headers=admin["headers"], params=params)
         assert r.status_code in (200, 422)
@@ -63,12 +62,15 @@ async def test_nul_characters_never_cause_a_server_error(env):
     ]
     for r in responses:
         assert r.status_code < 500, (r.request.url, r.status_code, r.text)
-    assert await env.scalar("SELECT count(*) FROM projects") == 0 and await env.scalar("SELECT count(*) FROM installations") == 0
+    assert await env.scalar("SELECT count(*) FROM projects") == 0
+    # tool đã handshake sẵn trong env.tool(): chỉ còn đúng installation gốc đó, NUL-device không tạo thêm
+    assert await env.scalar("SELECT count(*) FROM installations") == 1
 
 
 def test_only_known_safe_modules_build_sql_with_f_strings():
     """Mọi chỗ ghép chuỗi SQL bằng f-string phải nằm trong danh sách đã duyệt (tên bảng/cột là HẰNG trong code)."""
-    approved = {"ingest/merge.py", "feed/canonical.py", "clients/repository.py", "audit/repository.py"}
+    approved = {"ingest/merge.py", "feed/canonical.py", "clients/repository.py", "audit/repository.py",
+               "channel_groups/repository.py"}
     offenders = {}
     for path in SRC.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))

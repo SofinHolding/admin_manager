@@ -109,7 +109,8 @@ def app_with_docs():
     from integration_service.app import create_app
     from integration_service.config import Settings
     return create_app(Settings(port=1, log_level="INFO", database_url="postgresql://a:b@127.0.0.1:1/x", env="test",
-                               issuer="http://identity.invalid", jwks_url="http://identity.invalid/jwks"))
+                               issuer="http://identity.invalid", jwks_url="http://identity.invalid/jwks",
+                               reveal_key="A" * 43 + "="))
 
 
 # ── Test của test: bắt được từng kiểu phá vỡ ────────────────────────────────────
@@ -133,9 +134,9 @@ def mutated(spec: dict, fn) -> dict:
      "mất field CommitOut.revision_to"),
     ("đổi kiểu field", lambda s: s["components"]["schemas"]["CommitOut"]["properties"]["rejected_total"].update(type="string"),
      "đổi kiểu CommitOut.rejected_total"),
-    ("thu hẹp enum", lambda s: s["components"]["schemas"]["ClientCreate"]["properties"]["client_kind"].update(
-        enum=["primary_tool"]) if "enum" in s["components"]["schemas"]["ClientCreate"]["properties"]["client_kind"]
-        else s["components"]["schemas"].pop("ClientCreate"), "ClientCreate"),
+    ("thu hẹp enum", lambda s: s["components"]["schemas"]["ClientWizardCreate"]["properties"]["client_kind"].update(
+        enum=["fallback_tool"]) if "enum" in s["components"]["schemas"]["ClientWizardCreate"]["properties"]["client_kind"]
+        else s["components"]["schemas"].pop("ClientWizardCreate"), "ClientWizardCreate"),
     ("nới additionalProperties (cho phép owner_*)", lambda s: s["components"]["schemas"]["SnapshotCreate"].pop(
         "additionalProperties"), "nới additionalProperties của SnapshotCreate"),
     ("xoá mã lỗi", lambda s: s["info"]["x-error-codes"].remove("IDEMPOTENCY_CONFLICT"), "mất mã lỗi"),
@@ -219,7 +220,8 @@ def test_security_schemes_separate_user_and_machine_planes(spec):
 def test_ingest_models_in_openapi_forbid_extra_properties(spec):
     schemas = spec["components"]["schemas"]
     for name in ("SnapshotCreate", "ResourceItem", "ContentItem", "MetricItem", "EventItem", "CommitRequest",
-                 "ResourceUpsertItem", "HandshakeRequest", "ProjectUpsert", "ClientCreate"):
+                 "ResourceUpsertItem", "HandshakeRequest", "ProjectUpsert", "ClientWizardCreate", "ClientConfigure",
+                 "ClientActivate", "ClientTransferRequest"):
         assert schemas[name].get("additionalProperties") is False, f"{name} cho phép trường lạ (owner spoof)"
         assert not [p for p in schemas[name].get("properties", {}) if p.startswith("owner")], name
 

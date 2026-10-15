@@ -2,8 +2,9 @@
 
   * con trỏ bền `feed_cursor('identity')`; `processed_events` => idempotent theo `id` (at-least-once an toàn);
   * mỗi event xử lý trong MỘT transaction cùng việc đánh dấu đã xử lý và dịch con trỏ;
-  * lỗi tạm thời: thử lại với backoff mũ + jitter có giới hạn; quá giới hạn hoặc lỗi vĩnh viễn: `dead_letters`,
-    phát `integration.client.provision_failed` (nếu là provisioning) rồi TIẾP TỤC event sau (không chặn hàng đợi);
+  * lỗi tạm thời: thử lại với backoff mũ + jitter có giới hạn; quá giới hạn hoặc lỗi vĩnh viễn: `dead_letters`
+    rồi TIẾP TỤC event sau (không chặn hàng đợi) — không còn phát `integration.client.provision_failed` (không ai
+    tiêu thụ sau khi bỏ "đăng ký kèm integration", xem thiết kế tool-key 2026-10-14 §1);
   * Identity chết: giữ nguyên con trỏ, thử lại sau, KHÔNG crash, không ảnh hưởng phần còn lại của service.
 """
 
@@ -20,8 +21,8 @@ from manager_sdk import FeedClient, FeedError, backoff_delays
 
 from integration_service.clients.service import ClientService
 from integration_service.config import Settings
+from integration_service.credentials.service import CredentialService
 from integration_service.db import Database
-from integration_service.feed import events
 from integration_service.provisioning import handlers
 from integration_service.provisioning.handlers import PermanentEventError
 
@@ -30,15 +31,18 @@ SOURCE = "identity"
 
 
 class ProvisioningConsumer:
-    def __init__(self, db: Database, settings: Settings, clients: ClientService, feed: FeedClient,
-                 now: Callable[[], datetime], sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+    def __init__(self, db: Database, settings: Settings, clients: ClientService, credentials: CredentialService,
+                 feed: FeedClient, now: Callable[[], datetime],
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
         self._db = db
         self._settings = settings
         self._clients = clients
+        self._credentials = credentials
         self._feed = feed
         self._now = now
         self._sleep = sleep
         self.last_error: str | None = None
+
 
     # ── Vòng lặp nền ─────────────────────────────────────────────────────────────
     async def run_forever(self) -> None:
@@ -91,7 +95,7 @@ class ProvisioningConsumer:
                         "INSERT INTO processed_events (id, type) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id",
                         event["id"], event["type"])
                     if inserted is not None:  # chưa xử lý bao giờ
-                        await handlers.apply_event(conn, self._clients, event, self._now())
+                        await handlers.apply_event(conn, self._clients, self._credentials, event, self._now())
                     await self._advance(conn, event)
                 return
             except PermanentEventError as exc:
@@ -118,11 +122,6 @@ class ProvisioningConsumer:
                 "INSERT INTO dead_letters (id, type, error, attempts, payload) VALUES ($1,$2,$3,$4,$5) "
                 "ON CONFLICT (id) DO UPDATE SET error = EXCLUDED.error, attempts = EXCLUDED.attempts",
                 event["id"], event["type"], error, attempts, event)
-            prov = (event.get("data") or {}).get("provisioning") if event["type"] == "account.registered" else None
-            if isinstance(prov, dict):
-                await events.client_provision_failed(
-                    conn, client_id=str(prov.get("client_id", ""))[:80], account_id=str(event["data"].get("account_id", "")),
-                    error_code=error.split(":")[0])
             await self._advance(conn, event)
         logger.error("Event %s vào dead-letter: %s", event.get("id"), error)
 
@@ -138,7 +137,7 @@ class ProvisioningConsumer:
             payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
             try:
                 async with self._db.transaction() as conn:
-                    await handlers.apply_event(conn, self._clients, payload, self._now(), replay=True)
+                    await handlers.apply_event(conn, self._clients, self._credentials, payload, self._now(), replay=True)
                     await conn.execute("INSERT INTO processed_events (id, type) VALUES ($1, $2) ON CONFLICT DO NOTHING",
                                        payload["id"], payload["type"])
                     await conn.execute("UPDATE dead_letters SET resolved_at = $2 WHERE id = $1", row["id"], self._now())

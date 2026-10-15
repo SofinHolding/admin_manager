@@ -394,7 +394,6 @@ async def test_admin_sets_execution_mode_canonically(lg, env):
     assert audit == [{"event_type": "execution_mode_changed", "account_id": admin["sub"]}]
 
 
-@covers("PATCH /v1/resources/{resource_id}/execution-mode")
 async def test_owner_switches_execution_mode_and_jobs_follow(lg, env):
     """Owner chuyển fallback_local→primary_tool: job bị cancel.
     Owner chuyển primary_tool→fallback_local: collect-job được tạo lại."""
@@ -498,8 +497,13 @@ async def test_add_items_skip_reasons_and_blocked_without_adapter(lg, env):
 
 async def test_queued_item_is_a_canonical_job_and_status_follows_the_job(lg, env):
     u, ops, admin, res, batch = await _queue_world(lg, env, adapter="ready")
-    tool = await env.tool(kind="fallback_tool", user=u)
-    ins = await handshake(tool)
+    from integration_service.clients import policy
+    from integration_service.clients.policy import SYSTEM_SCOPE
+    tool = await env.tool(kind="fallback_tool", user=u, handshake=False,
+                          scopes=policy.default_scopes("fallback_tool") + [SYSTEM_SCOPE])
+    hs = await env.handshake(tool.api_key, platforms=["facebook"])
+    tool.installation_id, tool.device_id = hs["installation_id"], hs["device_id"]
+    ins = tool.installation_id
     out = (await lg.call("POST", f"{OPS}/batches/{batch['id']}/items", ops, json={"resource_ids": [res["id"]]})).json()
     item_id = out["added"][0]
     job = (await env.rows("SELECT * FROM jobs"))[0]

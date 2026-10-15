@@ -33,8 +33,6 @@ class Settings:
     key_encryption_key: str = ""        # Fernet: mã hoá khoá ký private trong DB
     jwks_grace_seconds: int = 3600      # khoá retired vẫn publish thêm khoảng này
     feed_keys: tuple = ()               # ((reader, key), ...) từ IDENTITY_FEED_KEY_<READER>
-    integration_feed_url: str = ""      # nguồn feed provisioning (tuỳ chọn)
-    integration_feed_key: str = ""
     access_token_ttl_s: int = 10 * 60   # D12: 600 s RS256; HS256 compat legacy vẫn dùng 900 nếu cần
     refresh_token_ttl_days: int = 30
     login_fail_delay_s: float = 1.0
@@ -56,11 +54,6 @@ class Settings:
     backchannel_backoff_base_s: float = 5.0
     backchannel_backoff_cap_s: float = 900.0
     backchannel_allow_private: bool = False   # cho phép RP trong dải mạng nội bộ (RFC1918); mặc định chặn
-    # ── Consumer feed Integration (Phase 1.7) ──
-    feed_poll_interval_s: float = 3.0
-    feed_max_attempts: int = 5
-    feed_backoff_base_s: float = 1.0
-    feed_backoff_cap_s: float = 60.0
 
     @property
     def smtp_configured(self) -> bool:
@@ -149,8 +142,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         access_token_alg=alg, issuer=_env(env, "ISSUER", "http://127.0.0.1:8430").rstrip("/"),
         audience=_env(env, "AUDIENCE", "manager-api"), key_encryption_key=_env(env, "KEY_ENCRYPTION_KEY"),
         jwks_grace_seconds=_int(env, "JWKS_GRACE_SECONDS", 3600, 300, 7 * 86400), feed_keys=feed_keys,
-        integration_feed_url=_env(env, "INTEGRATION_FEED_URL").rstrip("/"),
-        integration_feed_key=_env(env, "INTEGRATION_FEED_KEY"),
         port=port, log_level=level, database_url=database_url, env=mode, jwt_compat_secret=secret,
         access_token_ttl_s=_int(env, "ACCESS_TOKEN_TTL_S", 10 * 60, 60, 24 * 3600),
         refresh_token_ttl_days=_int(env, "REFRESH_TOKEN_TTL_DAYS", 30, 1, 365),
@@ -170,10 +161,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         backchannel_backoff_base_s=_float(env, "BACKCHANNEL_BACKOFF_BASE_S", 5.0, 0.0, 3600),
         backchannel_backoff_cap_s=_float(env, "BACKCHANNEL_BACKOFF_CAP_S", 900.0, 0.0, 86400),
         backchannel_allow_private=_bool(env, "BACKCHANNEL_ALLOW_PRIVATE", False),
-        feed_poll_interval_s=_float(env, "FEED_POLL_INTERVAL_S", 3.0, 0.05, 300),
-        feed_max_attempts=_int(env, "FEED_MAX_ATTEMPTS", 5, 1, 20),
-        feed_backoff_base_s=_float(env, "FEED_BACKOFF_BASE_S", 1.0, 0.0, 600),
-        feed_backoff_cap_s=_float(env, "FEED_BACKOFF_CAP_S", 60.0, 0.0, 3600),
     )
 
 
@@ -192,10 +179,6 @@ def require_serving_config(settings: Settings) -> None:
             Fernet(settings.key_encryption_key.encode())
         except Exception as exc:  # noqa: BLE001
             raise ConfigError("IDENTITY_KEY_ENCRYPTION_KEY không phải khoá Fernet hợp lệ") from exc
-    if settings.integration_feed_url and not settings.integration_feed_url.startswith(("http://", "https://")):
-        raise ConfigError("IDENTITY_INTEGRATION_FEED_URL phải là http(s)://")
-    if settings.integration_feed_url and settings.env == "production" and             not settings.integration_feed_url.startswith("https://"):
-        raise ConfigError("IDENTITY_INTEGRATION_FEED_URL phải là https:// ở production")
     if settings.jwt_compat_secret and settings.env == "production" and settings.jwt_compat_secret.startswith("dev-"):
         raise ConfigError("IDENTITY_JWT_COMPAT_SECRET kiểu dev không được dùng ở production")
     if settings.env == "production" and not settings.issuer.startswith("https://"):

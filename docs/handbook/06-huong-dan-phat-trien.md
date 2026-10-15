@@ -88,7 +88,8 @@ Commit nhỏ theo bước, thông điệp nêu phase + phạm vi. **Chỉ commit
 | `Migration lỗi: 000X đã áp dụng nhưng nội dung bị sửa (checksum lệch)` | Ai đó sửa migration đã chạy. Đừng sửa; DEV: `DevStack.reset_data()` rồi migrate |
 | Identity trả 500 `InvalidToken` khi login | `signing_keys` trong DB mã hóa bằng Fernet khác (test cách ly dùng khóa ngẫu nhiên). Dựng lại DB DEV |
 | Analytics không thấy dữ liệu mới | Kiểm `ANALYTICS_INTEGRATION_URL/FEED_KEY` khớp `INTEGRATION_FEED_KEY_ANALYTICS`; consumer chạy ~5 s/vòng; xem `/v1/analytics/freshness` và `admin/dead-letters` |
-| Provisioning client không tạo / `PLATFORM_NOT_ALLOWED` trong log Integration | Platform chưa nằm trong Platform Registry **trước** khi user đăng ký ⇒ event vào dead-letter. Admin thêm platform rồi replay (`python -m integration_service.provisioning replay`) |
+| Đã cấp `capability:tool_integration` nhưng không thấy Tool cá nhân (`/me/connection-guide` 404) | Consumer feed Identity của Integration tắt (thiếu `INTEGRATION_IDENTITY_FEED_URL/KEY`), event vào dead-letter, hoặc Platform Registry chưa bật platform nào. Kiểm log Integration, bật platform rồi replay (`python -m integration_service.provisioning replay`) |
+| Tool nhận `409 CREDENTIAL_DEVICE_BOUND` / `403 INSTALLATION_MISMATCH` | Khoá đã kích hoạt ở máy khác (đổi máy ⇒ xoay khoá) / Tool không gửi `X-Installation-Id` trả về từ handshake |
 | `METRIC_UNKNOWN` trong `rejections` | Metric chưa có trong Metric Registry ⇒ thêm bằng `PUT /admin/metrics/{key}` hoặc đặt vào `extensions`. (Nếu DB vừa bị TRUNCATE, registry seed cũng mất) |
 | Credential không cấp được / `EMAIL_NOT_VERIFIED` | Owner chưa verify email, hoặc `account_projection` chưa nhận event `account.verified` (consumer Integration chạy ~5 s/vòng) |
 | Email đăng ký test bị từ chối "special-use or reserved name" | `email-validator` chặn `.test`, `.local`… Dùng `…@e2e.example.com` |

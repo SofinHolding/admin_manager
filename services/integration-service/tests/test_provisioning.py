@@ -1,4 +1,10 @@
-"""Consumer provisioning: kéo feed Identity -> account_projection + client; idempotent, retry, dead-letter, Identity chết."""
+"""Consumer provisioning: kéo feed Identity -> account_projection (+ client PERSONAL qua capability:tool_integration).
+
+Từ thiết kế tool-key 2026-10-14 §1.3/§2.2: `account.registered` CHỈ nuôi account_projection, KHÔNG còn tạo client
+(đã bỏ "đăng ký kèm integration"). Client PERSONAL chỉ được tạo tự động bởi `account.permission_changed`
+(permission=`capability:tool_integration`, granted=true) — xem cuối file. Sự kiện
+`integration.client.provision_failed` đã bị bỏ (không ai tiêu thụ nữa).
+"""
 
 from __future__ import annotations
 
@@ -75,21 +81,17 @@ def consumer_factory(app, settings, clock, fake_feed, sleeps):
         feed = FeedClient("http://identity.test", IDENTITY_KEY, retries=1, backoff_base=0.0, sleep=fake_sleep,
                           http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake_feed.handler)))
         c = app.state.container
-        return ProvisioningConsumer(c.db, cfg, c.clients, feed, clock, sleep=fake_sleep)
+        return ProvisioningConsumer(c.db, cfg, c.clients, c.credentials, feed, clock, sleep=fake_sleep)
 
     return make
 
 
-def prov(client_id: str | None = None, **over) -> dict:
-    return {"client_id": client_id or "cli_" + uuid.uuid4().hex, "tool_name": "Tool Moi", "client_kind": "primary_tool",
-            "platforms": ["facebook"], "scopes": ["integration:handshake", "snapshots:write"], **over}
+def registered(account_id: str, status: str = "pending") -> dict:
+    return {"account_id": account_id, "username": "user_" + account_id[:6], "role": "viewer", "status": status}
 
 
-def registered(account_id: str, provisioning: dict | None = None, status: str = "pending") -> dict:
-    data = {"account_id": account_id, "username": "user_" + account_id[:6], "role": "viewer", "status": status}
-    if provisioning is not None:
-        data["provisioning"] = provisioning
-    return data
+def permission_changed(account_id: str, *, granted: bool = True, permission: str = "capability:tool_integration") -> dict:
+    return {"account_id": account_id, "permission": permission, "granted": granted}
 
 
 async def outbox(env, type_: str | None = None) -> list[dict]:
@@ -97,60 +99,28 @@ async def outbox(env, type_: str | None = None) -> list[dict]:
     return [r for r in rows if type_ is None or r["type"] == type_]
 
 
-# ── Luồng chính ─────────────────────────────────────────────────────────────────
+# ── account.registered: chỉ nuôi projection, không còn tạo client ───────────────
 
-async def test_registered_with_provisioning_creates_pending_client_then_verified_activates(env, fake_feed, consumer_factory):
-    acc = uuid.uuid4().hex
-    p = prov()
-    fake_feed.add("account.registered", registered(acc, p))
-    consumer = consumer_factory()
-    assert await consumer.poll_once() == (1, False)
-    client = (await env.rows("SELECT * FROM integration_clients WHERE id = $1", p["client_id"]))[0]
-    assert client["owner_account_id"] == acc and client["status"] == "pending_email_verification"
-    assert client["tool_name"] == "Tool Moi" and client["created_from"] == "provisioning"
-    assert client["allowed_platforms"] == ["facebook"] and set(client["allowed_scopes"]) == {"integration:handshake", "snapshots:write"}
-    proj = (await env.rows("SELECT * FROM account_projection WHERE account_id = $1", acc))[0]
-    assert proj["status"] == "pending" and proj["email_verified"] is False and proj["username"].startswith("user_")
-    ev = (await outbox(env, "integration.client.provisioned"))[0]["data"]
-    assert ev == {"client_id": p["client_id"], "account_id": acc, "status": "pending_email_verification"}
-
-    # chưa xác thực email: chưa thể cấp credential
-    user = env.user(sub=acc)
-    r = await env.http.post(f"/v1/integrations/clients/{p['client_id']}/credentials", headers=user["headers"], json={})
-    assert r.status_code == 403 and r.json()["error"]["code"] == "EMAIL_NOT_VERIFIED"
-
-    fake_feed.add("account.verified", {"account_id": acc})
-    await consumer.poll_once()
-    assert (await env.rows("SELECT status FROM integration_clients WHERE id = $1", p["client_id"]))[0]["status"] == "active"
-    assert (await env.rows("SELECT email_verified, status FROM account_projection WHERE account_id = $1", acc))[0] == {
-        "email_verified": True, "status": "active"}
-    assert [e["data"]["status"] for e in await outbox(env, "integration.client.provisioned")] == [
-        "pending_email_verification", "active"]
-    r = await env.http.post(f"/v1/integrations/clients/{p['client_id']}/credentials", headers=user["headers"], json={})
-    assert r.status_code == 201
-    key = r.json()["data"]["api_key"]
-    hs = await env.http.post("/v1/integrations/handshake", headers={"Authorization": f"Bearer {key}"},
-                             json={"installation": {"device_id": "d"}})
-    assert hs.status_code == 200 and hs.json()["data"]["owner_account_id"] == acc
-
-
-async def test_registered_without_provisioning_only_updates_projection(env, fake_feed, consumer_factory):
+async def test_registered_only_updates_projection(env, fake_feed, consumer_factory):
     acc = uuid.uuid4().hex
     fake_feed.add("account.registered", registered(acc))
     await consumer_factory().poll_once()
     assert await env.scalar("SELECT count(*) FROM integration_clients") == 0
-    assert await env.scalar("SELECT count(*) FROM account_projection WHERE account_id = $1", acc) == 1
+    proj = (await env.rows("SELECT * FROM account_projection WHERE account_id = $1", acc))[0]
+    assert proj["status"] == "pending" and proj["email_verified"] is False and proj["username"].startswith("user_")
     assert await outbox(env) == []
 
 
+# ── Cơ chế consumer chung: idempotent, phân trang, dead-letter, backoff ─────────
+
 async def test_events_are_idempotent_and_cursor_is_durable(env, fake_feed, consumer_factory):
     acc = uuid.uuid4().hex
-    p = prov()
-    fake_feed.add("account.registered", registered(acc, p))
-    fake_feed.add("account.verified", {"account_id": acc})
+    fake_feed.add("account.registered", registered(acc))
+    fake_feed.add("account.permission_changed", permission_changed(acc))
     first = consumer_factory()
     assert (await first.poll_once())[0] == 2 and await first.cursor() == 2
     snapshot = (await env.rows("SELECT * FROM integration_clients"), await outbox(env))
+    assert await env.scalar("SELECT count(*) FROM integration_clients") == 1
     # Một consumer MỚI (khởi động lại tiến trình) tiếp tục từ con trỏ đã lưu
     second = consumer_factory()
     assert await second.poll_once() == (0, False)
@@ -169,7 +139,7 @@ async def test_events_are_idempotent_and_cursor_is_durable(env, fake_feed, consu
 async def test_pagination_over_many_events(env, fake_feed, consumer_factory):
     accounts = [uuid.uuid4().hex for _ in range(25)]
     for a in accounts:
-        fake_feed.add("account.registered", registered(a, prov()))
+        fake_feed.add("account.permission_changed", permission_changed(a))
     c = consumer_factory(batch=10)
     total, more = 0, True
     while more:
@@ -188,40 +158,9 @@ async def test_unrelated_event_types_are_ignored_but_advance_cursor(env, fake_fe
     assert await c.cursor() == 1 and await env.scalar("SELECT count(*) FROM account_projection") == 0
 
 
-# ── Lỗi: dead-letter, retry, không chặn hàng đợi ──────────────────────────────────
-
-@pytest.mark.parametrize("bad,code", [
-    (prov(client_kind="root"), "PROVISION_INVALID"), (prov(tool_name=""), "PROVISION_INVALID"),
-    (prov(platforms="facebook"), "PROVISION_INVALID"), (prov(client_id="khong-phai-cli"), "PROVISION_INVALID"),
-    (prov(platforms=["khong_co"]), "PLATFORM_NOT_ALLOWED"),
-])
-async def test_invalid_provisioning_goes_to_dead_letter_and_emits_provision_failed(env, fake_feed, consumer_factory, bad, code):
-    acc, good_acc = uuid.uuid4().hex, uuid.uuid4().hex
-    ev = fake_feed.add("account.registered", registered(acc, bad))
-    good = prov()
-    fake_feed.add("account.registered", registered(good_acc, good))          # event SAU vẫn phải được xử lý
-    c = consumer_factory()
-    assert await c.poll_once() == (2, False)
-    assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", good["client_id"]) == "pending_email_verification"
-    dead = (await env.rows("SELECT * FROM dead_letters"))[0]
-    assert dead["id"] == ev["id"] and dead["error"] == code and dead["resolved_at"] is None
-    failed = (await outbox(env, "integration.client.provision_failed"))[0]["data"]
-    assert failed["account_id"] == acc and failed["error_code"] == code
-    assert await c.cursor() == 2
-
-
-async def test_client_id_conflict_across_accounts_is_dead_lettered(env, fake_feed, consumer_factory):
-    p = prov()
-    fake_feed.add("account.registered", registered(uuid.uuid4().hex, p))
-    fake_feed.add("account.registered", registered(uuid.uuid4().hex, p))      # cùng client_id, account khác
-    await consumer_factory().poll_once()
-    assert (await env.rows("SELECT error FROM dead_letters"))[0]["error"] == "CLIENT_ID_CONFLICT"
-    assert await env.scalar("SELECT count(*) FROM integration_clients") == 1
-
-
 async def test_transient_failure_is_retried_with_exponential_backoff(env, fake_feed, consumer_factory, sleeps, monkeypatch):
     acc = uuid.uuid4().hex
-    fake_feed.add("account.registered", registered(acc, prov()))
+    fake_feed.add("account.permission_changed", permission_changed(acc))
     real = handlers.apply_event
     calls = {"n": 0}
 
@@ -240,14 +179,14 @@ async def test_transient_failure_is_retried_with_exponential_backoff(env, fake_f
 
 async def test_retries_are_bounded_then_dead_letter_and_queue_continues(env, fake_feed, consumer_factory, sleeps, monkeypatch):
     bad_acc, ok_acc = uuid.uuid4().hex, uuid.uuid4().hex
-    fake_feed.add("account.registered", registered(bad_acc, prov()))
-    fake_feed.add("account.registered", registered(ok_acc, prov()))
+    fake_feed.add("account.permission_changed", permission_changed(bad_acc))
+    fake_feed.add("account.permission_changed", permission_changed(ok_acc))
     real = handlers.apply_event
 
-    async def selective(conn, clients, event, now):
+    async def selective(conn, clients, credentials, event, now, **kw):
         if event["data"]["account_id"] == bad_acc:
             raise RuntimeError("hỏng vĩnh viễn")
-        return await real(conn, clients, event, now)
+        return await real(conn, clients, credentials, event, now, **kw)
 
     monkeypatch.setattr(handlers, "apply_event", selective)
     c = consumer_factory(provisioning_max_attempts=4)
@@ -255,38 +194,57 @@ async def test_retries_are_bounded_then_dead_letter_and_queue_continues(env, fak
     dead = (await env.rows("SELECT * FROM dead_letters"))[0]
     assert dead["attempts"] == 4 and dead["error"].startswith("HANDLER_ERROR")
     assert len(sleeps) == 3                                                  # đúng 4 lần thử, 3 lần nghỉ
-    assert await env.scalar("SELECT count(*) FROM integration_clients") == 1  # event sau không bị chặn
-    assert (await outbox(env, "integration.client.provision_failed"))[0]["data"]["error_code"] == "HANDLER_ERROR"
+    assert await env.scalar("SELECT count(*) FROM integration_clients") == 1  # event sau không bị chặn (client của ok_acc)
+    assert (await env.rows("SELECT owner_account_id FROM integration_clients"))[0]["owner_account_id"] == ok_acc
 
 
-async def test_replay_dead_letter_after_fixing_the_cause(env, fake_feed, consumer_factory):
+async def test_replay_dead_letter_after_fixing_the_cause(env, fake_feed, consumer_factory, monkeypatch):
+    """`account.registered` lỗi tạm thời (giả lập) => dead-letter; sửa nguyên nhân rồi `replay_dead_letters` áp lại
+    đúng một lần (idempotent qua `processed_events`), không lặp lại khi gọi lần nữa."""
     acc = uuid.uuid4().hex
-    p = prov(platforms=["threads"])
-    fake_feed.add("account.registered", registered(acc, p))
-    c = consumer_factory()
+    fake_feed.add("account.registered", registered(acc))
+    real = handlers._registered
+    broken = {"on": True}
+
+    async def flaky(conn, data, account_id, now, **kw):
+        if broken["on"]:
+            raise RuntimeError("lỗi tạm")
+        return await real(conn, data, account_id, now, **kw)
+
+    monkeypatch.setattr(handlers, "_registered", flaky)
+    c = consumer_factory(provisioning_max_attempts=1)
     await c.poll_once()
-    assert await env.scalar("SELECT count(*) FROM integration_clients") == 0
+    assert await env.scalar("SELECT count(*) FROM account_projection WHERE account_id = $1", acc) == 0
     assert await c.replay_dead_letters() == {"replayed": 0, "failed": 1}      # nguyên nhân chưa sửa
-    await env.rows("INSERT INTO platform_registry (key, display_name) VALUES ('threads', 'Threads')")
+    broken["on"] = False
     assert await c.replay_dead_letters() == {"replayed": 1, "failed": 0}
-    assert (await env.rows("SELECT status FROM integration_clients WHERE id = $1", p["client_id"]))[0]["status"] == "pending_email_verification"
+    proj = (await env.rows("SELECT * FROM account_projection WHERE account_id = $1", acc))[0]
+    assert proj["status"] == "pending" and proj["username"].startswith("user_")
     assert (await env.rows("SELECT resolved_at FROM dead_letters"))[0]["resolved_at"] is not None
     assert await c.replay_dead_letters() == {"replayed": 0, "failed": 0}
 
 
-async def test_replaying_an_old_registered_does_not_revert_newer_projection_state(env, fake_feed, consumer_factory):
-    """`registered` (provisioning lỗi vì platform chưa có) vào dead-letter; verified + suspended đã áp sau đó. Replay
-    `registered` (cũ) trước đây đặt lại status='pending' — đảo ngược trạng thái mới hơn."""
+async def test_replaying_an_old_registered_does_not_revert_newer_projection_state(env, fake_feed, consumer_factory, monkeypatch):
+    """`registered` (dead-letter do lỗi tạm thời) được xử lý SAU `verified` + `suspended` (seq mới hơn). Replay
+    `registered` (cũ, `replay=True` => fill_only) KHÔNG được đảo ngược trạng thái mới hơn, chỉ điền chỗ trống."""
     acc = uuid.uuid4().hex
-    p = prov(platforms=["threads"])
-    fake_feed.add("account.registered", registered(acc, p))                  # seq 1 -> dead-letter
+    real = handlers._registered
+    broken = {"on": True}
+
+    async def flaky(conn, data, account_id, now, **kw):
+        if broken["on"]:
+            raise RuntimeError("lỗi tạm")
+        return await real(conn, data, account_id, now, **kw)
+
+    monkeypatch.setattr(handlers, "_registered", flaky)
+    fake_feed.add("account.registered", registered(acc))                    # seq 1 -> dead-letter (lỗi tạm thời)
     fake_feed.add("account.verified", {"account_id": acc})                   # seq 2
     fake_feed.add("account.status_changed", {"account_id": acc, "status": "suspended"})   # seq 3
-    c = consumer_factory()
+    c = consumer_factory(provisioning_max_attempts=1)
     await c.poll_once()
     proj = (await env.rows("SELECT status, email_verified, username FROM account_projection WHERE account_id = $1", acc))[0]
     assert proj["status"] == "suspended" and proj["email_verified"] is True and proj["username"] == ""
-    await env.rows("INSERT INTO platform_registry (key, display_name) VALUES ('threads', 'Threads')")
+    broken["on"] = False
     assert await c.replay_dead_letters() == {"replayed": 1, "failed": 0}
     proj = (await env.rows("SELECT status, email_verified, username, status_seq FROM account_projection WHERE account_id = $1",
                            acc))[0]
@@ -297,7 +255,7 @@ async def test_replaying_an_old_registered_does_not_revert_newer_projection_stat
 
 async def test_replaying_an_old_status_change_does_not_override_a_newer_one(env, fake_feed, consumer_factory, monkeypatch):
     acc = uuid.uuid4().hex
-    fake_feed.add("account.registered", registered(acc, None, status="active"))      # seq 1
+    fake_feed.add("account.registered", registered(acc, status="active"))      # seq 1
     old = fake_feed.add("account.status_changed", {"account_id": acc, "status": "suspended"})   # seq 2 (lỗi tạm thời)
     fake_feed.add("account.status_changed", {"account_id": acc, "status": "active"})            # seq 3 (mới hơn)
     real = handlers._status_changed
@@ -325,7 +283,7 @@ async def test_replaying_an_old_status_change_does_not_override_a_newer_one(env,
 
 async def test_identity_down_keeps_cursor_and_raises_feed_error_without_side_effects(env, fake_feed, consumer_factory):
     acc = uuid.uuid4().hex
-    fake_feed.add("account.registered", registered(acc, prov()))
+    fake_feed.add("account.permission_changed", permission_changed(acc))
     c = consumer_factory()
     fake_feed.up = False
     with pytest.raises(FeedError):
@@ -341,25 +299,27 @@ async def test_identity_down_keeps_cursor_and_raises_feed_error_without_side_eff
 
 async def test_background_loop_survives_identity_outage_and_recovers(env, fake_feed, consumer_factory, sleeps):
     acc = uuid.uuid4().hex
-    fake_feed.add("account.registered", registered(acc, prov()))
+    fake_feed.add("account.permission_changed", permission_changed(acc))
     fake_feed.up = False
     c = consumer_factory()
     task = asyncio.create_task(c.run_forever())
-    for _ in range(200):
-        await asyncio.sleep(0.005)
-        if len(sleeps) >= 3:
-            break
-    assert not task.done() and c.last_error and len(sleeps) >= 3            # vẫn sống, đang lùi nhịp
-    assert sleeps[1] >= sleeps[0]                                           # backoff không giảm
-    fake_feed.up = True
-    for _ in range(400):
-        await asyncio.sleep(0.01)
-        if await env.scalar("SELECT count(*) FROM integration_clients"):
-            break
-    assert await env.scalar("SELECT count(*) FROM integration_clients") == 1
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        for _ in range(200):
+            await asyncio.sleep(0.005)
+            if len(sleeps) >= 3:
+                break
+        assert not task.done() and c.last_error and len(sleeps) >= 3            # vẫn sống, đang lùi nhịp
+        assert sleeps[1] >= sleeps[0]                                           # backoff không giảm
+        fake_feed.up = True
+        for _ in range(400):
+            await asyncio.sleep(0.01)
+            if await env.scalar("SELECT count(*) FROM integration_clients"):
+                break
+        assert await env.scalar("SELECT count(*) FROM integration_clients") == 1
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 async def test_identity_down_does_not_affect_other_endpoints(env, fake_feed, consumer_factory):
@@ -367,28 +327,32 @@ async def test_identity_down_does_not_affect_other_endpoints(env, fake_feed, con
     tool = await env.tool()
     with pytest.raises(FeedError):
         await consumer_factory().poll_once()
-    assert (await tool.post("/v1/integrations/handshake", {"installation": {"device_id": "d"}})).status_code == 200
+    assert (await tool.post("/v1/integrations/handshake", {"installation": {"device_id": tool.device_id}})).status_code == 200
     assert (await env.http.get("/health/ready")).status_code == 200
 
 
-# ── Hệ quả với client ───────────────────────────────────────────────────────────
+# ── Hệ quả với client (account.status_changed / account.deleted) ────────────────
 
 async def test_suspend_revokes_credentials_verify_does_not_unsuspend_and_admin_suspension_survives(env, fake_feed, consumer_factory):
-    tool = await env.tool()
+    """Owner (role `admin`) có client personal (auto-provision) + một client shared do chính họ tạo qua wizard.
+    `account.status_changed(suspended)` khoá CẢ HAI client của owner; client đã bị admin khoá từ trước (shared)
+    vẫn giữ nguyên `suspended_by` khi account suspend lần nữa (không bị ghi đè thành 'account' sai nghĩa khi đã
+    suspended); xác thực email KHÔNG tự mở khoá account bị khoá; mở lại account thì client khoá-do-account được
+    khôi phục còn client khoá-do-admin vẫn suspended."""
     admin = await env.verified_user(role="admin")
-    other = (await env.http.post("/v1/integrations/clients", headers=env.user(sub=tool.owner)["headers"], json={
-        "tool_name": "B", "client_kind": "primary_tool", "platforms": ["facebook"]})).json()["data"]["client_id"]
+    tool = await env.tool(user=admin)
+    other = (await env.http.post("/v1/integrations/clients", headers=admin["headers"], json={
+        "tool_name": "B", "client_kind": "fallback_tool", "purpose": "test", "platforms": ["facebook"]})
+            ).json()["data"]["client_id"]
     await env.http.patch(f"/v1/integrations/clients/{other}", headers=admin["headers"], json={"status": "suspended"})
     c = consumer_factory()
     fake_feed.add("account.status_changed", {"account_id": tool.owner, "status": "suspended", "previous": "active"})
     await c.poll_once()
     assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", tool.client_id) == "suspended"
-    r = await tool.post("/v1/integrations/handshake", {"installation": {"device_id": "d"}})
+    r = await tool.post("/v1/integrations/handshake", {"installation": {"device_id": tool.device_id}})
     assert r.status_code == 401 and r.json()["error"]["code"] == "AUTH_REVOKED"
     assert any(e["data"]["key_id"] == tool.key_id for e in await outbox(env, "credential.revoked"))
-    blocked = await env.http.post("/v1/integrations/clients", headers=env.user(sub=tool.owner)["headers"], json={
-        "tool_name": "C", "client_kind": "primary_tool", "platforms": ["facebook"]})
-    assert blocked.status_code == 403 and blocked.json()["error"]["code"] == "ACCOUNT_INACTIVE"
+    assert await env.scalar("SELECT suspended_by FROM integration_clients WHERE id = $1", other) == "admin"
 
     # xác thực email KHÔNG tự mở khoá tài khoản bị khoá
     fake_feed.add("account.verified", {"account_id": tool.owner})
@@ -401,7 +365,7 @@ async def test_suspend_revokes_credentials_verify_does_not_unsuspend_and_admin_s
     await c.poll_once()
     assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", tool.client_id) == "active"
     assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", other) == "suspended"
-    assert (await tool.post("/v1/integrations/handshake", {"installation": {"device_id": "d"}})).status_code == 401   # key cũ đã chết
+    assert (await tool.post("/v1/integrations/handshake", {"installation": {"device_id": tool.device_id}})).status_code == 401   # key cũ đã chết
 
 
 async def test_account_deleted_deletes_clients_and_kills_credentials(env, fake_feed, consumer_factory):
@@ -409,7 +373,7 @@ async def test_account_deleted_deletes_clients_and_kills_credentials(env, fake_f
     fake_feed.add("account.deleted", {"account_id": tool.owner})
     await consumer_factory().poll_once()
     assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", tool.client_id) == "deleted"
-    r = await tool.post("/v1/integrations/handshake", {"installation": {"device_id": "d"}})
+    r = await tool.post("/v1/integrations/handshake", {"installation": {"device_id": tool.device_id}})
     assert r.status_code == 401 and r.json()["error"]["code"] == "AUTH_REVOKED"
     assert await env.scalar("SELECT count(*) FROM integration_credentials WHERE status = 'active'") == 0
     assert await env.scalar("SELECT status FROM account_projection WHERE account_id = $1", tool.owner) == "deleted"
@@ -417,12 +381,13 @@ async def test_account_deleted_deletes_clients_and_kills_credentials(env, fake_f
 
 async def test_pending_client_stays_inactive_if_account_is_suspended_before_verifying(env, fake_feed, consumer_factory):
     acc = uuid.uuid4().hex
-    p = prov()
-    fake_feed.add("account.registered", registered(acc, p))
+    fake_feed.add("account.permission_changed", permission_changed(acc))
+    client_id = (await env.rows("SELECT id FROM integration_clients"))
     fake_feed.add("account.status_changed", {"account_id": acc, "status": "suspended", "previous": "pending"})
     fake_feed.add("account.verified", {"account_id": acc})
     await consumer_factory().poll_once()
-    assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", p["client_id"]) == "suspended"
+    cid = (await env.rows("SELECT id FROM integration_clients WHERE owner_account_id = $1", acc))[0]["id"]
+    assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", cid) == "suspended"
 
 
 async def test_malformed_events_are_dead_lettered_not_fatal(env, fake_feed, consumer_factory):
@@ -454,26 +419,132 @@ async def test_consumer_runs_inside_app_lifespan_and_stops_cleanly(db, settings,
                       http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake_feed.handler)))
     app2 = create_app(cfg, database=db, verifier=build_verifier(identity), now=clock, clock=mono, identity_feed=feed)
     acc = uuid.uuid4().hex
-    p = prov()
-    fake_feed.add("account.registered", registered(acc, p))
+    fake_feed.add("account.permission_changed", permission_changed(acc))
     async with app2.router.lifespan_context(app2):
         for _ in range(300):
             await asyncio.sleep(0.02)
             async with db.connection() as conn:
-                if await conn.fetchval("SELECT count(*) FROM integration_clients WHERE id = $1", p["client_id"]):
+                if await conn.fetchval("SELECT count(*) FROM integration_clients WHERE owner_account_id = $1", acc):
                     break
         async with db.connection() as conn:
-            assert await conn.fetchval("SELECT status FROM integration_clients WHERE id = $1", p["client_id"]) == "pending_email_verification"
+            assert await conn.fetchval(
+                "SELECT status FROM integration_clients WHERE owner_account_id = $1", acc) == "pending_email_verification"
     assert ISSUER  # lifespan thoát không treo: các task nền đã bị huỷ
 
 
 async def test_verified_event_never_activates_a_client_of_a_suspended_account_defense_in_depth(env, fake_feed, consumer_factory):
     acc = uuid.uuid4().hex
-    p = prov()
-    fake_feed.add("account.registered", registered(acc, p))
+    fake_feed.add("account.permission_changed", permission_changed(acc))
     c = consumer_factory()
     await c.poll_once()
-    await env.rows("UPDATE account_projection SET status = 'suspended' WHERE account_id = $1", acc)   # khoá lệch pha với client
+    cid = (await env.rows("SELECT id FROM integration_clients WHERE owner_account_id = $1", acc))[0]["id"]
+    await env.projection(acc, verified=False, status="suspended")   # khoá lệch pha với client
     fake_feed.add("account.verified", {"account_id": acc})
     await c.poll_once()
-    assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", p["client_id"]) == "pending_email_verification"
+    assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", cid) == "pending_email_verification"
+
+
+# ── account.permission_changed → auto-provision client ───────────────────────
+# Khi capability:tool_integration được cấp, service tự tạo primary_tool client
+# nếu account chưa có client nào. Kiểm tra idempotency và các trường hợp biên.
+
+async def test_permission_changed_tool_integration_granted_creates_primary_tool_client(
+        env, fake_feed, consumer_factory):
+    """CẤP capability:tool_integration → tự tạo primary_tool client cho account."""
+    acc = uuid.uuid4().hex
+    fake_feed.add("account.permission_changed", permission_changed(acc))
+    await consumer_factory().poll_once()
+    clients = await env.rows("SELECT * FROM integration_clients WHERE owner_account_id = $1", acc)
+    assert len(clients) == 1
+    client = clients[0]
+    assert client["client_kind"] == "primary_tool" and client["ownership"] == "personal"
+    assert client["status"] == "pending_email_verification"  # account chưa xác thực email
+    assert client["created_from"] == "provisioning"
+    cred = await env.rows("SELECT reveal_state FROM integration_credentials WHERE client_id = $1", client["id"])
+    assert len(cred) == 1 and cred[0]["reveal_state"] == "pending"
+    evs = await outbox(env, "integration.client.provisioned")
+    assert evs[0]["data"]["status"] == "pending_email_verification"
+
+    fake_feed.add("account.verified", {"account_id": acc})
+    await consumer_factory().poll_once()
+    assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", client["id"]) == "active"
+    evs = await outbox(env, "integration.client.provisioned")
+    assert evs[-1]["data"]["status"] == "active"
+
+
+async def test_permission_changed_unverified_account_creates_pending_client(
+        env, fake_feed, consumer_factory):
+    """Account chưa xác thực email → client ở trạng thái pending_email_verification."""
+    acc = uuid.uuid4().hex
+    fake_feed.add("account.permission_changed", permission_changed(acc))
+    await consumer_factory().poll_once()
+    clients = await env.rows("SELECT status FROM integration_clients WHERE owner_account_id = $1", acc)
+    assert len(clients) == 1
+    assert clients[0]["status"] == "pending_email_verification"
+
+
+async def test_permission_changed_idempotent_if_client_already_exists(
+        env, fake_feed, consumer_factory):
+    """Đã có client → sự kiện permission_changed không tạo thêm (idempotent)."""
+    acc = uuid.uuid4().hex
+    fake_feed.add("account.permission_changed", permission_changed(acc))
+    c = consumer_factory()
+    await c.poll_once()
+    client_id_before = (await env.rows("SELECT id FROM integration_clients WHERE owner_account_id = $1", acc))[0]["id"]
+    fake_feed.add("account.permission_changed", permission_changed(acc))
+    await c.poll_once()
+    clients = await env.rows("SELECT id FROM integration_clients WHERE owner_account_id = $1", acc)
+    assert len(clients) == 1, "Client cũ bị thay thế bằng client mới"
+    assert clients[0]["id"] == client_id_before, "Client cũ bị thay thế bằng client mới"
+
+
+async def test_permission_changed_other_permission_does_not_provision(
+        env, fake_feed, consumer_factory):
+    """Permission khác (reward:access) không kích hoạt auto-provision."""
+    acc = uuid.uuid4().hex
+    fake_feed.add("account.permission_changed", permission_changed(acc, permission="reward:access"))
+    await consumer_factory().poll_once()
+    clients = await env.rows("SELECT id FROM integration_clients WHERE owner_account_id = $1", acc)
+    assert len(clients) == 0, f"Không được tạo client cho reward:access, nhận {len(clients)}"
+
+
+async def test_permission_changed_revoke_does_not_provision(
+        env, fake_feed, consumer_factory):
+    """Thu hồi capability (granted=False) không tạo client."""
+    acc = uuid.uuid4().hex
+    fake_feed.add("account.permission_changed", permission_changed(acc, granted=False))
+    await consumer_factory().poll_once()
+    clients = await env.rows("SELECT id FROM integration_clients WHERE owner_account_id = $1", acc)
+    assert len(clients) == 0, f"Thu hồi không được tạo client, nhận {len(clients)}"
+
+
+async def test_permission_changed_revoke_suspends_existing_client_and_revokes_credentials(
+        env, fake_feed, consumer_factory):
+    """Thu hồi capability trên account ĐÃ có client personal active => suspend + thu hồi mọi credential."""
+    tool = await env.tool()
+    c = consumer_factory()
+    fake_feed.add("account.permission_changed", permission_changed(tool.owner, granted=False))
+    await c.poll_once()
+    assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", tool.client_id) == "suspended"
+    assert await env.scalar("SELECT suspended_by FROM integration_clients WHERE id = $1", tool.client_id) == "capability"
+    r = await tool.post("/v1/integrations/handshake", {"installation": {"device_id": tool.device_id}})
+    assert r.status_code == 401 and r.json()["error"]["code"] == "AUTH_REVOKED"
+
+
+async def test_permission_changed_regrant_reactivates_suspended_personal_client(
+        env, fake_feed, consumer_factory):
+    """Cấp lại capability sau khi đã thu hồi => kích hoạt lại CÙNG client personal (không tạo mới), cấp credential
+    pending-reveal mới."""
+    tool = await env.tool()
+    old_client_id = tool.client_id
+    c = consumer_factory()
+    fake_feed.add("account.permission_changed", permission_changed(tool.owner, granted=False))
+    await c.poll_once()
+    assert await env.scalar("SELECT status FROM integration_clients WHERE id = $1", old_client_id) == "suspended"
+    fake_feed.add("account.permission_changed", permission_changed(tool.owner, granted=True))
+    await c.poll_once()
+    clients = await env.rows("SELECT id, status FROM integration_clients WHERE owner_account_id = $1", tool.owner)
+    assert len(clients) == 1 and clients[0]["id"] == old_client_id and clients[0]["status"] == "active"
+    cred = await env.rows(
+        "SELECT reveal_state FROM integration_credentials WHERE client_id = $1 AND status = 'active'", old_client_id)
+    assert len(cred) == 1 and cred[0]["reveal_state"] == "pending"

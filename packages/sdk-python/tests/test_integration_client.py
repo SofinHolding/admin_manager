@@ -153,3 +153,28 @@ async def test_job_calls_and_claim_is_not_idempotent_keyed():
 def test_stable_key_is_order_insensitive_for_dicts_and_sensitive_to_values():
     assert _stable_key("a", {"x": 1, "y": 2}) == _stable_key("a", {"y": 2, "x": 1})
     assert _stable_key("a", {"x": 1}) != _stable_key("a", {"x": 2})
+
+
+async def test_handshake_remembers_installation_id_and_sends_it_afterwards():
+    s = Server()
+    s.script = [httpx.Response(200, json={"ok": True, "data": {
+        "client_id": "cli_1", "installation_id": "ins_" + "0" * 32, "installation_created": True,
+        "owner_account_id": "acc_1", "accepted_contract_version": "2026-10-01", "allowed_platforms": ["facebook"],
+        "allowed_scopes": [], "allowed_capabilities": [], "accepted_capabilities": [],
+        "server_time": "2026-10-05T10:00:00Z"}})]
+    c = client(s)
+    assert c.installation_id is None
+    out = await c.handshake(device_id="dev-1", hostname="h", os_name="windows", app_version="1", tool_name="t",
+                            platforms=["facebook"], capabilities=[])
+    assert out["installation_id"] == "ins_" + "0" * 32
+    assert c.installation_id == "ins_" + "0" * 32
+    assert "x-installation-id" not in {k.lower() for k in s.requests[0].headers}
+    await c.commit("snp_1")
+    assert s.requests[1].headers["x-installation-id"] == "ins_" + "0" * 32
+
+
+async def test_installation_id_can_be_preset_at_construction():
+    s = Server()
+    c = client(s, installation_id="ins_preset")
+    await c.commit("snp_1")
+    assert s.requests[0].headers["x-installation-id"] == "ins_preset"

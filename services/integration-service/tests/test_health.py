@@ -10,7 +10,8 @@ from integration_service.app import create_app
 from integration_service.config import ConfigError, Settings
 
 DEAD = Settings(port=8431, log_level="INFO", database_url="postgresql://x:y@127.0.0.1:1/z", env="test",
-                issuer="http://identity.test", jwks_url="http://identity.test/.well-known/jwks.json")
+                issuer="http://identity.test", jwks_url="http://identity.test/.well-known/jwks.json",
+                reveal_key="hYPGsUcmXi1PEc93txnTNeynFkYtJ8-8u9mxfqh3lYc=")
 
 
 def _client(settings: Settings = DEAD) -> TestClient:

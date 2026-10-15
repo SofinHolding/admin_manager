@@ -36,13 +36,6 @@ async def consume(conn: asyncpg.Connection, key: str, now: datetime) -> dict | N
     return dict(row) if row else None
 
 
-def parse_policy(value) -> dict | None:
-    """`integration_policy` là jsonb: asyncpg trả str (chưa đăng ký codec) -> dict."""
-    if value is None:
-        return None
-    return value if isinstance(value, dict) else json.loads(value)
-
-
 def parse_capability_grant(value) -> dict | None:
     """`capability_grant` là jsonb: asyncpg trả str (chưa đăng ký codec) -> dict."""
     if value is None:
@@ -51,23 +44,41 @@ def parse_capability_grant(value) -> dict | None:
 
 
 async def create(conn: asyncpg.Connection, *, role: str, label: str, max_uses: int, expires_days: int,
-                 now: datetime, integration_policy: dict | None = None,
-                 allowed_apps: list[str] | None = None, capability_grant: dict | None = None) -> dict:
+                 now: datetime, preset: str | None = None, allowed_apps: list[str] | None = None,
+                 capability_grant: dict | None = None) -> dict:
     expires = now + timedelta(days=expires_days)
     for _ in range(10):  # va chạm key gần như không xảy ra; thử lại thay vì lỗi
         key = generate_key()
         try:
             row = await conn.fetchrow(
-                "INSERT INTO invite_keys (key, role, label, max_uses, created_at, expires_at, integration_policy, "
-                "allowed_apps, capability_grant) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb) "
+                "INSERT INTO invite_keys (key, role, label, max_uses, created_at, expires_at, preset, "
+                "allowed_apps, capability_grant) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb) "
                 "RETURNING *",
-                key, role, label, max_uses, now, expires,
-                json.dumps(integration_policy) if integration_policy is not None else None, allowed_apps or [],
+                key, role, label, max_uses, now, expires, preset, allowed_apps or [],
                 json.dumps(capability_grant) if capability_grant is not None else None)
             return dict(row)
         except asyncpg.UniqueViolationError:
             continue
     raise RuntimeError("Không sinh được invite key duy nhất")
+
+
+async def update(conn: asyncpg.Connection, key: str, **fields) -> dict | None:
+    """UPDATE động theo `fields` (cột -> giá trị mới); `capability_grant` tự ép kiểu jsonb. Rỗng -> trả về key hiện tại."""
+    if not fields:
+        return await get(conn, key)
+    set_clauses: list[str] = []
+    args: list[object] = [key]
+    for col, value in fields.items():
+        idx = len(args) + 1
+        if col == "capability_grant":
+            set_clauses.append(f"capability_grant = ${idx}::jsonb")
+            args.append(json.dumps(value) if value is not None else None)
+        else:
+            set_clauses.append(f"{col} = ${idx}")
+            args.append(value)
+    row = await conn.fetchrow(
+        f"UPDATE invite_keys SET {', '.join(set_clauses)} WHERE key = $1 RETURNING *", *args)
+    return dict(row) if row else None
 
 
 async def list_all(conn: asyncpg.Connection) -> list[dict]:

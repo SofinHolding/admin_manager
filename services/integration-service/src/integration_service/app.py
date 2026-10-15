@@ -31,11 +31,14 @@ from integration_service.config import Settings, load_settings, require_serving_
 from integration_service.container import Container
 from integration_service.credentials.router import router as credentials_router
 from integration_service.credentials.service import CredentialService
+from integration_service.crypto import RevealCrypto
 from integration_service.db import Database
 from integration_service.errors import ApiProblem
 from integration_service.feed.router import build_router as build_feed_router
 from integration_service.http_utils import BodyLimitMiddleware, EnvelopeResponse, install_openapi_models
 from integration_service.ingest import schemas
+from integration_service.guide.router import router as guide_router
+from integration_service.guide.service import GuideService
 from integration_service.installations.router import router as installations_router
 from integration_service.installations.service import HandshakeRequest, InstallationService
 from integration_service.jobs import schemas as job_schemas
@@ -131,12 +134,15 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
     redeem_limiter = FixedWindowLimiter(settings.legacy_redeem_per_window, clock=rate_clock,
                                         window=float(settings.legacy_redeem_window_s))
     clients = ClientService(db, settings, now)
+    reveal_crypto = RevealCrypto(settings.reveal_key) if settings.reveal_key else None
+    credentials = CredentialService(db, settings, now, clients, rate_limiter, fail_limiter,
+                                    reveal_crypto=reveal_crypto)
     app.state.container = Container(
         settings=settings, db=db, now=now, verifier=verifier, service_auth=ServiceKeyAuth(dict(settings.feed_keys)),
-        audit=audit, clients=clients,
-        credentials=CredentialService(db, settings, now, clients, rate_limiter, fail_limiter),
+        audit=audit, clients=clients, credentials=credentials,
         installations=InstallationService(now), projects=ProjectService(db, now), resources=ResourceService(db, now),
-        snapshots=SnapshotService(db, settings, now), runner=MachineRunner(db, now, audit),
+        snapshots=SnapshotService(db, settings, now), guide=GuideService(db, settings, clients, now),
+        runner=MachineRunner(db, now, audit),
         jobs=jobs, legacy=LegacyService(db, settings, now, jobs, redeem_limiter),
         rate_limiter=rate_limiter, fail_limiter=fail_limiter)
 
@@ -144,7 +150,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
     app.state.provisioning = None
     if identity_feed is not None or settings.provisioning_enabled:
         feed = identity_feed or FeedClient(settings.identity_feed_url, settings.identity_feed_key)
-        app.state.provisioning = ProvisioningConsumer(db, settings, clients, feed, now)
+        app.state.provisioning = ProvisioningConsumer(db, settings, clients, credentials, feed, now)
 
     app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_body_bytes)
     install_auth_error_handler(app, "envelope")
@@ -193,7 +199,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
 
     for router in (clients_router, credentials_router, installations_router, projects_router, resources_router,
                    snapshots_router, platforms_router, audit_router, resources_admin_router, jobs_machine_router,
-                   jobs_user_router, workers_router, channel_groups_router):
+                   jobs_user_router, workers_router, channel_groups_router, guide_router):
         app.include_router(router)
     legacy_errors.install(app)
     for legacy_router in build_legacy_routers(include_in_schema=False):   # ACL: hợp đồng = OpenAPI legacy đóng băng

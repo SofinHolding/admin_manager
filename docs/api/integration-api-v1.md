@@ -5,26 +5,43 @@ Service: `integration-service` (cổng 8431, DB `integration_db`). Auth: xem `se
 
 ## 1. Quản lý Client / Credential (mặt phẳng USER — token user RS256)
 
+Hai loại client (`ownership`), mỗi loại đúng MỘT đường tạo:
+
+- **personal** (`client_kind=primary_tool`): Tool cá nhân của một tài khoản. CHỈ sinh ra khi tài khoản được cấp
+  `capability:tool_integration` (event `account.permission_changed` từ Identity — gói quyền mã mời `viewer_tool` hoặc admin cấp
+  trong Phân quyền). Mỗi tài khoản tối đa 1 client personal đang `pending_email_verification|active` (unique index).
+- **shared** (`client_kind=fallback_tool|service`): công cụ dùng chung, CHỈ role `admin` tạo qua wizard bắt buộc
+  `draft → configured → active`; owner = admin chịu trách nhiệm.
+
 | Method & path | Quyền | Ghi chú |
 |---|---|---|
-| `POST /v1/integrations/clients` | user đã xác thực | body `{tool_name, client_kind: primary_tool|fallback_tool|service, platforms[]}`; owner = `sub`. `platforms`/scopes bị cắt theo policy (xem §2) |
-| `GET /v1/integrations/clients` | user (của mình); admin (tất cả, lọc `owner`) | không bao giờ trả secret/hash |
-| `GET /v1/integrations/clients/{client_id}` | chủ hoặc admin | kèm installations, credentials (key_id, scopes, last_used_at, status) |
-| `POST /v1/integrations/clients/{client_id}/credentials` | chủ client, email đã xác thực | trả `{key_id, api_key, scopes, expires_at}` — `api_key` **chỉ một lần** |
-| `POST /v1/integrations/clients/{client_id}/credentials/{key_id}/rotate` | chủ/admin | cấp key mới, key cũ còn hiệu lực `grace_seconds` (mặc định 0) |
-| `DELETE /v1/integrations/clients/{client_id}/credentials/{key_id}` | chủ/admin | thu hồi tức thì → `AUTH_REVOKED`; phát `credential.revoked` |
-| `PATCH /v1/integrations/clients/{client_id}` | admin | `status`, `allowed_scopes` (chỉ admin cấp `jobs:claim:system`, chỉ với `fallback_tool`) |
+| `POST /v1/integrations/clients` | `admin` | Bước 1 wizard: `{tool_name, client_kind: fallback_tool|service, purpose, platforms?}` → client shared `draft`. `primary_tool` → 422 |
+| `PUT /v1/integrations/clients/{client_id}/config` | `admin` | Bước 2, chỉ khi `draft`: `{allowed_platforms, allowed_scopes}` → `configured_at` |
+| `POST /v1/integrations/clients/{client_id}/activate` | `admin` | Bước 3: `{confirm_tool_name}` phải khớp `tool_name`; cần bước 2 → `active` |
+| `POST /v1/integrations/clients/{client_id}/transfer` | `admin` | chỉ personal: `{new_owner_account_id}`; thu hồi mọi khoá, đổi chủ, cấp khoá chờ chủ mới nhận. Dữ liệu đã ingest GIỮ owner cũ |
+| `GET /v1/integrations/clients` | user (của mình); admin/dash_admin (tất cả, lọc `owner`) | mỗi item kèm `ownership`, `purpose`, `credentials` (tóm tắt: `key_id, status, reveal_state, bound_device_id, activated_at, last_used_at, expires_at`) |
+| `GET /v1/integrations/clients/{client_id}` | chủ hoặc admin | kèm installations, credentials |
+| `POST /v1/integrations/clients/{client_id}/credentials` | chủ / `admin` | client `draft` → `409 CLIENT_NOT_READY`. Chủ nhận `api_key` một lần. Admin cấp trên client personal → `api_key=null`, `reveal_state=pending` |
+| `POST /v1/integrations/clients/{client_id}/credentials/{key_id}/rotate` | chủ / `admin` | cùng quy tắc plaintext như trên; key cũ còn hiệu lực `grace_seconds` (mặc định 0). Khoá mới chưa bind thiết bị |
+| `DELETE /v1/integrations/clients/{client_id}/credentials/{key_id}` | chủ / `admin` | thu hồi tức thì → `AUTH_REVOKED`; phát `credential.revoked` |
+| `PATCH /v1/integrations/clients/{client_id}` | `admin` | `status`, `allowed_scopes`, `allowed_platforms`, `tool_name`; `draft → active` qua PATCH → `409 CLIENT_NOT_READY` |
+| `POST /v1/integrations/me/credential/reveal` | chủ client personal | nhận plaintext khoá `reveal_state=pending` MỘT lần (xoá bản mã hoá). Hết hạn → `410 REVEAL_EXPIRED`; không có → `404 REVEAL_NOT_AVAILABLE`; email chưa xác thực → `403 EMAIL_NOT_VERIFIED` |
+| `GET /v1/integrations/me/connection-guide` | chủ client personal | base URL công khai (`INTEGRATION_PUBLIC_BASE_URL`), header bắt buộc, khoá (không có secret), thiết bị đã kích hoạt, endpoint máy mà scope khoá cho phép (kèm request schema đã resolve, ví dụ, mã lỗi), mã lỗi + HTTP status, giới hạn, 5 snapshot gần nhất + rejections |
+| `GET /v1/integrations/me/openapi.json` | chủ client personal | OpenAPI rút gọn đúng các endpoint trong connection-guide |
 
 Alias tương thích tài liệu cũ: `POST /v1/integrations/{client_id}/credentials`.
 
 ## 2. Policy & Provisioning
 
-- Scopes mặc định của client thường: `integration:handshake, resources:write, snapshots:write, metrics:write` (+ `jobs:claim, jobs:complete` cho `fallback_tool`).
-- Client được tạo từ event `account.registered` có `provisioning` (do Identity validate theo registration key) → trạng thái
-  `pending_email_verification`; sang `active` khi nhận `account.verified`; `account.status_changed→suspended` hoặc `account.deleted` → `suspended`/`deleted`
-  và **mọi credential bị vô hiệu**. `client_id` do Identity cấp sẵn (`cli_...`) và Integration dùng đúng giá trị đó (idempotent theo `client_id`).
-- Provision lỗi → phát `integration.client.provision_failed {client_id, account_id, error_code}`; thành công → `integration.client.provisioned`.
-- Integration tự dựng `account_projection(account_id, status, email_verified)` từ feed Identity (`IDENTITY` feed qua `X-Service-Key`) — **không gọi Identity trên đường request**.
+- Scopes mặc định: `integration:handshake, resources:write, snapshots:write, metrics:write` (+ `jobs:claim, jobs:complete` cho `fallback_tool`;
+  `jobs:claim:system` chỉ admin cấp cho `fallback_tool`).
+- `account.permission_changed(capability:tool_integration, granted=true)` → tạo client personal (`tool_name="Tool cá nhân"`, mọi platform đang bật)
+  hoặc kích hoạt lại client đã bị tạm dừng do thu hồi capability; nếu chưa có khoá active → tạo 1 khoá `reveal_state=pending`
+  (secret mã hoá Fernet bằng `INTEGRATION_REVEAL_KEY`, hết hạn sau `CREDENTIAL_REVEAL_TTL_DAYS`, mặc định 7). Idempotent. Phát `integration.client.provisioned`.
+- `granted=false` → client personal `suspended` (`suspended_by=capability`) và **mọi khoá bị thu hồi**.
+- Client personal ở `pending_email_verification` cho tới `account.verified`; `account.status_changed→suspended` / `account.deleted` → `suspended`/`deleted` + thu hồi khoá.
+- Integration tự dựng `account_projection(account_id, status, email_verified)` từ feed Identity (`X-Service-Key`) — **không gọi Identity trên đường request**.
+- Plaintext khoá chỉ đến tay CHỦ client personal (trả trực tiếp hoặc qua reveal) hoặc admin với client shared. Admin không bao giờ thấy secret khoá cá nhân.
 
 ## 3. Mặt phẳng MÁY (API key `mpk_`)
 
@@ -45,6 +62,12 @@ Theo `ingest-data-contract-v1.md` §3 và contract api-first. Bắt buộc:
 
 Hành vi bắt buộc (mỗi mục có test):
 
+- **Device binding (1 khoá : 1 thiết bị)**: `handshake` đầu tiên bind khoá vào `device_id` đó (`bound_device_id`, `bound_installation_id`, `activated_at`).
+  Handshake từ thiết bị khác → `409 CREDENTIAL_DEVICE_BOUND` (không tạo installation). Mọi endpoint máy khác `/handshake`: khoá chưa bind →
+  `403 CREDENTIAL_NOT_ACTIVATED`; header `X-Installation-Id` vắng/khác installation đã bind → `403 INSTALLATION_MISMATCH`; `jobs/claim.installation_id`
+  phải trùng installation đã bind. Đổi máy = xoay khoá (khoá mới chưa bind). Nhiều worker = nhiều khoá.
+- **Client dùng chung không ghi dữ liệu đứng tên mình**: client `ownership=shared` gọi `POST /resources/batch`, `PUT /projects/{key}`, tạo/đẩy/commit
+  snapshot mà thiếu `X-Delegated-Job` hợp lệ → `403 SHARED_CLIENT_REQUIRES_DELEGATION`. Đọc (`GET /resources`, `/resource-owners`) và jobs không đổi.
 - **Ownership từ credential**: `owner_*` trong payload → `422 RECORD_VALIDATION_FAILED` (schema `additionalProperties:false`). Job do server gán owner.
 - **Platform**: dữ liệu platform ngoài `allowed_platforms` của client → `403 PLATFORM_NOT_ALLOWED`.
 - **Idempotency** (mọi POST/PUT ghi): `Idempotency-Key`; khoá lưu `(client_id, method, path, key) → (sha256(body), response)`.
@@ -99,3 +122,23 @@ Chưa làm (cần hạ tầng/sync server, chờ duyệt): canonicalizer `docume
 
 Mọi endpoint công khai có request/response schema, `error.code`, scope, ví dụ; `/openapi.json` đúng thực tế (có test contract so sánh với bản đóng băng
 `docs/api/openapi/integration-service.v1.json`). Thay đổi phá vỡ = contract version mới.
+
+## 8. Thay đổi 2026-10-14 (trước phát hành)
+
+integration-service chưa chạy production (Phase 6 chưa duyệt) nên các thay đổi sau được áp TRỰC TIẾP vào contract `2026-10-01` thay vì mở
+version mới; bản OpenAPI đóng băng đã sinh lại. Tool/SDK đang dùng bản cũ PHẢI cập nhật:
+
+| Thay đổi | Ảnh hưởng tới Tool / UI |
+|---|---|
+| Device binding: 1 khoá chỉ kích hoạt cho 1 thiết bị ở handshake đầu tiên; `X-Installation-Id` bắt buộc ngoài `/handshake` | Gọi `/handshake` trước mọi việc, gửi `X-Installation-Id` mọi request sau (`manager_sdk.IntegrationClient` tự làm). Đổi máy/nhiều worker = xoay/cấp thêm khoá |
+| Client personal chỉ tự sinh từ `capability:tool_integration`; user không còn `POST /clients` | Bỏ luồng tự tạo client; người dùng nhận khoá qua `POST /me/credential/reveal` hoặc tự cấp khi không còn khoá active |
+| `POST /clients` thành bước 1 wizard client dùng chung (admin), thêm `PUT /clients/{id}/config`, `POST /clients/{id}/activate`; trạng thái `draft` | Không cấp được khoá cho client chưa kích hoạt (`409 CLIENT_NOT_READY`) |
+| Admin cấp/xoay khoá trên client personal không trả `api_key` (`reveal_state=pending`) | Admin không thấy secret khoá cá nhân |
+| `POST /clients/{id}/transfer` | Chuyển chủ client personal; dữ liệu đã ingest giữ owner cũ |
+| Client dùng chung ghi dữ liệu phải kèm `X-Delegated-Job` | `403 SHARED_CLIENT_REQUIRES_DELEGATION` |
+| `GET /me/connection-guide`, `GET /me/openapi.json` | Tài liệu tích hợp tự mô tả cho chủ Tool cá nhân |
+| Bỏ provisioning lúc đăng ký (`account.registered.provisioning`) và event `integration.client.provision_failed` | Identity không còn nhận `integration` khi đăng ký |
+| Mã lỗi mới | `CREDENTIAL_DEVICE_BOUND`, `CREDENTIAL_NOT_ACTIVATED`, `INSTALLATION_MISMATCH`, `SHARED_CLIENT_REQUIRES_DELEGATION`, `CLIENT_NOT_READY`, `REVEAL_NOT_AVAILABLE`, `REVEAL_EXPIRED`, `PERSONAL_CLIENT_EXISTS` |
+
+Giới hạn đã biết: `installation_id` không phải bí mật — chép CẢ khoá lẫn `installation_id` sang máy khác thì vẫn gọi được; binding chặn kích
+hoạt lần hai và dùng nhầm, không thay cho việc giữ bí mật khoá.

@@ -10,6 +10,8 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from cryptography.fernet import Fernet
+
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 _ENVS = {"dev", "test", "production"}
 MAX_BATCH_ITEMS = 500  # trần cố định theo hợp đồng ingest (BATCH_TOO_LARGE)
@@ -56,6 +58,10 @@ class Settings:
     job_result_max_bytes: int = 64 * 1024
     legacy_redeem_per_window: int = 10       # pairing legacy: số lần đổi mã tối đa mỗi IP mỗi cửa sổ
     legacy_redeem_window_s: int = 300
+    # Reveal credential cấp hộ (wizard admin / provisioning capability) — xem crypto.py + credentials/service.py.
+    reveal_key: str = ""
+    public_base_url: str = ""
+    credential_reveal_ttl_days: int = 7
 
     @property
     def provisioning_enabled(self) -> bool:
@@ -122,6 +128,19 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if jwks_url and not jwks_url.startswith(("http://", "https://")):
         raise ConfigError("INTEGRATION_IDENTITY_JWKS_URL phải là http(s)://")
 
+    reveal_key = _env(env, "REVEAL_KEY")
+    if reveal_key:
+        try:
+            Fernet(reveal_key.encode("utf-8"))
+        except Exception as exc:  # noqa: BLE001 — mọi lỗi định dạng Fernet đều là lỗi cấu hình
+            raise ConfigError(f"INTEGRATION_REVEAL_KEY không đúng định dạng Fernet: {exc}") from exc
+    elif mode != "test":
+        raise ConfigError("Thiếu INTEGRATION_REVEAL_KEY (bắt buộc ngoài env=test)")
+
+    public_base_url = _env(env, "PUBLIC_BASE_URL").rstrip("/")
+    if public_base_url and not public_base_url.startswith(("http://", "https://")):
+        raise ConfigError("INTEGRATION_PUBLIC_BASE_URL phải là http(s)://")
+
     return Settings(
         port=port, log_level=level, database_url=database_url, env=mode,
         issuer=_env(env, "ISSUER").rstrip("/"), audience=_env(env, "AUDIENCE", "manager-api"),
@@ -147,6 +166,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         job_result_max_bytes=_int(env, "JOB_RESULT_MAX_BYTES", 64 * 1024, 1024, 1024 * 1024),
         legacy_redeem_per_window=_int(env, "LEGACY_REDEEM_PER_WINDOW", 10, 1, 10_000),
         legacy_redeem_window_s=_int(env, "LEGACY_REDEEM_WINDOW_S", 300, 1, 86400),
+        reveal_key=reveal_key, public_base_url=public_base_url,
+        credential_reveal_ttl_days=_int(env, "CREDENTIAL_REVEAL_TTL_DAYS", 7, 1, 365),
     )
 
 
@@ -158,6 +179,8 @@ def require_serving_config(settings: Settings) -> None:
         raise ConfigError("Thiếu INTEGRATION_ISSUER (issuer của access token Identity)")
     if not settings.jwks_url:
         raise ConfigError("Thiếu INTEGRATION_IDENTITY_JWKS_URL (JWKS để verify token RS256 offline)")
+    if not settings.reveal_key:
+        raise ConfigError("Thiếu INTEGRATION_REVEAL_KEY (khoá Fernet mã hoá reveal credential)")
     if settings.env == "production":
         if not settings.issuer.startswith("https://"):
             raise ConfigError("INTEGRATION_ISSUER phải là https:// ở production")

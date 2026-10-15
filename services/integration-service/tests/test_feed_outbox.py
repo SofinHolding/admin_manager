@@ -58,9 +58,10 @@ async def test_internal_endpoints_are_not_in_public_openapi(env):
 
 async def test_feed_replay_pagination_and_shape(env):
     tool = await env.tool()
+    start = (await feed(env))["head"]   # bỏ qua integration.client.provisioned phát lúc provision client cá nhân
     for i in range(5):
         await ingest_full(tool, resources=[res(f"r{i}", obs=i)], obs=i, type="delta")
-    full = await feed(env)
+    full = await feed(env, after=start)
     assert [e["type"] for e in full["events"]] == ["snapshot.committed"] * 5
     assert full["has_more"] is False and full["head"] == full["next_cursor"] == full["events"][-1]["seq"]
     e = full["events"][0]
@@ -69,13 +70,14 @@ async def test_feed_replay_pagination_and_shape(env):
     seqs = [x["seq"] for x in full["events"]]
     assert seqs == sorted(seqs) and len(set(seqs)) == 5
     # phân trang không trùng không sót
-    got, cursor = [], 0
+    got, cursor = [], start
     while True:
         page = await feed(env, after=cursor, limit=2)
         got += page["events"]
         cursor = page["next_cursor"]
         if not page["has_more"]:
             break
+
     assert [x["id"] for x in got] == [x["id"] for x in full["events"]]
     empty = await feed(env, after=full["head"])
     assert empty["events"] == [] and empty["next_cursor"] == full["head"] and empty["has_more"] is False
@@ -90,7 +92,8 @@ async def test_feed_types_filter_and_event_catalogue(env):
     await ingest_full(tool, resources=[res("r2")], type="delta")
     owner = env.user(sub=tool.owner)
     await env.http.delete(f"/v1/integrations/clients/{tool.client_id}/credentials/{tool.key_id}", headers=owner["headers"])
-    assert {e["type"] for e in (await feed(env))["events"]} == {"resource.changed", "snapshot.committed", "credential.revoked"}
+    assert {e["type"] for e in (await feed(env))["events"]} == {
+        "integration.client.provisioned", "resource.changed", "snapshot.committed", "credential.revoked"}
     only = await feed(env, types="credential.revoked,khong.ton.tai")
     assert [e["type"] for e in only["events"]] == ["credential.revoked"]
     assert only["events"][0]["data"] == {"client_id": tool.client_id, "key_id": tool.key_id}
@@ -339,6 +342,6 @@ async def test_concurrent_writers_with_a_live_consumer_lose_nothing(env):
     await asyncio.wait_for(task, 30)
     assert all(r.status_code == 200 for r in rs)
     db_events = {r["seq"]: r["id"] for r in await env.rows("SELECT seq, id FROM outbox")}
-    assert got_events == db_events and len(db_events) == 12
+    assert got_events == db_events and len(db_events) == 16   # 12 snapshot.committed + 4 integration.client.provisioned
     db_res = {r["id"]: r["revision"] for r in await env.rows("SELECT id, revision FROM resources")}
     assert got_resources == db_res and len(db_res) == 36

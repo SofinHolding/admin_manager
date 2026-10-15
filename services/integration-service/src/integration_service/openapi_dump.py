@@ -20,9 +20,10 @@ def build_spec() -> dict:
     from integration_service.app import create_app
     from integration_service.config import Settings
 
-    # Cấu hình giả chỉ để dựng app (không kết nối DB/Identity khi sinh tài liệu).
+    # Cấu hình giả chỉ để dựng app (không kết nối DB/Identity khi sinh tài liệu); reveal_key là khoá Fernet giả hợp lệ.
     settings = Settings(port=8431, log_level="INFO", database_url="postgresql://doc:doc@127.0.0.1:1/doc", env="test",
-                        issuer="http://identity.invalid", jwks_url="http://identity.invalid/.well-known/jwks.json")
+                        issuer="http://identity.invalid", jwks_url="http://identity.invalid/.well-known/jwks.json",
+                        reveal_key="A" * 43 + "=")
     return json.loads(json.dumps(create_app(settings).openapi()))
 
 

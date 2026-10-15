@@ -58,10 +58,8 @@ class Api:
 
     # ── Người dùng ──────────────────────────────────────────────────────────────
 
-    def seed_invite_key(self, *, role: str = "viewer", policy: dict | None = None, apps: list[str] | None = None) -> str:
+    def seed_invite_key(self, *, role: str = "viewer") -> str:
         """Ops seed key đầu tiên thẳng vào identity_db (chưa có admin nào để gọi API)."""
-        import json
-
         import asyncpg
 
         key = "e2e-" + secrets.token_hex(8)
@@ -72,18 +70,13 @@ class Api:
                 await conn.execute(
                     "INSERT INTO invite_keys (key, role, label, max_uses, expires_at) VALUES ($1,$2,'e2e',5, now()+interval '1 day')",
                     key, role)
-                if policy is not None:
-                    await conn.execute("UPDATE invite_keys SET integration_policy=$2::jsonb, allowed_apps=$3 WHERE key=$1",
-                                       key, json.dumps(policy), apps or [])
             finally:
                 await conn.close()
         asyncio.run(run())
         return key
 
-    def register(self, key: str, username: str, *, integration: dict | None = None) -> httpx.Response:
+    def register(self, key: str, username: str) -> httpx.Response:
         body = {"key": key, "username": username, "password": PASSWORD, "email": f"{username}@e2e.example.com"}
-        if integration is not None:
-            body["integration"] = integration
         return self.http.post("/v1/auth/register", json=body)
 
     def verify_email(self, username: str) -> None:
@@ -106,8 +99,8 @@ class Api:
     def bearer(self, username: str) -> dict:
         return {"Authorization": f"Bearer {self.login(username)['access_token']}"}
 
-    def user(self, username: str, key: str, **kw) -> dict:
-        r = self.register(key, username, **kw)
+    def user(self, username: str, key: str) -> dict:
+        r = self.register(key, username)
         assert r.status_code in (200, 201), r.text
         self.verify_email(username)
         return {"username": username, "headers": self.bearer(username), "register": r.json()}
@@ -151,14 +144,16 @@ def day(days_ago: int = 1) -> str:
 
 
 class ToolX:
-    """Tool ngoài dùng SDK chính thức qua gateway; chỉ biết base URL + API key."""
+    """Tool ngoài dùng SDK chính thức qua gateway; chỉ biết base URL + API key (+ installation_id sau handshake)."""
 
     def __init__(self, base_url: str, api_key: str) -> None:
         self.base_url, self.api_key = base_url, api_key
+        self.installation_id: str | None = None   # khoá bind 1 thiết bị ở handshake; gửi lại mọi request sau
 
     def run(self, coro_fn):
         async def go():
-            client = IntegrationClient(self.base_url, self.api_key, retries=1, backoff_base=0.05, timeout=10)
+            client = IntegrationClient(self.base_url, self.api_key, retries=1, backoff_base=0.05, timeout=10,
+                                       installation_id=self.installation_id)
             try:
                 return await coro_fn(client)
             finally:
@@ -166,9 +161,11 @@ class ToolX:
         return asyncio.run(go())
 
     def handshake(self):
-        return self.run(lambda c: c.handshake(device_id="toolx-dev-1", hostname="toolx-host", os_name="windows",
-                                              app_version="1.0", tool_name=TOOL_NAME, platforms=[TOOL_PLATFORM],
-                                              capabilities=["snapshots.push"]))
+        out = self.run(lambda c: c.handshake(device_id="toolx-dev-1", hostname="toolx-host", os_name="windows",
+                                             app_version="1.0", tool_name=TOOL_NAME, platforms=[TOOL_PLATFORM],
+                                             capabilities=["snapshots.push"]))
+        self.installation_id = out["installation_id"]
+        return out
 
     def push(self, *, resources=(), content=(), metrics=(), events=(), snapshot_type="full", scope=None):
         ts = now_z()
@@ -183,33 +180,35 @@ class ToolX:
 
 @pytest.fixture(scope="session")
 def world(stack, api):
-    """Admin + chủ Tool đã đăng ký (kèm integration) + Mock Tool X có API key. Mọi thứ đi qua API công khai."""
+    """Admin + chủ Tool đã đăng ký (có capability:tool_integration qua preset `viewer_tool`) + Mock Tool X có API key.
+    Mọi thứ đi qua API công khai: Tool cá nhân tự sinh từ capability, chủ nhận khoá bằng reveal."""
     admin = api.user("e2eadmin", api.seed_invite_key(role="admin"))
     r = api.http.put(f"/v1/integrations/admin/platforms/{TOOL_PLATFORM}", headers=admin["headers"],
                      json={"display_name": "Tool X Social"})  # DỮ LIỆU registry, không phải code
     assert r.status_code == 200, r.text
-    r = api.http.post("/v1/admin/keys", headers=admin["headers"], json={
-        "role": "viewer", "max_uses": 3,
-        "integration_policy": {"allow_integration_registration": True, "allowed_platforms": [TOOL_PLATFORM],
-                               "max_integration_clients": 2}})
+    r = api.http.post("/v1/admin/keys", headers=admin["headers"], json={"preset": "viewer_tool", "max_uses": 3})
     assert r.status_code == 200, r.text
     key = r.json()["key"]
-    owner = api.user("e2eowner", key, integration={"create": True, "tool_name": TOOL_NAME, "platforms": [TOOL_PLATFORM]})
-    clients = wait_for(lambda: api.http.get("/v1/integrations/clients", headers=owner["headers"]).json()["data"],
-                       what="Integration client được provisioning từ feed của Identity")
+    owner = api.user("e2eowner", key)
+    clients = wait_for(lambda: api.http.get("/v1/integrations/clients", headers=owner["headers"]).json()["data"]["items"],
+                       what="Tool cá nhân được provisioning từ capability:tool_integration của Identity")
     cid = clients[0]["client_id"]
-    # Cấp credential cần Integration đã nhận event `account.verified` (consumer kéo feed theo chu kỳ) ⇒ chờ, không đoán thời gian.
+    # Giới hạn Tool X vào đúng platform của nó (admin), để test "ngoài platform được phép" có nghĩa.
+    r = api.http.patch(f"/v1/integrations/clients/{cid}", headers=admin["headers"],
+                       json={"allowed_platforms": [TOOL_PLATFORM]})
+    assert r.status_code == 200, r.text
+    # Nhận khoá cần Integration đã nhận `account.verified` (consumer kéo feed theo chu kỳ) ⇒ chờ, không đoán thời gian.
     holder: dict = {}
 
-    def issue():
-        r = api.http.post(f"/v1/integrations/clients/{cid}/credentials", headers=owner["headers"], json={})
-        if r.status_code == 201:
+    def reveal():
+        r = api.http.post("/v1/integrations/me/credential/reveal", headers=owner["headers"])
+        if r.status_code == 200:
             holder["r"] = r
             return True
         assert r.status_code == 403 and r.json()["error"]["code"] == "EMAIL_NOT_VERIFIED", r.text  # lỗi khác là lỗi thật
         return False
 
-    wait_for(issue, timeout=30, what="Integration nhận email_verified của owner")
+    wait_for(reveal, timeout=30, what="Integration nhận email_verified của owner")
     r = holder["r"]
     other = api.user("e2eother", api.seed_invite_key(role="viewer"))  # người dùng khác: không được thấy dữ liệu của owner
     return {"admin": admin, "owner": owner, "other": other, "client_id": cid, "client": clients[0],

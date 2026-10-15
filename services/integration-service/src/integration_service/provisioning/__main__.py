@@ -9,8 +9,11 @@ from datetime import datetime, timezone
 
 from integration_service.clients.service import ClientService
 from integration_service.config import ConfigError, load_settings
+from integration_service.credentials.service import CredentialService
+from integration_service.crypto import RevealCrypto
 from integration_service.db import Database
 from integration_service.provisioning.consumer import ProvisioningConsumer
+from integration_service.ratelimit import FixedWindowLimiter
 
 
 async def _replay(event_id: str | None) -> dict:
@@ -20,7 +23,11 @@ async def _replay(event_id: str | None) -> dict:
     db = Database(settings.database_url)
     try:
         now = lambda: datetime.now(timezone.utc)  # noqa: E731
-        consumer = ProvisioningConsumer(db, settings, ClientService(db, settings, now), feed=None, now=now)  # type: ignore[arg-type]
+        clients = ClientService(db, settings, now)
+        reveal = RevealCrypto(settings.reveal_key) if settings.reveal_key else None
+        credentials = CredentialService(db, settings, now, clients, FixedWindowLimiter(600), FixedWindowLimiter(30),
+                                        reveal_crypto=reveal)
+        consumer = ProvisioningConsumer(db, settings, clients, credentials, feed=None, now=now)  # type: ignore[arg-type]
         return await consumer.replay_dead_letters(event_id)
     finally:
         await db.close()

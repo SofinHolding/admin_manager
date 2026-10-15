@@ -8,6 +8,8 @@ import asyncpg
 import pytest
 from conftest import ts
 from helpers import claim, create_job, fallback_resource, handshake
+from integration_service.clients import policy
+from integration_service.clients.policy import SYSTEM_SCOPE
 
 pytestmark = pytest.mark.needs_pg
 JOBS = "/v1/integrations/jobs"
@@ -16,8 +18,9 @@ JOBS = "/v1/integrations/jobs"
 class World:
     """Một owner, một Fallback Tool đã handshake, một resource ở chế độ fallback_tool."""
 
-    def __init__(self, env, user, tool, ins, rid):
+    def __init__(self, env, user, tool, ins, rid, owner_tool):
         self.env, self.user, self.tool, self.ins, self.rid = env, user, tool, ins, rid
+        self.owner_tool = owner_tool   # tool cá nhân của `user` — dùng để seed resource (ghi dữ liệu không qua delegation)
 
     async def job(self, **body) -> dict:
         return await create_job(self.env, self.user, self.rid, **body)
@@ -26,12 +29,19 @@ class World:
         return (await self.env.rows("SELECT * FROM jobs WHERE id = $1", job_id))[0]
 
 
-async def make_world(env, *, platforms=("facebook",), caps=("jobs.pull",), ext="fb1") -> World:
+async def make_world(env, *, platforms=("facebook",), caps=("jobs.pull",), ext="fb1", system: bool = True) -> World:
+    """`system=True` (mặc định): Fallback Tool có `jobs:claim:system` (đúng vai trò claim job của MỌI owner, vì
+    client dùng chung thuộc về admin tạo ra nó, không thuộc về `user`). Test cố ý không có system scope
+    (vd `test_system_scope_claims_across_owners_but_job_owner_stays_server_assigned`) truyền `system=False`."""
     user = await env.verified_user()
-    tool = await env.tool(kind="fallback_tool", platforms=platforms, user=user)
-    ins = await handshake(tool, caps=caps, platforms=platforms)
-    rid = await fallback_resource(env, tool, ext)
-    return World(env, user, tool, ins, rid)
+    owner_tool = await env.tool(user=user)   # client cá nhân của user: seed resource không bị chặn bởi delegation
+    scopes = policy.default_scopes("fallback_tool") + ([SYSTEM_SCOPE] if system else [])
+    tool = await env.tool(kind="fallback_tool", platforms=platforms, user=user, handshake=False, scopes=scopes)
+    hs = await env.handshake(tool.api_key, platforms=platforms, capabilities=list(caps))
+    tool.installation_id, tool.device_id = hs["installation_id"], hs["device_id"]
+    ins = tool.installation_id
+    rid = await fallback_resource(env, owner_tool, ext)
+    return World(env, user, tool, ins, rid, owner_tool)
 
 
 @pytest.fixture
@@ -50,10 +60,10 @@ async def test_user_creates_job_for_own_fallback_resource(w):
 
 
 async def test_create_requires_fallback_mode_active_resource_and_ownership(w, env):
-    other_rid = await fallback_resource(env, w.tool, "primary-one", mode="primary_tool")
+    other_rid = await fallback_resource(env, w.owner_tool, "primary-one", mode="primary_tool")
     r = await create_job(env, w.user, other_rid, expect=409)
     assert r["error"]["code"] == "JOB_NOT_ELIGIBLE"
-    off = await fallback_resource(env, w.tool, "disabled-one", state="disabled")
+    off = await fallback_resource(env, w.owner_tool, "disabled-one", state="disabled")
     assert (await create_job(env, w.user, off, expect=409))["error"]["code"] == "JOB_NOT_ELIGIBLE"
     stranger = await env.verified_user()
     assert (await create_job(env, stranger, w.rid, expect=404))["error"]["code"] == "NOT_FOUND"
@@ -137,8 +147,8 @@ async def test_claim_respects_limit_priority_and_lease_cap(w):
 async def test_claim_never_returns_other_owners_jobs(env):
     a, b = await make_world(env, ext="a"), await make_world(env, ext="b")
     ja, jb = await a.job(), await b.job()
-    assert [j["job_id"] for j in await claim(a.tool, a.ins)] == [ja["job_id"]]
-    assert [j["job_id"] for j in await claim(b.tool, b.ins)] == [jb["job_id"]]
+    assert [j["job_id"] for j in await claim(a.tool, a.ins, limit=1)] == [ja["job_id"]]
+    assert [j["job_id"] for j in await claim(b.tool, b.ins, limit=1)] == [jb["job_id"]]
     assert (await b.state(ja["job_id"]))["claimed_by_client"] == a.tool.client_id
 
 
@@ -148,7 +158,7 @@ async def test_claim_rejects_owner_fields_and_foreign_installation(env):
     r = await a.tool.post(f"{JOBS}/claim", {"installation_id": a.ins, "owner_account_id": b.user["sub"]})
     assert r.status_code == 422
     r = await a.tool.post(f"{JOBS}/claim", {"installation_id": b.ins, "platforms": ["facebook"]})
-    assert r.status_code == 404   # installation của client khác
+    assert r.status_code == 403 and r.json()["error"]["code"] == "INSTALLATION_MISMATCH"   # installation của client khác
     r = await a.tool.post(f"{JOBS}/claim", {"installation_id": "ins_khong_hop_le"})
     assert r.status_code == 422
 
@@ -156,25 +166,67 @@ async def test_claim_rejects_owner_fields_and_foreign_installation(env):
 SCOPES = ["integration:handshake", "resources:write", "snapshots:write", "metrics:write", "jobs:claim", "jobs:complete"]
 
 
+async def issue_sibling(env, w: World, *, device: str | None = None, caps=("jobs.pull",)):
+    """Cấp credential THỨ HAI cho CÙNG client (owner không đổi), handshake với thiết bị khác — mô phỏng
+    nhiều worker của cùng một Fallback Tool (1 credential : 1 thiết bị)."""
+    admin = await env.verified_user(role="admin")
+    r = await env.http.post(f"/v1/integrations/clients/{w.tool.client_id}/credentials", headers=admin["headers"], json={})
+    assert r.status_code == 201, r.text
+    d = r.json()["data"]
+    sib = type(w.tool)(http=env.http, client_id=w.tool.client_id, owner=w.tool.owner, key_id=d["key_id"],
+                       api_key=d["api_key"], scopes=d["scopes"])
+    sib.installation_id = await handshake(sib, caps=caps, device=device)
+    return sib
+
+
+async def sibling_client(env, w: World, *, device: str | None = None):
+    """Client DÙNG CHUNG KHÁC (client_id khác) nhưng CÙNG owner (admin) với `w.tool` — dùng để kiểm tra
+    lease chỉ thuộc về đúng client_id, kể cả khi chung owner và cùng có system scope."""
+    admin = env.user(sub=w.tool.owner, role="admin")
+    r = await env.http.post("/v1/integrations/clients", headers=admin["headers"], json={
+        "tool_name": "Sibling-" + (device or "x"), "client_kind": "fallback_tool",
+        "purpose": "sibling client fixture", "platforms": ["facebook"]})
+    assert r.status_code == 201, r.text
+    client_id = r.json()["data"]["client_id"]
+    scopes = policy.default_scopes("fallback_tool") + [SYSTEM_SCOPE]
+    r = await env.http.put(f"/v1/integrations/clients/{client_id}/config", headers=admin["headers"],
+                           json={"allowed_platforms": ["facebook"], "allowed_scopes": scopes})
+    assert r.status_code == 200, r.text
+    tool_name = r.json()["data"]["tool_name"]
+    r = await env.http.post(f"/v1/integrations/clients/{client_id}/activate", headers=admin["headers"],
+                            json={"confirm_tool_name": tool_name})
+    assert r.status_code == 200, r.text
+    r = await env.http.post(f"/v1/integrations/clients/{client_id}/credentials", headers=admin["headers"], json={})
+    assert r.status_code == 201, r.text
+    d = r.json()["data"]
+    sib = type(w.tool)(http=env.http, client_id=d["client_id"], owner=w.tool.owner, key_id=d["key_id"],
+                       api_key=d["api_key"], scopes=d["scopes"])
+    sib.installation_id = await handshake(sib, device=device)
+    return sib
+
+
 async def grant_system(env, w: World):
-    """Admin cấp `jobs:claim:system` cho client rồi cấp credential MỚI (credential cũ không tự có scope mới)."""
+    """Admin cấp `jobs:claim:system` cho client rồi cấp credential MỚI (credential cũ không tự có scope mới),
+    handshake credential mới với thiết bị khác (1 credential : 1 thiết bị)."""
     admin = await env.verified_user(role="admin")
     r = await env.http.patch(f"/v1/integrations/clients/{w.tool.client_id}", headers=admin["headers"],
                              json={"allowed_scopes": SCOPES + ["jobs:claim:system"]})
     assert r.status_code == 200, r.text
-    r = await env.http.post(f"/v1/integrations/clients/{w.tool.client_id}/credentials", headers=w.user["headers"], json={})
+    r = await env.http.post(f"/v1/integrations/clients/{w.tool.client_id}/credentials", headers=admin["headers"], json={})
     d = r.json()["data"]
     assert "jobs:claim:system" in d["scopes"]
-    return type(w.tool)(http=env.http, client_id=w.tool.client_id, owner=w.tool.owner, key_id=d["key_id"],
-                        api_key=d["api_key"], scopes=d["scopes"]), admin
+    sys_tool = type(w.tool)(http=env.http, client_id=w.tool.client_id, owner=w.tool.owner, key_id=d["key_id"],
+                            api_key=d["api_key"], scopes=d["scopes"])
+    sys_tool.installation_id = await handshake(sys_tool, device="sys-device")
+    return sys_tool, admin
 
 
 async def test_system_scope_claims_across_owners_but_job_owner_stays_server_assigned(env):
-    a, b = await make_world(env, ext="a"), await make_world(env, ext="b")
+    a, b = await make_world(env, ext="a", system=False), await make_world(env, ext="b")
     jb = await b.job()
     assert await claim(a.tool, a.ins) == []   # credential thường: không thấy job của owner khác
     sys_tool, _ = await grant_system(env, a)
-    got = await claim(sys_tool, a.ins)
+    got = await claim(sys_tool, sys_tool.installation_id)
     assert [j["job_id"] for j in got] == [jb["job_id"]] and got[0]["owner_account_id"] == b.user["sub"]
     r = await sys_tool.post(f"{JOBS}/{jb['job_id']}/complete", {"result": {}})
     assert r.status_code == 200
@@ -185,7 +237,7 @@ async def test_dropping_system_scope_stops_access_to_foreign_job(env):
     a, b = await make_world(env, ext="a"), await make_world(env, ext="b")
     jb = await b.job()
     sys_tool, admin = await grant_system(env, a)
-    assert [j["job_id"] for j in await claim(sys_tool, a.ins)] == [jb["job_id"]]
+    assert [j["job_id"] for j in await claim(sys_tool, sys_tool.installation_id)] == [jb["job_id"]]
     await env.http.patch(f"/v1/integrations/clients/{a.tool.client_id}", headers=admin["headers"],
                          json={"allowed_scopes": SCOPES})
     r = await sys_tool.post(f"{JOBS}/{jb['job_id']}/complete", {"result": {}})
@@ -206,15 +258,15 @@ async def test_capability_negotiation_is_declared_and_installed_intersection(env
     w2 = await make_world(env, caps=("jobs.pull", "adapter.alpha"))
     job = await w2.job(required_capability="adapter.alpha")
     assert await claim(w2.tool, w2.ins, capabilities=["jobs.pull"]) == []            # claim không khai
-    ins_no_cap = await handshake(w2.tool, caps=("jobs.pull",), device="other-device")
-    assert await claim(w2.tool, ins_no_cap, capabilities=["jobs.pull", "adapter.alpha"]) == []   # installation không có
+    other = await issue_sibling(env, w2, device="other-device", caps=("jobs.pull",))
+    assert await claim(other, other.installation_id, capabilities=["jobs.pull", "adapter.alpha"]) == []   # installation không có
     got = await claim(w2.tool, w2.ins, capabilities=["jobs.pull", "adapter.alpha"])
     assert [j["job_id"] for j in got] == [job["job_id"]]
 
 
 async def test_claim_needs_jobs_scope(env):
     user = await env.verified_user()
-    primary = await env.tool(kind="primary_tool", user=user)
+    primary = await env.tool(kind="primary_tool", user=user, handshake=False)
     ins = await handshake(primary, caps=())
     r = await primary.post(f"{JOBS}/claim", {"installation_id": ins})
     assert r.status_code == 403 and r.json()["error"]["code"] == "SCOPE_DENIED"
@@ -259,7 +311,7 @@ async def test_complete_unknown_unclaimed_and_malformed(w):
 
 
 async def test_cross_owner_complete_and_fail_look_like_not_found(env):
-    a, b = await make_world(env, ext="a"), await make_world(env, ext="b")
+    a, b = await make_world(env, ext="a"), await make_world(env, ext="b", system=False)
     ja = await a.job()
     await claim(a.tool, a.ins)
     for path, body in (("complete", {"result": {}}), ("fail", {"error_code": "X"}), ("heartbeat", {})):
@@ -271,7 +323,7 @@ async def test_cross_owner_complete_and_fail_look_like_not_found(env):
 async def test_other_client_of_same_owner_cannot_finish_my_lease(w, env):
     job = await w.job()
     await claim(w.tool, w.ins)
-    sibling = await env.tool(kind="fallback_tool", user=w.user)
+    sibling = await sibling_client(env, w, device="sibling-device")
     r = await sibling.post(f"{JOBS}/{job['job_id']}/complete", {"result": {}})
     assert r.status_code == 409 and r.json()["error"]["code"] == "JOB_LEASE_EXPIRED"
     assert (await w.state(job["job_id"]))["status"] == "leased"
@@ -392,7 +444,7 @@ async def test_heartbeat_after_lease_lost_is_refused(w, env):
     await claim(w.tool, w.ins, lease_seconds=60)
     env.clock.advance(seconds=61)
     await claim(w.tool, w.ins)   # chính client này giành lại, token mới
-    other = await env.tool(kind="fallback_tool", user=w.user)
+    other = await sibling_client(env, w, device="other-device")
     r = await other.post(f"{JOBS}/{job['job_id']}/heartbeat", {})
     assert r.status_code == 409 and r.json()["error"]["code"] == "JOB_LEASE_EXPIRED"
 
@@ -425,10 +477,22 @@ async def test_cancel_by_stranger_is_not_found_and_done_job_cannot_be_cancelled(
 # ── Tranh chấp & lỗi hạ tầng ─────────────────────────────────────────────────────────
 
 async def test_concurrent_claimers_never_get_the_same_job(env):
+    """Thiết kế tool-key: 1 credential chỉ bind 1 thiết bị -> nhiều worker đồng thời = nhiều credential của CÙNG
+    client (admin cấp thêm), mỗi credential tự handshake thiết bị riêng."""
     w = await make_world(env)
     ids = {(await w.job(dedupe_key=f"k{i}"))["job_id"] for i in range(12)}
-    installs = [await handshake(w.tool, device=f"dev-{i}") for i in range(6)]
-    batches = await asyncio.gather(*(claim(w.tool, ins, limit=3) for ins in installs))
+    from conftest import Tool
+    admin_headers = env.user(sub=w.tool.owner, role="admin")["headers"]
+    siblings = [w.tool]
+    for i in range(5):
+        r = await env.http.post(f"/v1/integrations/clients/{w.tool.client_id}/credentials",
+                                headers=admin_headers, json={})
+        assert r.status_code == 201, r.text
+        d = r.json()["data"]
+        hs = await env.handshake(d["api_key"], platforms=["facebook"], capabilities=["jobs.pull"])
+        siblings.append(Tool(env.http, w.tool.client_id, w.tool.owner, d["key_id"], d["api_key"], d["scopes"],
+                             installation_id=hs["installation_id"], device_id=hs["device_id"]))
+    batches = await asyncio.gather(*(claim(t, t.installation_id, limit=3) for t in siblings))
     got = [j["job_id"] for b in batches for j in b]
     assert len(got) == len(set(got)) == 12 and set(got) == ids
     rows = await env.rows("SELECT attempts, status FROM jobs")

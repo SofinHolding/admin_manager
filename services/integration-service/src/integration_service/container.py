@@ -13,6 +13,7 @@ from integration_service.clients.service import ClientService
 from integration_service.config import Settings
 from integration_service.credentials.service import CredentialService
 from integration_service.db import Database
+from integration_service.guide.service import GuideService
 from integration_service.installations.service import InstallationService
 from integration_service.jobs.service import JobService
 from integration_service.legacy_acl.service import LegacyService
@@ -37,6 +38,7 @@ class Container:
     projects: ProjectService
     resources: ResourceService
     snapshots: SnapshotService
+    guide: GuideService
     runner: MachineRunner
     jobs: JobService
     legacy: LegacyService

@@ -135,6 +135,9 @@ class JobService:
 
     async def claim(self, ctx: MachineContext, body) -> dict:
         now = self._now()
+        if body.installation_id != ctx.installation_id:
+            raise forbidden(Extra.INSTALLATION_MISMATCH,
+                            "installation_id trong body phải trùng installation đã bind cho credential này")
         async with self._db.transaction() as conn:
             if not await installations.exists_for_client(conn, body.installation_id, ctx.client_id):
                 raise not_found(ErrorCode.NOT_FOUND, "Không tìm thấy installation của client này")

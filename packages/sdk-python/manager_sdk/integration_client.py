@@ -5,6 +5,9 @@ Bám `docs/api/integration-api-v1.md` và `docs/api/ingest-data-contract-v1.md`.
   * Chỉ retry lỗi mạng / 5xx / 429 (có backoff + giới hạn); lỗi 4xx là lỗi của caller ⇒ ném ngay `IntegrationError` mang `error.code`.
   * Tự chia batch ≤ 500 bản ghi, tự tính `expected_counts`, commit sau cùng. Không tự chọn owner: owner suy ra từ API key ở server.
   * Không bao giờ đưa API key vào exception / log.
+  * `handshake()` tự nhớ `installation_id` trả về và gửi `X-Installation-Id` cho MỌI request sau đó (bắt buộc kể từ
+    device binding 2026-10-14 — credential chưa handshake => 403 CREDENTIAL_NOT_ACTIVATED). Có thể truyền sẵn
+    `installation_id=` lúc khởi tạo nếu đã handshake ở lần chạy trước (tránh gọi lại /handshake mỗi lần khởi động).
 """
 
 from __future__ import annotations
@@ -59,7 +62,8 @@ def iso(value: datetime | str) -> str:
 class IntegrationClient:
     def __init__(self, base_url: str, api_key: str, *, contract_version: str = CONTRACT_VERSION,
                  timeout: float = 15.0, retries: int = 3, http_client: httpx.AsyncClient | None = None,
-                 sleep=asyncio.sleep, backoff_base: float = 0.5, user_agent: str = "manager-sdk/1") -> None:
+                 sleep=asyncio.sleep, backoff_base: float = 0.5, user_agent: str = "manager-sdk/1",
+                 installation_id: str | None = None) -> None:
         self._base = base_url.rstrip("/")
         self._key = api_key
         self._version = contract_version
@@ -70,6 +74,9 @@ class IntegrationClient:
         self._sleep = sleep
         self._backoff_base = backoff_base
         self._ua = user_agent
+        # Ghi nhớ từ lần `handshake()` gần nhất (hoặc truyền sẵn nếu đã handshake trước đó, vd lần chạy trước).
+        # BẮT BUỘC ở mọi request khác /handshake kể từ thiết kế tool-key 2026-10-14 (device binding).
+        self.installation_id = installation_id
 
     async def aclose(self) -> None:
         if self._owns_http:
@@ -80,6 +87,8 @@ class IntegrationClient:
     def _headers(self, idempotency_key: str | None) -> dict[str, str]:
         headers = {"Authorization": f"Bearer {self._key}", "X-Contract-Version": self._version,
                    "X-Request-Id": "sdk_" + uuid.uuid4().hex, "User-Agent": self._ua}
+        if self.installation_id:
+            headers["X-Installation-Id"] = self.installation_id
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
         return headers
@@ -127,8 +136,11 @@ class IntegrationClient:
         body = {"installation": {"device_id": device_id, "hostname": hostname, "os": os_name, "app_version": app_version},
                 "tool": {"tool_name": tool_name, "contract_version": self._version},
                 "platforms": platforms, "capabilities": capabilities}
-        return await self._request("POST", "/v1/integrations/handshake", json_body=body,
+        data = await self._request("POST", "/v1/integrations/handshake", json_body=body,
                                    idempotency_key=_stable_key("handshake", body))
+        if isinstance(data, dict) and data.get("installation_id"):
+            self.installation_id = data["installation_id"]  # mọi request SAU đây tự gửi X-Installation-Id
+        return data
 
     async def put_project(self, project_key: str, *, name: str, platform: str, country_code: str | None = None,
                           enabled: bool = True, metadata: dict | None = None) -> dict:

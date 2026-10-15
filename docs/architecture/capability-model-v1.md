@@ -47,16 +47,39 @@ Tất cả đủ cho capability. Thêm bảng thứ 3 là duplicate.
 
 ## 3. Mapping Role → Default Capabilities
 
-Khi đăng ký (hoặc migration một lần), tài khoản nhận capabilities mặc định theo role:
+Khi đăng ký (hoặc migration một lần), tài khoản nhận capabilities mặc định theo role (cập nhật 2026-10-14,
+xem `permissions/capabilities.py` `DEFAULT_CAPABILITIES`):
 
 | Role | web_access | dashboard_access | manual_channel_mgmt | tool_integration | api_write | api_read | multi_tool |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `viewer` | ✅ | ✅ | — | — | — | — | — |
+| `viewer` | ✅ | ✅ | ✅ | — | — | — | — |
 | `dash_admin` | ✅ | ✅ | — | — | — | — | — |
-| `admin` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `admin` | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 | `discord` | — | — | — | — | — | — | — |
 
-Sau khi có default, admin có thể cấp thêm/thu hồi từng capability độc lập.
+`admin` KHÔNG mặc định có `tool_integration`: khoá Tool cá nhân chỉ sinh ra từ capability đó (xem
+`docs/api/integration-api-v1.md`, khoá Tool cá nhân) — admin muốn dùng Tool cá nhân phải được cấp capability riêng như mọi tài khoản
+khác, không tự động kèm theo quyền quản trị. Sau khi có default, admin có thể cấp thêm/thu hồi từng capability
+độc lập.
+
+---
+
+## 3b. Preset trên invite key (cập nhật 2026-10-14)
+
+`registration_keys/presets.py` (identity-service) ánh xạ 1-1 `preset → {role, capabilities}`, dùng để tạo
+`capability_grant {capabilities, override_defaults: true}` khi admin tạo/sửa invite key — thay thế việc gửi
+`capability_grant` thủ công (nay bị cấm ở `POST /v1/admin/keys`, `extra="forbid"`):
+
+| preset | role | capabilities |
+|---|---|---|
+| `viewer` | viewer | web_access, dashboard_access, manual_channel_mgmt |
+| `viewer_tool` | viewer | web_access, dashboard_access, manual_channel_mgmt, tool_integration |
+| `dash_admin` | dash_admin | web_access, dashboard_access |
+| `admin` | admin | mọi capability TRỪ tool_integration (chỉ `admin` đúng nghĩa mới gán được preset này) |
+| `discord` | discord | (không) |
+
+`GET /v1/admin/keys/presets` trả danh sách trên cho UI. Không gửi preset (client legacy chỉ gửi `role`) ⇒ cột `preset`
+NULL, key dùng default của role, phản hồi không có field `preset` (giữ parity legacy); key cũ có `capability_grant` vẫn chạy như trước.
 
 ---
 

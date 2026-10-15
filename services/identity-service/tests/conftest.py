@@ -108,7 +108,7 @@ def settings() -> Settings:
     """Cấu hình mặc định: RS256 + JWKS (không có secret chung).
 
     backchannel_enabled=False: tắt background task để tránh race condition giữa dev-stack
-    (đang chạy cùng identity_db) và test — test_feed_consumer dùng backchannel_enabled=True tường minh.
+    (đang chạy cùng identity_db) và test — `test_oidc_backchannel.py` dùng `backchannel_enabled=True` tường minh.
 
     key_encryption_key: dùng IDENTITY_KEY_ENCRYPTION_KEY từ .env.dev (nếu có) để tránh
     InvalidToken khi dev stack đang chạy cùng identity_db và tạo lại signing keys.

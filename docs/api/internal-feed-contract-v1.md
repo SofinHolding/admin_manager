@@ -29,7 +29,7 @@ Thêm trường vào `data` là tương thích; đổi/xoá trường = tăng `d
 
 | type | data |
 |---|---|
-| `account.registered` | `account_id, username, role, status` + tuỳ chọn `provisioning: {client_id, tool_name, client_kind, platforms[], scopes[]}` |
+| `account.registered` | `account_id, username, role, status` |
 | `account.verified` | `account_id` |
 | `account.status_changed` | `account_id, status, previous` |
 | `account.role_changed` | `account_id, role, previous` |
@@ -44,8 +44,7 @@ Thêm trường vào `data` là tương thích; đổi/xoá trường = tăng `d
 |---|---|
 | `snapshot.committed` | `snapshot_id, owner_account_id, client_id, platform, snapshot_type, observed_at, committed_at, report_timezone, counts{resources,content,metrics,events}, removed{...}, revision_from, revision_to` |
 | `resource.changed` | `resource_id, owner_account_id, platform, external_id, state, revision` (đổi ngoài snapshot, vd admin bật/tắt) |
-| `integration.client.provisioned` | `client_id, account_id, status` |
-| `integration.client.provision_failed` | `client_id, account_id, error_code` |
+| `integration.client.provisioned` | `client_id, account_id, status` (Tool cá nhân được tạo/kích hoạt lại khi tài khoản được cấp `capability:tool_integration`) |
 | `credential.revoked` | `client_id, key_id` |
 
 ## 5. Canonical Export (Integration → Analytics)

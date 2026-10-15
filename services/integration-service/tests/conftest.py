@@ -27,9 +27,12 @@ import devenv  # noqa: E402  (đọc secret DEV từ .env.dev; không có secret
 
 from integration_service import migrate  # noqa: E402
 from integration_service.app import create_app  # noqa: E402
+from integration_service.clients import policy  # noqa: E402
 from integration_service.config import Settings  # noqa: E402
 from integration_service.db import Database  # noqa: E402
+from integration_service.provisioning import handlers  # noqa: E402
 from manager_sdk import TokenVerifier  # noqa: E402
+from cryptography.fernet import Fernet  # noqa: E402
 
 PG_REASON = devenv.SKIP_REASON
 ISSUER = "http://identity.test"
@@ -45,6 +48,7 @@ SEED_PLATFORMS = ("facebook", "youtube", "tiktok", "instagram")
 SEED_METRICS = ("views", "reactions", "comments", "likes", "shares", "followers", "interactions", "videos_posted")
 FEED_KEY_ANALYTICS = secrets.token_urlsafe(32)   # ngẫu nhiên mỗi lần chạy
 FEED_KEY_IDENTITY = secrets.token_urlsafe(32)
+REVEAL_KEY = Fernet.generate_key().decode()
 
 
 def _dsn() -> str | None:
@@ -124,7 +128,8 @@ def settings() -> Settings:
     return Settings(port=8431, log_level="INFO", database_url=_dsn() or "postgresql://x:y@127.0.0.1:1/z", env="test",
                     issuer=ISSUER, audience=AUDIENCE, jwks_url=JWKS_URL,
                     feed_keys=(("analytics", FEED_KEY_ANALYTICS), ("identity", FEED_KEY_IDENTITY)),
-                    maintenance_interval_s=0, provisioning_poll_s=0.0)
+                    maintenance_interval_s=0, provisioning_poll_s=0.0, reveal_key=REVEAL_KEY,
+                    credential_reveal_ttl_days=7, public_base_url="http://integration.test")
 
 
 @pytest.fixture(scope="session")
@@ -203,18 +208,24 @@ async def http(app):
 
 @dataclass
 class Tool:
-    """Một Tool đã có credential: gọi API máy bằng API key (không dùng token user)."""
+    """Một Tool đã có credential + đã handshake (bind thiết bị): gọi API máy bằng API key, tự gửi
+    `X-Installation-Id` (bắt buộc ngoài /handshake kể từ thiết kế tool-key 2026-10-14)."""
     http: httpx.AsyncClient
     client_id: str
     owner: str
     key_id: str
     api_key: str
     scopes: list[str]
+    installation_id: str | None = None
+    device_id: str | None = None
     headers: dict = field(default_factory=dict)
     counter: int = 0
 
     def h(self, **extra) -> dict:
-        return {"Authorization": f"Bearer {self.api_key}", **extra}
+        base = {"Authorization": f"Bearer {self.api_key}"}
+        if self.installation_id:
+            base["X-Installation-Id"] = self.installation_id
+        return {**base, **extra}
 
     def idem(self) -> str:
         self.counter += 1
@@ -245,6 +256,7 @@ class Env:
     db: Database
     identity: FakeIdentity
     clock: FakeClock
+    app: object = None   # FastAPI app (container cho provisioning trực tiếp trong tool())
 
     def user(self, sub: str | None = None, role: str = "viewer", **claims) -> dict:
         sub = sub or uuid.uuid4().hex
@@ -267,19 +279,64 @@ class Env:
         await self.projection(u["sub"])
         return u
 
+    async def grant_capability(self, account_id: str, *, granted: bool = True) -> None:
+        """Mô phỏng `account.permission_changed` của Identity (provisioning THỰC, không tạo client bằng tay)."""
+        container = self.app.state.container
+        event = {"type": "account.permission_changed",
+                 "data": {"account_id": account_id, "permission": "capability:tool_integration", "granted": granted}}
+        async with self.db.transaction() as conn:
+            await handlers.apply_event(conn, container.clients, container.credentials, event, self.clock())
+
+    async def handshake(self, api_key: str, *, platforms, device_id: str | None = None,
+                        capabilities: list[str] | None = None) -> dict:
+        device_id = device_id or f"device-{uuid.uuid4().hex[:8]}"
+        caps = capabilities if capabilities is not None else ["resources.push", "snapshots.push", "metrics.push",
+                                                               "jobs.pull"]
+        r = await self.http.post("/v1/integrations/handshake", headers={"Authorization": f"Bearer {api_key}"}, json={
+            "installation": {"device_id": device_id, "hostname": "h", "os": "windows", "app_version": "1.0"},
+            "platforms": list(platforms), "capabilities": caps})
+        assert r.status_code == 200, r.text
+        return {**r.json()["data"], "device_id": device_id}
+
     async def tool(self, *, platforms=("facebook",), kind: str = "primary_tool", scopes: list[str] | None = None,
-                   user: dict | None = None) -> Tool:
-        user = user or await self.verified_user()   # đã có capability:tool_integration mặc định
-        r = await self.http.post("/v1/integrations/clients", headers=user["headers"], json={
-            "tool_name": "Tool-" + uuid.uuid4().hex[:6], "client_kind": kind, "platforms": list(platforms)})
-        assert r.status_code == 201, r.text
-        client_id = r.json()["data"]["client_id"]
-        body = {"scopes": scopes} if scopes is not None else {}
-        r = await self.http.post(f"/v1/integrations/clients/{client_id}/credentials", headers=user["headers"], json=body)
-        assert r.status_code == 201, r.text
-        d = r.json()["data"]
-        return Tool(http=self.http, client_id=client_id, owner=user["sub"], key_id=d["key_id"], api_key=d["api_key"],
-                    scopes=d["scopes"])
+                   user: dict | None = None, device_id: str | None = None, handshake: bool = True) -> Tool:
+        """`kind=primary_tool`: provision qua capability (nguồn DUY NHẤT), chủ tự `reveal`.
+        `kind=fallback_tool|service`: wizard admin 3 bước (create -> config -> activate) rồi admin cấp credential."""
+        if kind == "primary_tool":
+            user = user or await self.verified_user()
+            await self.grant_capability(user["sub"])
+            r = await self.http.post("/v1/integrations/me/credential/reveal", headers=user["headers"])
+            assert r.status_code == 200, r.text
+            d = r.json()["data"]
+            owner = user["sub"]
+        else:
+            admin = await self.verified_user(role="admin")
+            r = await self.http.post("/v1/integrations/clients", headers=admin["headers"], json={
+                "tool_name": "Tool-" + uuid.uuid4().hex[:6], "client_kind": kind,
+                "purpose": "test fixture", "platforms": list(platforms)})
+            assert r.status_code == 201, r.text
+            client_id = r.json()["data"]["client_id"]
+            wanted_scopes = scopes if scopes is not None else policy.default_scopes(kind)
+            r = await self.http.put(f"/v1/integrations/clients/{client_id}/config", headers=admin["headers"], json={
+                "allowed_platforms": list(platforms), "allowed_scopes": wanted_scopes})
+            assert r.status_code == 200, r.text
+            tool_name = r.json()["data"]["tool_name"]
+            r = await self.http.post(f"/v1/integrations/clients/{client_id}/activate", headers=admin["headers"],
+                                     json={"confirm_tool_name": tool_name})
+            assert r.status_code == 200, r.text
+            r = await self.http.post(f"/v1/integrations/clients/{client_id}/credentials", headers=admin["headers"],
+                                     json={})
+            assert r.status_code == 201, r.text
+            d = r.json()["data"]
+            owner = admin["sub"]
+        installation_id = None
+        dev_id = device_id
+        if handshake:
+            hs = await self.handshake(d["api_key"], platforms=platforms, device_id=device_id)
+            installation_id = hs["installation_id"]
+            dev_id = hs["device_id"]
+        return Tool(http=self.http, client_id=d["client_id"], owner=owner, key_id=d["key_id"], api_key=d["api_key"],
+                   scopes=d["scopes"], installation_id=installation_id, device_id=dev_id)
 
     async def scalar(self, sql: str, *args):
         async with self.db.connection() as conn:
@@ -291,8 +348,8 @@ class Env:
 
 
 @pytest_asyncio.fixture
-async def env(http, db, identity, clock) -> Env:
-    return Env(http=http, db=db, identity=identity, clock=clock)
+async def env(http, db, identity, clock, app) -> Env:
+    return Env(http=http, db=db, identity=identity, clock=clock, app=app)
 
 
 @pytest_asyncio.fixture
@@ -307,7 +364,7 @@ async def make_env(db, settings, identity, clock, mono):
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=application, raise_app_exceptions=False), base_url="http://integration.test",
                                    headers={"X-Real-IP": "10.2.0.1"})
         opened.append(client)
-        return Env(http=client, db=db, identity=identity, clock=clock), application
+        return Env(http=client, db=db, identity=identity, clock=clock, app=application), application
 
     yield factory
     for c in opened:
