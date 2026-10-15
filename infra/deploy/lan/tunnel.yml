@@ -1,8 +1,9 @@
-# Cloudflare Tunnel riêng cho dự án (tunnel quản lý từ xa bằng token). Chạy SAU web.yml.
-#   Tạo file bí mật (KHÔNG commit):  .dev/cloudflared.env  với một dòng  TUNNEL_TOKEN=<token>   (chmod 600)
+# Cloudflare Tunnel RIÊNG của dự án (tunnel local-config: cloudflared tunnel create + route dns). Chạy SAU web.yml.
+# Thư mục .dev/cloudflared/ (KHÔNG commit) chứa đúng 2 file:
+#   <tunnel-id>.json   credentials của tunnel này (sinh bởi `cloudflared tunnel create statsdash-tunnel`)
+#   config.yml         tunnel: <id> / credentials-file: /etc/cloudflared/<id>.json / ingress: statsdash.dnlabs.space -> http://mp-web:80
+# TUYỆT ĐỐI không mount ~/.cloudflared (có cert.pem = quyền tạo/xóa tunnel của cả tài khoản).
 #   docker compose -f infra/deploy/lan/tunnel.yml up -d
-# Route (public hostname -> dịch vụ) cấu hình trong Cloudflare Zero Trust. Dịch vụ nên là  http://mp-web:80
-# (cùng network mp_dev_net với nginx) hoặc http://192.168.1.70:8480.
 name: manager-platform-tunnel
 
 services:
@@ -10,8 +11,9 @@ services:
     image: cloudflare/cloudflared:2026.10.0
     container_name: mp-tunnel
     restart: unless-stopped
-    command: ["tunnel", "--no-autoupdate", "run"]
-    env_file: ../../../.dev/cloudflared.env
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ../../../.dev/cloudflared:/etc/cloudflared:ro
     networks: [mp_dev_net]
 
 networks:
