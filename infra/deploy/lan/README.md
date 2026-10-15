@@ -11,9 +11,11 @@ Mọi tên container/network/volume có tiền tố `mp-` / `manager-platform-*`
 2. Sinh secret trên máy chủ: `python3 infra/scripts/bootstrap_dev.py` (tạo `.env.dev` 600 và `.dev/`, KHÔNG commit).
    Khi chuyển từ server cũ: đặt `REWARD_TOKEN_KEY` bằng khóa cũ qua `bootstrap_dev.write_env`, nếu không token Discord đã mã hóa không giải mã được.
 3. Dữ liệu: `docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d`
-4. Nền tảng (đúng địa chỉ mà Tool sẽ gọi và CIDR của proxy đứng trước gateway):
-   `INTEGRATION_PUBLIC_BASE_URL=http://<ip>:8480 GATEWAY_TRUSTED_PROXIES=172.16.0.0/12 docker compose --env-file .env.dev -f infra/compose/stack.yml up -d --build`
+4. Nền tảng; địa chỉ công khai và CIDR proxy nằm trong `infra/deploy/lan/lan.env` (sửa file đó khi đổi domain):
+   `docker compose --env-file .env.dev --env-file infra/deploy/lan/lan.env -f infra/compose/stack.yml up -d --build`
 5. Web: `docker compose -f infra/deploy/lan/web.yml up -d` (cổng `MP_WEB_PORT`, mặc định 8480; `/v1/*` chuyển sang gateway, `/internal/*` bị chặn).
+6. Domain `statsdash.dnlabs.space`: thêm public hostname trong Cloudflare Zero Trust (Tunnels) trỏ tới `http://192.168.1.70:8480`.
+   Tunnel không nằm trong repo. Trước khi có route này, Tool/người dùng ngoài LAN chưa vào được, nhưng LAN vẫn dùng `http://192.168.1.70:8480`.
 
 ## Nhập người dùng từ hệ cũ
 
