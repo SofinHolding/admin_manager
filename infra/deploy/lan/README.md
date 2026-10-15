@@ -14,8 +14,10 @@ Mọi tên container/network/volume có tiền tố `mp-` / `manager-platform-*`
 4. Nền tảng; địa chỉ công khai và CIDR proxy nằm trong `infra/deploy/lan/lan.env` (sửa file đó khi đổi domain):
    `docker compose --env-file .env.dev --env-file infra/deploy/lan/lan.env -f infra/compose/stack.yml up -d --build`
 5. Web: `docker compose -f infra/deploy/lan/web.yml up -d` (cổng `MP_WEB_PORT`, mặc định 8480; `/v1/*` chuyển sang gateway, `/internal/*` bị chặn).
-6. Domain `statsdash.dnlabs.space`: thêm public hostname trong Cloudflare Zero Trust (Tunnels) trỏ tới `http://192.168.1.70:8480`.
-   Tunnel không nằm trong repo. Trước khi có route này, Tool/người dùng ngoài LAN chưa vào được, nhưng LAN vẫn dùng `http://192.168.1.70:8480`.
+6. Domain `statsdash.dnlabs.space`: cần MỘT tunnel Cloudflare có public hostname trỏ tới `http://mp-web:80` (hoặc `http://192.168.1.70:8480`).
+   Hoặc thêm hostname vào tunnel `mail` đang chạy trên máy, hoặc tạo tunnel riêng rồi chạy `infra/deploy/lan/tunnel.yml`
+   (token trong `.dev/cloudflared.env`, không commit). KHÔNG dùng token của tunnel đã phục vụ dự án khác: connector thứ hai của cùng
+   tunnel sẽ nhận một phần lưu lượng của dự án đó. Trước khi có route, LAN vẫn dùng `http://192.168.1.70:8480`.
 
 ## Nhập người dùng từ hệ cũ
 

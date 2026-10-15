@@ -1,0 +1,20 @@
+# Cloudflare Tunnel riêng cho dự án (tunnel quản lý từ xa bằng token). Chạy SAU web.yml.
+#   Tạo file bí mật (KHÔNG commit):  .dev/cloudflared.env  với một dòng  TUNNEL_TOKEN=<token>   (chmod 600)
+#   docker compose -f infra/deploy/lan/tunnel.yml up -d
+# Route (public hostname -> dịch vụ) cấu hình trong Cloudflare Zero Trust. Dịch vụ nên là  http://mp-web:80
+# (cùng network mp_dev_net với nginx) hoặc http://192.168.1.70:8480.
+name: manager-platform-tunnel
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    container_name: mp-tunnel
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    env_file: ../../../.dev/cloudflared.env
+    networks: [mp_dev_net]
+
+networks:
+  mp_dev_net:
+    external: true
+    name: mp_dev_net
