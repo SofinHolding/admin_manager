@@ -13,7 +13,6 @@ import AdminPage from "./routes/AdminPage";
 import ProfilePage from "./routes/ProfilePage";
 import GroupsPage from "./routes/GroupsPage";
 import OidcCallbackPage from "./routes/OidcCallbackPage";
-import IntegrationClientsPage from "./routes/IntegrationClientsPage";
 import ChannelsPage from "./routes/ChannelsPage";
 import MyToolsPage from "./routes/MyToolsPage";
 import { PERM_REWARD_ACCESS, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION } from "./auth/permissions";
@@ -58,8 +57,8 @@ export default function App() {
             {/* Công cụ — capability:tool_integration (không cần role admin) */}
             <Route element={<CapGate cap={CAP_TOOL_INTEGRATION} />}>
               <Route path="/my-tools" element={<MyToolsPage />} />
-              <Route path="/integrations" element={<IntegrationClientsPage />} />
             </Route>
+            <Route path="/integrations" element={<Navigate to="/my-tools" replace />} />
             <Route element={<CapGate cap={CAP_MANUAL_CHANNEL_MGMT} />}>
               <Route path="/channels" element={<ChannelsPage />} />
             </Route>

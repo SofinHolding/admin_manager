@@ -11,12 +11,18 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Check, Minus, ShieldCheck } from "lucide-react";
 import { permissionsApi, type Account, type PermissionCatalogEntry } from "../api";
-import { adminErrorText } from "../routes/adminKeyForm";
+import { adminErrorText, ALL_CAPS, CAP_LABEL } from "../routes/adminKeyForm";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
 import { Notice } from "./kit";
 
+const CAPABILITY_ENTRIES: PermissionCatalogEntry[] = ALL_CAPS.map((name) => ({
+  name,
+  description: CAP_LABEL[name] ?? name,
+}));
+
 const FALLBACK_CATALOG: PermissionCatalogEntry[] = [
+  ...CAPABILITY_ENTRIES,
   { name: "reward:access", description: "Dùng phần phân phối điểm Discord" },
   { name: "reward:admin", description: "Quản trị phần phân phối điểm (công việc toàn hệ thống, khóa kênh)" },
 ];
@@ -86,16 +92,28 @@ export function PermissionsDialog({ account, onClose }: { account: Account | nul
         )}
         {error && <Notice tone="error" className="mt-4">{error}</Notice>}
 
-        <ul className="mt-4 divide-y divide-border border-y border-border" aria-busy={loading}>
-          {loading && !effective.length ? (
-            <li className="py-4 text-sm text-muted-foreground" role="status">Đang tải quyền…</li>
-          ) : catalog.map((p) => {
+        {(() => {
+          const capabilityItems = catalog.filter((p) => p.name.startsWith("capability:"));
+          const rewardItems = catalog.filter((p) => p.name.startsWith("reward:"));
+          const otherItems = catalog.filter((p) => !p.name.startsWith("capability:") && !p.name.startsWith("reward:"));
+          const groups: { label: string; items: PermissionCatalogEntry[] }[] = [
+            { label: "Khả năng (capability)", items: capabilityItems },
+            { label: "Thưởng Discord (reward)", items: rewardItems },
+            { label: "Khác", items: otherItems },
+          ].filter((g) => g.items.length > 0);
+
+          const renderRow = (p: PermissionCatalogEntry) => {
             const has = effective.includes(p.name);
             return (
               <li key={p.name} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
                 <div className="min-w-0">
                   <div className="font-mono text-sm font-medium">{p.name}</div>
                   {p.description && <div className="text-sm text-muted-foreground">{p.description}</div>}
+                  {p.name === "capability:tool_integration" && (
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      Bật ⇒ hệ thống tự tạo Tool cá nhân + khóa chờ người dùng nhận. Tắt ⇒ Tool cá nhân bị tạm dừng và khóa bị thu hồi.
+                    </div>
+                  )}
                   <div className={`mt-1 inline-flex items-center gap-1 text-sm font-medium ${has ? "text-success" : "text-muted-foreground"}`}>
                     {has ? <Check className="size-4" aria-hidden /> : <Minus className="size-4" aria-hidden />}
                     {has ? "Đang có" : "Chưa có"}
@@ -108,8 +126,25 @@ export function PermissionsDialog({ account, onClose }: { account: Account | nul
                 </Button>
               </li>
             );
-          })}
-        </ul>
+          };
+
+          if (loading && !effective.length) {
+            return (
+              <ul className="mt-4 divide-y divide-border border-y border-border" aria-busy={loading}>
+                <li className="py-4 text-sm text-muted-foreground" role="status">Đang tải quyền…</li>
+              </ul>
+            );
+          }
+
+          return groups.map((g) => (
+            <div key={g.label} className="mt-4">
+              <div className="text-sm font-semibold text-muted-foreground">{g.label}</div>
+              <ul className="mt-1 divide-y divide-border border-y border-border" aria-busy={loading}>
+                {g.items.map(renderRow)}
+              </ul>
+            </div>
+          ));
+        })()}
         <div className="mt-5 flex justify-end">
           <Button variant="outline" onClick={onClose}>Xong</Button>
         </div>

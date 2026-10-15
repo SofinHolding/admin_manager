@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Mail } from "lucide-react";
-import { authApi, type IntegrationPolicy, type RegisterIntegration } from "../api";
-import { parseList } from "./adminKeyForm";
+import { authApi } from "../api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Field, Notice } from "../components/kit";
@@ -21,14 +20,6 @@ export default function RegisterPage() {
   const [inviteKey, setInviteKey] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
   const [keyLoading, setKeyLoading] = useState(false);
-  // Chính sách tích hợp của mã mời (nếu mã cho phép tạo công cụ đẩy dữ liệu cùng lúc)
-  const [policy, setPolicy] = useState<IntegrationPolicy | null>(null);
-  const [withTool, setWithTool] = useState(false);
-  const [toolName, setToolName] = useState("");
-  const [toolKind, setToolKind] = useState<RegisterIntegration["client_kind"]>("primary_tool");
-  const [toolPlatforms, setToolPlatforms] = useState<string[]>([]);
-  const [toolPlatformsText, setToolPlatformsText] = useState("");
-  const [provisioning, setProvisioning] = useState("");
 
   // Bước 2
   const [username, setUsername] = useState("");
@@ -60,9 +51,6 @@ export default function RegisterPage() {
     try {
       const d = await authApi.validateKey(inviteKey.trim());
       if (d.valid) {
-        const pol = d.integration_policy ?? (d.allow_integration_registration ? { allow_integration_registration: true } : null);
-        setPolicy(pol && pol.allow_integration_registration ? pol : null);
-        setWithTool(false);
         setStep(2);
       } else {
         setKeyError(`${d.reason || "Mã mời không hợp lệ"}. Kiểm tra lại mã, hoặc xin quản trị viên một mã mới.`);
@@ -105,10 +93,7 @@ export default function RegisterPage() {
   const lengthError = passwordLengthError(password);
   const pwOk = password.length >= MIN_PASSWORD_CHARS && !lengthError;
   const confirmOk = confirmPw === password && confirmPw.length > 0;
-  const policyPlatforms = policy?.allowed_platforms ?? [];
-  const chosenPlatforms = policyPlatforms.length ? toolPlatforms : parseList(toolPlatformsText);
-  const toolOk = !withTool || (toolName.trim().length > 0 && chosenPlatforms.length > 0);
-  const canRegister = username.length >= 3 && usernameOk && email.includes("@") && emailOk && pwOk && confirmOk && toolOk;
+  const canRegister = username.length >= 3 && usernameOk && email.includes("@") && emailOk && pwOk && confirmOk;
 
   // Cho người dùng biết còn thiếu gì khi nút chưa bấm được (không chỉ làm mờ nút).
   const missing: string[] = [];
@@ -118,7 +103,6 @@ export default function RegisterPage() {
   else if (emailOk === false) missing.push("email khác (email này đã đăng ký)");
   if (!pwOk) missing.push("mật khẩu hợp lệ");
   if (!confirmOk) missing.push("nhập lại mật khẩu cho khớp");
-  if (withTool && !toolOk) missing.push("tên công cụ và ít nhất một nền tảng");
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,12 +110,8 @@ export default function RegisterPage() {
     setRegLoading(true);
     setRegError(null);
     try {
-      const integration: RegisterIntegration | undefined = policy && withTool
-        ? { create: true, tool_name: toolName.trim(), client_kind: toolKind, platforms: chosenPlatforms }
-        : undefined;
-      const d = await authApi.register(inviteKey.trim(), username.trim(), password, email.trim(), integration);
+      const d = await authApi.register(inviteKey.trim(), username.trim(), password, email.trim());
       setRegisteredEmail(d.email);
-      setProvisioning(d.provisioning ?? "");
       setStep(3);
     } catch (err) {
       setRegError(formError(err, "Chưa đăng ký được"));
@@ -187,11 +167,6 @@ export default function RegisterPage() {
             <li>Bấm vào liên kết xác thực trong thư.</li>
             <li>Quay lại đây và đăng nhập.</li>
           </ol>
-          {provisioning === "pending" && (
-            <p className="text-sm text-muted-foreground" data-testid="provisioning-pending">
-              Công cụ đẩy dữ liệu bạn chọn tạo cùng lúc sẽ được khởi tạo sau khi email được xác thực.
-            </p>
-          )}
           {resendNote && (
             <Notice tone={resendNote.tone}>{resendNote.text}</Notice>
           )}
@@ -318,59 +293,6 @@ export default function RegisterPage() {
             />
           )}
         </Field>
-
-        {/* Tạo công cụ đẩy dữ liệu cùng lúc: chỉ hiện khi mã mời cho phép (integration_policy) */}
-        {policy && (
-          <div className="border-t border-border pt-4" data-testid="register-tool">
-            <label className="flex min-h-11 cursor-pointer items-center gap-3 font-semibold">
-              <input type="checkbox" className="size-4 accent-primary" checked={withTool}
-                     aria-describedby="register-tool-hint"
-                     onChange={(e) => setWithTool(e.target.checked)} />
-              Tạo công cụ đẩy dữ liệu
-            </label>
-            <p id="register-tool-hint" className="ml-8 text-sm text-muted-foreground">
-              Không bắt buộc. Chọn nếu bạn muốn có sẵn một công cụ để đẩy dữ liệu kênh lên Manager.
-            </p>
-            {withTool && (
-              <div className="mt-4 flex flex-col gap-4">
-                <Field label="Tên công cụ" hint="Đặt tên dễ nhớ, ví dụ: Công cụ đăng bài.">
-                  {(p) => <Input {...p} value={toolName} maxLength={100} onChange={(e) => setToolName(e.target.value)} />}
-                </Field>
-                <Field label="Loại công cụ">
-                  {(p) => (
-                    <select {...p} value={toolKind}
-                            onChange={(e) => setToolKind(e.target.value as RegisterIntegration["client_kind"])}
-                            className="h-11 w-full rounded-md border border-border-strong bg-surface-1 px-3 text-base">
-                      <option value="primary_tool">Công cụ chính</option>
-                      <option value="fallback_tool">Công cụ dự phòng</option>
-                      <option value="service">Dịch vụ tự động</option>
-                    </select>
-                  )}
-                </Field>
-                <fieldset className="flex flex-col gap-1">
-                  <legend className="mb-1 text-sm font-semibold">Nền tảng</legend>
-                  {policyPlatforms.length ? (
-                    <div className="flex flex-wrap gap-x-5">
-                      {policyPlatforms.map((pl) => (
-                        <label key={pl} className="flex min-h-11 cursor-pointer items-center gap-2">
-                          <input type="checkbox" className="size-4 accent-primary" checked={toolPlatforms.includes(pl)}
-                                 onChange={(e) => setToolPlatforms((cur) => e.target.checked ? [...cur, pl] : cur.filter((x) => x !== pl))} />
-                          {pl}
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <Input aria-label="Nền tảng" value={toolPlatformsText} placeholder="facebook, youtube"
-                           onChange={(e) => setToolPlatformsText(e.target.value)} />
-                  )}
-                </fieldset>
-                <p className="text-sm text-muted-foreground">
-                  Công cụ được khởi tạo sau khi bạn xác thực email. Khóa kết nối cấp ở trang &ldquo;Công cụ đẩy dữ liệu&rdquo;.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
 
         <div className="flex flex-col gap-3">
           {!canRegister && missing.length > 0 && (

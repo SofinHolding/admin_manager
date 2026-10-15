@@ -9,13 +9,11 @@ import { installFetch, jsonResponse } from "../test/helpers";
 
 afterEach(() => { vi.unstubAllGlobals(); clearTokens(); __resetHttpForTests(); });
 
-const POLICY = { allow_integration_registration: true, allowed_platforms: ["facebook", "youtube"], allowed_scopes: ["resources:write"], max_integration_clients: 1 };
-
 function server(validate: Record<string, unknown>) {
   return installFetch(
     (c) => c.path === "/v1/auth/validate-key" ? jsonResponse(validate) : undefined,
     (c) => c.path === "/v1/auth/check-username" || c.path === "/v1/auth/check-email" ? jsonResponse({ available: true }) : undefined,
-    (c) => c.path === "/v1/auth/register" ? jsonResponse({ ok: true, email: "a@b.co", message: "ok", client_id: "cli_x", provisioning: "pending" }) : undefined,
+    (c) => c.path === "/v1/auth/register" ? jsonResponse({ ok: true, email: "a@b.co", message: "ok" }) : undefined,
   );
 }
 
@@ -35,49 +33,25 @@ async function fillAccount(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(document.querySelectorAll(".text-success").length).toBeGreaterThanOrEqual(2), { timeout: 5000 });
 }
 
-describe("RegisterPage — đăng ký kèm Tool (tuỳ chọn)", () => {
-  it("key cho phép: hiện mục Tool; gửi integration{create,tool_name,client_kind,platforms}", async () => {
-    const f = server({ valid: true, role: "viewer", integration_policy: POLICY });
+describe("RegisterPage — đăng ký bằng mã mời (không còn mục Tool)", () => {
+  it("không còn mục đăng ký kèm Tool trên form", async () => {
     const user = userEvent.setup();
+    server({ valid: true, role: "viewer" });
     await toStep2(user);
-    expect(screen.getByTestId("register-tool")).toBeInTheDocument();
-    await fillAccount(user);
-
-    await user.click(screen.getByRole("checkbox", { name: /Tạo công cụ đẩy dữ liệu/ }));
-    await user.type(screen.getByLabelText("Tên công cụ"), "Tool đăng bài");
-    await user.selectOptions(screen.getByLabelText("Loại công cụ"), "fallback_tool");
-    // chưa chọn nền tảng => chưa đăng ký được
-    expect(screen.getByRole("button", { name: /Đăng ký/ })).toBeDisabled();
-    await user.click(screen.getByRole("checkbox", { name: "facebook" }));
-    await user.click(screen.getByRole("button", { name: /Đăng ký/ }));
-
-    await waitFor(() => expect(f.byPath("/v1/auth/register")).toHaveLength(1));
-    expect(JSON.parse(f.byPath("/v1/auth/register")[0].body!)).toEqual({
-      key: "INVITE-KEY", username: "newuser", password: "password-123", email: "a@b.co",
-      integration: { create: true, tool_name: "Tool đăng bài", client_kind: "fallback_tool", platforms: ["facebook"] },
-    });
-    expect(await screen.findByTestId("provisioning-pending")).toBeInTheDocument();
+    expect(screen.queryByTestId("register-tool")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Tạo công cụ đẩy dữ liệu/)).not.toBeInTheDocument();
   });
 
-  it("key cho phép nhưng người dùng KHÔNG tick: không gửi integration", async () => {
-    const f = server({ valid: true, role: "viewer", integration_policy: POLICY });
-    const user = userEvent.setup();
-    await toStep2(user);
-    await fillAccount(user);
-    await user.click(screen.getByRole("button", { name: /Đăng ký/ }));
-    await waitFor(() => expect(f.byPath("/v1/auth/register")).toHaveLength(1));
-    expect(JSON.parse(f.byPath("/v1/auth/register")[0].body!)).not.toHaveProperty("integration");
-  });
-
-  it("key KHÔNG cho phép: không có mục Tool", async () => {
+  it("đăng ký: body chỉ gồm key/username/password/email", async () => {
     const f = server({ valid: true, role: "viewer" });
     const user = userEvent.setup();
     await toStep2(user);
-    expect(screen.queryByTestId("register-tool")).not.toBeInTheDocument();
     await fillAccount(user);
     await user.click(screen.getByRole("button", { name: /Đăng ký/ }));
     await waitFor(() => expect(f.byPath("/v1/auth/register")).toHaveLength(1));
-    expect(JSON.parse(f.byPath("/v1/auth/register")[0].body!)).not.toHaveProperty("integration");
+    expect(JSON.parse(f.byPath("/v1/auth/register")[0].body!)).toEqual({
+      key: "INVITE-KEY", username: "newuser", password: "password-123", email: "a@b.co",
+    });
   });
 
   it("các endpoint đăng ký là công khai: không gắn Authorization", async () => {

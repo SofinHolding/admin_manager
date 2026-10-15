@@ -66,6 +66,75 @@ _UC_RE = re.compile(r"^UC[A-Za-z0-9_-]{10,}$")
 _CHANNEL_PATH_RE = re.compile(r"/channel/(UC[A-Za-z0-9_-]+)")
 _HANDLE_RE = re.compile(r"(?:/@|@)([A-Za-z0-9._-]+)")
 
+# ── Status tracker ────────────────────────────────────────────────────────────
+
+class StatusTracker:
+    """Ghi trạng thái collector ra file JSON (thread-safe; asyncio single-thread)."""
+    def __init__(self, status_file: str) -> None:
+        import threading
+        self._file = status_file
+        self._lock = threading.Lock()
+        self._data: dict = {
+            "session_start": datetime.now(timezone.utc).isoformat(),
+            "stats": {"claimed": 0, "done": 0, "failed": 0},
+            "recent_jobs": [],
+            "channels": {},
+        }
+        if status_file:
+            self._flush()
+
+    def job_started(self, job_id: str, platform: str, channel_id: str, channel_name: str, owner: str) -> None:
+        if not self._file: return
+        with self._lock:
+            self._data["stats"]["claimed"] += 1
+            self._upsert({"job_id": job_id, "platform": platform, "channel": channel_name,
+                "channel_id": channel_id, "owner": owner, "status": "running",
+                "at": datetime.now(timezone.utc).isoformat()})
+            self._flush()
+
+    def job_done(self, job_id: str, platform: str, channel_id: str, channel_name: str,
+                  owner: str, items: int, duration_ms: int) -> None:
+        if not self._file: return
+        with self._lock:
+            self._data["stats"]["done"] += 1
+            key = f"{platform}/{channel_id}"
+            ch = self._data["channels"].get(key, {"total_ok": 0, "total_fail": 0, "last_error": None, "last_error_at": None})
+            ch.update({"channel": channel_name, "platform": platform, "owner": owner,
+                "total_ok": ch["total_ok"] + 1, "last_ok": datetime.now(timezone.utc).isoformat()})
+            self._data["channels"][key] = ch
+            self._upsert({"job_id": job_id, "platform": platform, "channel": channel_name,
+                "channel_id": channel_id, "owner": owner, "status": "done",
+                "items": items, "duration_ms": duration_ms, "at": datetime.now(timezone.utc).isoformat()})
+            self._flush()
+
+    def job_failed(self, job_id: str, platform: str, channel_id: str, channel_name: str,
+                    owner: str, error: str, duration_ms: int) -> None:
+        if not self._file: return
+        with self._lock:
+            self._data["stats"]["failed"] += 1
+            key = f"{platform}/{channel_id}"
+            ch = self._data["channels"].get(key, {"total_ok": 0, "total_fail": 0, "last_ok": None})
+            ch.update({"channel": channel_name, "platform": platform, "owner": owner,
+                "total_fail": ch.get("total_fail", 0) + 1, "last_error": error,
+                "last_error_at": datetime.now(timezone.utc).isoformat()})
+            self._data["channels"][key] = ch
+            self._upsert({"job_id": job_id, "platform": platform, "channel": channel_name,
+                "channel_id": channel_id, "owner": owner, "status": "failed",
+                "error": error, "duration_ms": duration_ms, "at": datetime.now(timezone.utc).isoformat()})
+            self._flush()
+
+    def _upsert(self, entry: dict) -> None:
+        jobs = [j for j in self._data["recent_jobs"] if j.get("job_id") != entry["job_id"]]
+        jobs.insert(0, entry)
+        self._data["recent_jobs"] = jobs[:50]
+
+    def _flush(self) -> None:
+        try:
+            Path(self._file).parent.mkdir(parents=True, exist_ok=True)
+            Path(self._file).write_text(json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+
 # ── Integration-service client ────────────────────────────────────────────────
 
 class IntegrationClient:
@@ -104,6 +173,9 @@ class IntegrationClient:
         )
         r.raise_for_status()
         self.installation_id = r.json()["data"]["installation_id"]
+        # Bắt buộc trên MỌI request khác /handshake kể từ device binding (thiết kế tool-key 2026-10-14):
+        # credential chưa gửi X-Installation-Id khớp installation đã bind => 403 CREDENTIAL_NOT_ACTIVATED/INSTALLATION_MISMATCH.
+        self._http.headers["X-Installation-Id"] = self.installation_id
         log.info("Handshake OK — installation_id=%s", self.installation_id)
         return self.installation_id
 
@@ -338,6 +410,7 @@ async def process_job(
     fb_cookie: str | None,
     proxy: str | None,
     http: httpx.AsyncClient,
+    tracker: StatusTracker,
 ) -> None:
     # ClaimedJob schema: job_id, platform, payload, resource (ResourceRef)
     job_id = job.get("job_id") or job.get("id", "")
@@ -346,8 +419,14 @@ async def process_job(
     input_ref = (resource.get("input_ref") or resource.get("external_id") or
                  job.get("resource_input_ref") or job.get("input_ref", ""))
     resource_id = resource.get("id") or job.get("resource_id", "")
+    owner = (job.get("owner_account_id") or resource.get("owner_account_id") or
+             job.get("account_id") or "")
+    channel_name = resource.get("display_name") or resource.get("name") or input_ref
+    channel_id = resource_id or input_ref
+    start_time = time.monotonic()
 
     log.info("Processing job=%s platform=%s input_ref=%s", job_id, platform, input_ref[:60])
+    tracker.job_started(job_id, platform, channel_id, channel_name, owner)
 
     try:
         # ── 1. Resolve kênh → lấy danh sách video ───────────────────────────
@@ -418,9 +497,13 @@ async def process_job(
 
         await client.complete_job(job_id)
         log.info("Completed job=%s", job_id)
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        tracker.job_done(job_id, platform, channel_id, channel_name, owner, len(items), duration_ms)
 
     except Exception as exc:  # noqa: BLE001
         log.exception("Job %s failed: %s", job_id, exc)
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        tracker.job_failed(job_id, platform, channel_id, channel_name, owner, str(exc)[:400], duration_ms)
         try:
             await client.fail_job(job_id, str(exc)[:400])
         except Exception:  # noqa: BLE001
@@ -436,13 +519,16 @@ async def run_loop(args: argparse.Namespace) -> None:
     client = IntegrationClient(args.gateway, args.api_key)
     http = httpx.AsyncClient(timeout=20.0)
     sem = asyncio.Semaphore(args.max_concurrent)
+    tracker = StatusTracker(args.status_file or "")
 
-    log.info("Collector started. gateway=%s poll_interval=%ds", args.gateway, args.poll_interval)
+    active_platforms = list(args.platforms) if args.platforms else list(PLATFORMS)
+    log.info("Collector started. gateway=%s platforms=%s poll_interval=%ds",
+             args.gateway, ",".join(active_platforms), args.poll_interval)
 
     # Handshake để lấy installation_id — retry tối đa 5 lần nếu gateway chưa sẵn sàng
     for attempt in range(5):
         try:
-            await client.handshake(list(PLATFORMS))
+            await client.handshake(active_platforms)
             break
         except Exception as exc:  # noqa: BLE001
             log.warning("Handshake attempt %d/5 failed: %s — chờ 5s", attempt + 1, exc)
@@ -453,12 +539,12 @@ async def run_loop(args: argparse.Namespace) -> None:
 
     async def _process(job: dict) -> None:
         async with sem:
-            await process_job(job, client, args.checkview_dir, youtube_api_key, fb_cookie, proxy, http)
+            await process_job(job, client, args.checkview_dir, youtube_api_key, fb_cookie, proxy, http, tracker)
 
     try:
         while True:
             try:
-                jobs = await client.claim_jobs(list(PLATFORMS), limit=args.max_concurrent * 2)
+                jobs = await client.claim_jobs(active_platforms, limit=args.max_concurrent * 2)
                 if jobs:
                     log.info("Claimed %d jobs", len(jobs))
                     await asyncio.gather(*[_process(j) for j in jobs], return_exceptions=True)
@@ -491,6 +577,10 @@ def main() -> None:
                     help="Proxy URL: socks5://host:port hoặc http://host:port")
     ap.add_argument("--poll-interval", type=int, default=30, help="Giây chờ khi không có job")
     ap.add_argument("--max-concurrent", type=int, default=3, help="Số job chạy song song")
+    ap.add_argument("--platforms", type=lambda s: [p.strip() for p in s.split(",") if p.strip()],
+                    default=None, help="Platforms kích hoạt, cách nhau bằng dấu phẩy (mặc định: tất cả)")
+    ap.add_argument("--status-file", default=os.environ.get("COLLECTOR_STATUS_FILE", ""),
+                    help="Đường dẫn file JSON ghi trạng thái collector (owner, channel, errors)")
     args = ap.parse_args()
 
     if not args.api_key:

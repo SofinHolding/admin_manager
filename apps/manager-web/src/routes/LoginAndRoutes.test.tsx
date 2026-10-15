@@ -1,3 +1,4 @@
+import { navFor } from "../nav";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -115,6 +116,40 @@ describe("permission / điều hướng theo claim perms", () => {
     unmount();
     renderRoutes(mk("discord"), "/reward/jobs");
     expect(screen.getByText("REWARD-PAGE")).toBeInTheDocument();
+  });
+});
+
+describe("navFor — menu theo capability (không phụ thuộc isAdminZone)", () => {
+  it("viewer có capability:tool_integration => thấy mục Tích hợp Tool", () => {
+    const groups = navFor(mk("viewer", [CAP_TOOL_INTEGRATION]), () => false);
+    const items = groups.flatMap((g) => g.items);
+    expect(items.some((i) => i.label === "Tích hợp Tool" && i.to === "/my-tools")).toBe(true);
+  });
+
+  it("viewer có capability:manual_channel_mgmt => thấy mục Kênh của tôi", () => {
+    const groups = navFor(mk("viewer", [CAP_MANUAL_CHANNEL_MGMT]), () => false);
+    const items = groups.flatMap((g) => g.items);
+    expect(items.some((i) => i.label === "Kênh của tôi" && i.to === "/channels")).toBe(true);
+  });
+
+  it("viewer không có capability nào trong hai cái đó => không thấy cả hai mục", () => {
+    const groups = navFor(mk("viewer", []), () => false);
+    const items = groups.flatMap((g) => g.items);
+    expect(items.some((i) => i.to === "/my-tools")).toBe(false);
+    expect(items.some((i) => i.to === "/channels")).toBe(false);
+  });
+
+  it("admin có capability:manual_channel_mgmt nhưng KHÔNG thấy Kênh của tôi (quản lý qua Admin Panel)", () => {
+    const groups = navFor(mk("admin", [CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION]), () => false);
+    const items = groups.flatMap((g) => g.items);
+    expect(items.some((i) => i.to === "/channels")).toBe(false);
+    expect(items.some((i) => i.to === "/my-tools")).toBe(false);
+  });
+
+  it("dash_admin không thấy Kênh của tôi dù có capability", () => {
+    const groups = navFor(mk("dash_admin", [CAP_MANUAL_CHANNEL_MGMT]), () => false);
+    const items = groups.flatMap((g) => g.items);
+    expect(items.some((i) => i.to === "/channels")).toBe(false);
   });
 });
 

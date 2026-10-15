@@ -48,7 +48,7 @@ def save_accounts(data: dict) -> None:
     ACCOUNTS_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def seed_invite_key(role: str, policy: dict | None = None) -> str:
+def seed_invite_key(role: str) -> str:
     import asyncpg
 
     key = "demo-" + secrets.token_hex(6)
@@ -58,8 +58,6 @@ def seed_invite_key(role: str, policy: dict | None = None) -> str:
         try:
             await conn.execute("INSERT INTO invite_keys (key, role, label, max_uses, expires_at) "
                                "VALUES ($1,$2,'demo',5, now()+interval '7 days')", key, role)
-            if policy is not None:
-                await conn.execute("UPDATE invite_keys SET integration_policy=$2::jsonb WHERE key=$1", key, json.dumps(policy))
         finally:
             await conn.close()
     asyncio.run(run())
@@ -80,18 +78,22 @@ def verify_email_from_logs(http: httpx.Client, log_cmd: str, email: str) -> None
     raise SystemExit(f"Không thấy token xác thực email của {email} trong log identity (IDENTITY_ENV phải là dev).")
 
 
-def ensure_user(http: httpx.Client, accounts: dict, name: str, role: str, log_cmd: str, *, policy: dict | None = None,
-                integration: dict | None = None) -> dict:
+def ensure_user(http: httpx.Client, accounts: dict, name: str, role: str, log_cmd: str, *,
+                admin_headers: dict | None = None, preset: str | None = None) -> dict:
     if name in accounts:
         r = http.post("/v1/auth/login", json={"username": name, "password": accounts[name]["password"]})
         if r.status_code == 200:
             return accounts[name]
     password = "Demo-" + secrets.token_urlsafe(12) + "9a"
     email = f"{name}@demo.example.com"
-    key = seed_invite_key(role, policy)
+    if admin_headers is not None:
+        kr = http.post("/v1/admin/keys", headers=admin_headers,
+                       json={"preset": preset} if preset else {"role": role})
+        kr.raise_for_status()
+        key = kr.json()["key"]
+    else:
+        key = seed_invite_key(role)
     body = {"key": key, "username": name, "password": password, "email": email}
-    if integration:
-        body["integration"] = integration
     r = http.post("/v1/auth/register", json=body)
     if r.status_code not in (200, 201):
         raise SystemExit(f"Đăng ký {name} lỗi {r.status_code}: {r.text[:200]}")
@@ -122,30 +124,36 @@ def main() -> int:
     r.raise_for_status()
 
     owner = ensure_user(http, accounts, "demoowner", "viewer", args.identity_logs,
-                        policy={"allow_integration_registration": True, "allowed_platforms": [PLATFORM], "max_integration_clients": 2,
-                                "default_client_kind": "primary_tool", "contract_version": "2026-10-01",
-                                "allowed_scopes": ["integration:handshake", "resources:write", "snapshots:write", "metrics:write"]},
-                        integration={"create": True, "tool_name": "Demo Tool", "platforms": [PLATFORM]})
+                        admin_headers=ah, preset="viewer_tool")
     oh = bearer(http, owner)
     deadline = time.time() + 40
     clients: list = []
     while time.time() < deadline and not clients:
-        clients = http.get("/v1/integrations/clients", headers=oh).json().get("data", [])
+        clients = http.get("/v1/integrations/clients", headers=oh).json().get("data", {}).get("items", [])
         time.sleep(1)
     if not clients:
-        raise SystemExit("Integration chưa tạo client cho demoowner (kiểm log integration / identity feed).")
+        raise SystemExit("Integration chưa tạo Tool cá nhân cho demoowner (kiểm log integration — capability:tool_integration).")
     cid = clients[0]["client_id"]
 
+    # Khoá Tool cá nhân do hệ thống cấp sẵn: lần đầu chủ `reveal`; chạy lại (đã reveal) thì chủ xoay khoá để lấy plaintext mới.
     api_key = None
     deadline = time.time() + 40
     while time.time() < deadline and not api_key:
-        r = http.post(f"/v1/integrations/clients/{cid}/credentials", headers=oh, json={})
-        if r.status_code == 201:
+        r = http.post("/v1/integrations/me/credential/reveal", headers=oh)
+        if r.status_code == 200:
+            api_key = r.json()["data"]["api_key"]
+        elif r.status_code in (404, 410):
+            active = [c for c in http.get(f"/v1/integrations/clients/{cid}", headers=oh).json()["data"]["credentials"]
+                      if c["status"] == "active"]
+            r = (http.post(f"/v1/integrations/clients/{cid}/credentials/{active[0]['key_id']}/rotate", headers=oh,
+                           json={}) if active else
+                 http.post(f"/v1/integrations/clients/{cid}/credentials", headers=oh, json={}))
+            r.raise_for_status()
             api_key = r.json()["data"]["api_key"]
         else:
-            time.sleep(1)  # chờ Integration nhận email_verified qua feed
+            time.sleep(1)  # chờ Integration nhận email_verified qua feed (403 EMAIL_NOT_VERIFIED)
     if not api_key:
-        raise SystemExit("Không cấp được credential (email chưa được Integration ghi nhận).")
+        raise SystemExit("Không nhận được khoá Tool (email chưa được Integration ghi nhận).")
 
     from manager_sdk.integration_client import IntegrationClient
 

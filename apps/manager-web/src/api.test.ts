@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  accountsApi, adminApi, analyticsApi, authApi, groupsApi, integrationApi, normalizeCompare, permissionsApi,
+  adminApi, analyticsApi, authApi, groupsApi, integrationApi, normalizeCompare, permissionsApi,
   resourcesApi,
 } from "./api";
 import { defaultFilter } from "./filters/filterState";
@@ -81,14 +81,10 @@ describe("Identity — auth / admin / permission", () => {
     expect(f.calls[1].headers.get("Authorization")).toBe("Bearer AT");
   });
 
-  it("register: chỉ gửi `integration` khi người dùng chọn đăng ký kèm Tool", async () => {
+  it("register không còn gửi `integration`", async () => {
     const f = installFetch(() => jsonResponse({ ok: true, email: "e", message: "m" }));
     await authApi.register("K", "user1", "password1", "a@b.c");
-    await authApi.register("K", "user1", "password1", "a@b.c", { create: false, tool_name: "x", client_kind: "primary_tool", platforms: [] });
-    await authApi.register("K", "user1", "password1", "a@b.c", { create: true, tool_name: "T", client_kind: "fallback_tool", platforms: ["facebook"] });
-    expect(JSON.parse(f.calls[0].body!)).not.toHaveProperty("integration");
-    expect(JSON.parse(f.calls[1].body!)).not.toHaveProperty("integration");
-    expect(JSON.parse(f.calls[2].body!).integration).toEqual({ create: true, tool_name: "T", client_kind: "fallback_tool", platforms: ["facebook"] });
+    expect(JSON.parse(f.calls[0].body!)).toEqual({ key: "K", username: "user1", password: "password1", email: "a@b.c" });
   });
 
   it("verifyEmail mã hoá token trong query", async () => {
@@ -97,18 +93,25 @@ describe("Identity — auth / admin / permission", () => {
     expect(f.calls[0].params.get("token")).toBe("a b&c=d");
   });
 
-  it("tạo invite key kèm integration_policy + allowed_apps", async () => {
+  it("tạo invite key theo preset; sửa mã mời gọi PATCH", async () => {
     const f = installFetch(() => jsonResponse({ key: "k" }));
-    await adminApi.createKey("viewer", "x", 1, 7, {
-      integration_policy: { allow_integration_registration: true, allowed_platforms: ["facebook"], allowed_scopes: ["resources:write"], max_integration_clients: 2 },
-      allowed_apps: ["reward"],
-    });
+    await adminApi.createKey({ preset: "viewer_tool", label: "x", max_uses: 1, expires_days: 7, allowed_apps: ["reward"] });
+    await adminApi.updateKey("k", { preset: "viewer", label: "y" });
     expect(f.calls[0].path).toBe("/v1/admin/keys");
+    expect(f.calls[0].method).toBe("POST");
     expect(JSON.parse(f.calls[0].body!)).toEqual({
-      role: "viewer", label: "x", max_uses: 1, expires_days: 7,
-      integration_policy: { allow_integration_registration: true, allowed_platforms: ["facebook"], allowed_scopes: ["resources:write"], max_integration_clients: 2 },
-      allowed_apps: ["reward"],
+      preset: "viewer_tool", label: "x", max_uses: 1, expires_days: 7, allowed_apps: ["reward"],
     });
+    expect(f.calls[1].path).toBe("/v1/admin/keys/k");
+    expect(f.calls[1].method).toBe("PATCH");
+    expect(JSON.parse(f.calls[1].body!)).toEqual({ preset: "viewer", label: "y" });
+  });
+
+  it("listPresets đọc GET /v1/admin/keys/presets", async () => {
+    const f = installFetch(() => jsonResponse({ presets: [{ key: "viewer", label: "Người xem", role: "viewer", capabilities: [], admin_only: false }] }));
+    const { presets } = await adminApi.listPresets();
+    expect(f.calls[0].path).toBe("/v1/admin/keys/presets");
+    expect(presets[0].key).toBe("viewer");
   });
 
   it("permission: GET/PUT/DELETE đúng đường dẫn", async () => {
@@ -124,34 +127,40 @@ describe("Identity — auth / admin / permission", () => {
       "DELETE /v1/admin/accounts/acc1/permissions/reward:admin",
     ]);
   });
-
-  it("GET /v1/accounts/me/integration", async () => {
-    const f = installFetch(() => jsonResponse({ provisioning: "pending" }));
-    expect((await accountsApi.myIntegration()).provisioning).toBe("pending");
-    expect(f.calls[0].path).toBe("/v1/accounts/me/integration");
-  });
 });
 
-describe("Integration (mặt phẳng user) — client & credential", () => {
-  it("đường dẫn đúng integration-api-v1 §1", async () => {
+describe("Integration (mặt phẳng user) — client, credential, connection-guide", () => {
+  it("đường dẫn đúng thiết kế tool-key", async () => {
     const f = installFetch(() => jsonResponse({ items: [], key_id: "k", api_key: "mpk_x", scopes: [] }));
     await integrationApi.listClients("u1");
     await integrationApi.getClient("cli_1");
-    await integrationApi.createClient({ tool_name: "T", client_kind: "primary_tool", platforms: ["facebook"] });
+    await integrationApi.createSharedClient({ tool_name: "T", client_kind: "fallback_tool", purpose: "p" });
+    await integrationApi.configureClient("cli_1", { allowed_platforms: ["facebook"], allowed_scopes: ["resources:write"] });
+    await integrationApi.activateClient("cli_1", "T");
+    await integrationApi.transferClient("cli_1", "acc2");
     await integrationApi.issueCredential("cli_1");
     await integrationApi.rotateCredential("cli_1", "key1", 60);
     await integrationApi.revokeCredential("cli_1", "key1");
     await integrationApi.patchClient("cli_1", { status: "suspended" });
+    await integrationApi.connectionGuide();
+    await integrationApi.myOpenapi();
+    await integrationApi.revealCredential();
     expect(f.calls.map((c) => `${c.method} ${c.path}${c.params.toString() ? "?" + c.params : ""}`)).toEqual([
       "GET /v1/integrations/clients?owner=u1",
       "GET /v1/integrations/clients/cli_1",
       "POST /v1/integrations/clients",
+      "PUT /v1/integrations/clients/cli_1/config",
+      "POST /v1/integrations/clients/cli_1/activate",
+      "POST /v1/integrations/clients/cli_1/transfer",
       "POST /v1/integrations/clients/cli_1/credentials",
       "POST /v1/integrations/clients/cli_1/credentials/key1/rotate",
       "DELETE /v1/integrations/clients/cli_1/credentials/key1",
       "PATCH /v1/integrations/clients/cli_1",
+      "GET /v1/integrations/me/connection-guide",
+      "GET /v1/integrations/me/openapi.json",
+      "POST /v1/integrations/me/credential/reveal",
     ]);
-    expect(JSON.parse(f.calls[4].body!)).toEqual({ grace_seconds: 60 });
+    expect(JSON.parse(f.calls[7].body!)).toEqual({ grace_seconds: 60 });
     // mặt phẳng user: luôn Bearer token user, không bao giờ API key máy
     for (const c of f.calls) expect(c.headers.get("Authorization")).toBe("Bearer AT");
   });

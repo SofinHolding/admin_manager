@@ -62,8 +62,6 @@ class DevStack:
             base = {"IDENTITY_PORT": str(self.ports[name]), "IDENTITY_ENV": "dev", "IDENTITY_ISSUER": identity,
                     "IDENTITY_DATABASE_URL": devenv.pg_dsn("identity"),
                     "IDENTITY_KEY_ENCRYPTION_KEY": e["IDENTITY_KEY_ENCRYPTION_KEY"],
-                    "IDENTITY_INTEGRATION_FEED_URL": self.url("integration"),
-                    "IDENTITY_INTEGRATION_FEED_KEY": e["INTEGRATION_FEED_KEY_IDENTITY"],
                     "IDENTITY_FEED_KEY_ANALYTICS": e["IDENTITY_FEED_KEY_ANALYTICS"],
                     "IDENTITY_FEED_KEY_INTEGRATION": e["IDENTITY_FEED_KEY_INTEGRATION"],
                     "IDENTITY_FEED_KEY_REWARD": e["IDENTITY_FEED_KEY_REWARD"]}
@@ -72,9 +70,10 @@ class DevStack:
                     "INTEGRATION_DATABASE_URL": devenv.pg_dsn("integration"), "INTEGRATION_ISSUER": identity,
                     "INTEGRATION_IDENTITY_JWKS_URL": identity + "/.well-known/jwks.json",
                     "INTEGRATION_FEED_KEY_ANALYTICS": e["INTEGRATION_FEED_KEY_ANALYTICS"],
-                    "INTEGRATION_FEED_KEY_IDENTITY": e["INTEGRATION_FEED_KEY_IDENTITY"],
                     "INTEGRATION_IDENTITY_FEED_URL": identity,
                     "INTEGRATION_IDENTITY_FEED_KEY": e["IDENTITY_FEED_KEY_INTEGRATION"],
+                    "INTEGRATION_REVEAL_KEY": e["INTEGRATION_REVEAL_KEY"],
+                    "INTEGRATION_PUBLIC_BASE_URL": self.url("gateway"),   # Tool gọi qua gateway, không gọi thẳng service
                     "INTEGRATION_PROVISIONING_POLL_S": "1"}
         elif name == "analytics":
             base = {"ANALYTICS_PORT": str(self.ports[name]), "ANALYTICS_ENV": "dev",

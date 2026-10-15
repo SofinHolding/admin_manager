@@ -32,7 +32,7 @@ def _get(name: str) -> str:
 
 def pg_host_port() -> tuple[str, int]:
     load()
-    return os.environ.get("DEV_PG_HOST", "127.0.0.1"), int(os.environ.get("DEV_PG_PORT", "55440"))
+    return os.environ.get("DEV_PG_HOST", "127.0.0.1"), int(os.environ.get("DEV_PG_PORT", "55600"))
 
 
 def pg_dsn(service: str = "", *, admin: bool = False, database: str | None = None) -> str:

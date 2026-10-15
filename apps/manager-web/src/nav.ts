@@ -4,7 +4,7 @@
  */
 
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Coins, Database, Globe, KeyRound, Link2, Settings, Users } from "lucide-react";
+import { BarChart3, Coins, Globe, KeyRound, Link2, Settings, Users } from "lucide-react";
 import { canSeeDashboard, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION, hasCap, PERM_REWARD_ACCESS, type PrincipalLike } from "./auth/permissions";
 
 export interface NavItem {
@@ -57,14 +57,15 @@ export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: s
   if (user.role === "admin" || user.role === "dash_admin") {
     groups.push({ title: "Quản trị", items: [{ to: "/admin/manage", label: "Quản trị hệ thống", icon: Settings }] });
   }
-  // Website-only: tài khoản không vào được khu quản trị nhưng có capability riêng (capability-model-v1.md §8).
-  if (!isAdminZone && hasCap(user, CAP_TOOL_INTEGRATION)) {
+  // Capability độc lập với vai trò website (capability-model-v1.md §8) — hiện cả với viewer trong admin zone.
+  // admin/dash_admin KHÔNG hiện: họ quản lý kênh qua Admin Panel, không cần trang cá nhân.
+  const isManagerRole = user.role === "admin" || user.role === "dash_admin";
+  if (hasCap(user, CAP_TOOL_INTEGRATION) && !isManagerRole) {
     groups.push({ title: "Tool của tôi", items: [
-      { to: "/my-tools",     label: "Tổng quan Tool",    icon: KeyRound },
-      { to: "/integrations", label: "Khóa kết nối",  icon: Database },
+      { to: "/my-tools", label: "Tích hợp Tool", icon: KeyRound },
     ] });
   }
-  if (!isAdminZone && hasCap(user, CAP_MANUAL_CHANNEL_MGMT)) {
+  if (hasCap(user, CAP_MANUAL_CHANNEL_MGMT) && !isManagerRole) {
     groups.push({ title: "Kênh của tôi", items: [{ to: "/channels", label: "Kênh của tôi", icon: Globe }] });
   }
   return groups;

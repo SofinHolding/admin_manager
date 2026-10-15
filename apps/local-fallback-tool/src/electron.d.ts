@@ -1,18 +1,54 @@
-interface CollectorConfig {
-  gateway: string;
-  api_key: string;
-  youtube_api_key?: string;
-  checkview_dir: string;
-  poll_interval?: number;
+interface DbUser {
+  id: string;
+  username: string;
+  fetched_at: string;
+  channel_count: number;
+}
+
+interface LocalChannel {
+  id: string;
+  owner_id: string;
+  owner_username: string;
+  platform: string;
+  resource_type: string;
+  display_name: string;
+  input_ref: string;
+  canonical_id: string;
+  url: string;
+  mapping_status: string;
+  enabled: number;
+  imported_at: string;
+  updated_at: string;
+}
+
+interface ApiInventoryItem {
+  id: string;
+  owner_account_id: string;
+  owner_username: string;
+  platform: string;
+  resource_type: string;
+  canonical_external_id?: string;
+  input_ref?: string;
+  display_name?: string;
+  url?: string;
+  mapping_status?: string;
+  enabled?: boolean | number;
 }
 
 declare interface Window {
-  collector?: {
-    start: (cfg: CollectorConfig) => Promise<{ ok: boolean; pid?: number }>;
-    stop: () => Promise<{ ok: boolean }>;
-    status: () => Promise<{ running: boolean; pid: number | null }>;
-    readLog: () => Promise<string>;
-    readConfig: () => Promise<CollectorConfig>;
-    writeConfig: (cfg: CollectorConfig) => Promise<{ ok: boolean }>;
+  channels?: {
+    init:           () => Promise<{ ok: boolean; db_path: string; user_count: number; channel_count: number }>;
+    saveUsers:      (users: { id: string; username: string }[]) => Promise<{ added: string[]; total: number }>;
+    listUsers:      () => Promise<{ users: DbUser[] }>;
+    pull:           (owner_id: string, owner_username: string, channels: ApiInventoryItem[]) => Promise<{ added: number; updated: number }>;
+    listChannels:   (filters: {
+      platform?: string; owner_id?: string;
+      mapping_status?: string; enabled_filter?: string; search?: string;
+    }) => Promise<{ channels: LocalChannel[] }>;
+    platformCounts: () => Promise<{ total: number; youtube: number; tiktok: number; facebook: number; other: number }>;
+    deleteChannels: (ids: string[]) => Promise<{ deleted: number }>;
+    setEnabled:     (ids: string[], enabled: boolean) => Promise<{ updated: number }>;
+    login:          (url: string, username: string, password: string) => Promise<{ ok: boolean; access_token?: string; user?: { username: string }; error?: string }>;
+    apiCall:        (path: string, token: string) => Promise<unknown>;
   };
 }

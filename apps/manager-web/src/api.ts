@@ -6,10 +6,10 @@
  * File này chỉ khai báo kiểu + hàm gọi endpoint theo hợp đồng trong `docs/api/*`.
  *
  * Phân vùng endpoint:
- *  - Identity:     /v1/auth/*, /v1/admin/keys, /v1/admin/users, /v1/admin/permissions,
- *                  /v1/admin/accounts/{id}/permissions/{perm}, /v1/accounts/{id}/permissions, /v1/accounts/me/integration
+ *  - Identity:     /v1/auth/*, /v1/admin/keys (+ /presets, PATCH), /v1/admin/users, /v1/admin/permissions,
+ *                  /v1/admin/accounts/{id}/permissions/{perm}, /v1/accounts/{id}/permissions
  *  - Analytics:    /v1/analytics/*   (alias legacy /v1/viewer/* KHÔNG còn dùng cho dữ liệu)
- *  - Integration:  /v1/integrations/clients[...]  (mặt phẳng USER — token user, không bao giờ API key máy)
+ *  - Integration:  /v1/integrations/clients[...], /v1/integrations/me/*  (mặt phẳng USER — token user, không bao giờ API key máy)
  *  - Legacy-compat (giữ đường dẫn): /v1/resources/*, /v1/viewer/links* (pairing, deprecated)
  */
 
@@ -38,27 +38,8 @@ export interface AuthUserDto {
   id: string; username: string; email: string; role: string;
 }
 
-/** Tuỳ chọn đăng ký kèm Tool (chỉ khi invite key cho phép) — docs: architecture-assessment-v2 §2.3. */
-export interface RegisterIntegration {
-  create: boolean;
-  tool_name: string;
-  client_kind: "primary_tool" | "fallback_tool" | "service";
-  platforms: string[];
-}
-
-export interface IntegrationPolicy {
-  allow_integration_registration?: boolean;
-  default_client_kind?: string;      // "primary_tool" | "fallback_tool" | "service"
-  allowed_platforms?: string[];
-  allowed_scopes?: string[];
-  max_integration_clients?: number;
-}
-
 export interface ValidateKeyResult {
   valid: boolean; role?: string; reason?: string;
-  /** Giả định: Identity trả kèm chính sách để UI biết có hiện mục "đăng ký kèm Tool". */
-  integration_policy?: IntegrationPolicy;
-  allow_integration_registration?: boolean;
   allowed_apps?: string[];
 }
 
@@ -74,10 +55,10 @@ export const authApi = {
   checkEmail: (email: string) =>
     apiFetch<{ available: boolean }>("/v1/auth/check-email", json("POST", { email }), PUB),
 
-  register: (key: string, username: string, password: string, email: string, integration?: RegisterIntegration) =>
-    apiFetch<{ ok: boolean; email: string; message: string; client_id?: string; provisioning?: string }>(
+  register: (key: string, username: string, password: string, email: string) =>
+    apiFetch<{ ok: boolean; email: string; message: string }>(
       "/v1/auth/register",
-      json("POST", { key, username, password, email, ...(integration?.create ? { integration } : {}) }),
+      json("POST", { key, username, password, email }),
       PUB,
     ),
 
@@ -380,15 +361,17 @@ export interface InviteKey {
   created_at: string;
   expires_at: string;
   status: string;
-  integration_policy?: IntegrationPolicy;
+  preset?: string;
   allowed_apps?: string[];
   capability_grant?: CapabilityGrant;
 }
 
-export interface CreateKeyExtra {
-  integration_policy?: IntegrationPolicy;
-  allowed_apps?: string[];
-  capability_grant?: CapabilityGrant;
+export interface KeyPreset {
+  key: string;
+  label: string;
+  role: string;
+  capabilities: string[];
+  admin_only: boolean;
 }
 
 export interface Account {
@@ -406,8 +389,13 @@ export interface CountryAlias { alias: string; canonical: string; created_at: st
 export interface CountryCanonical { name: string; created_at: string }
 
 export const adminApi = {
-  createKey: (role: string, label = "", max_uses = 1, expires_days = 7, extra: CreateKeyExtra = {}) =>
-    apiFetch<InviteKey>("/v1/admin/keys", json("POST", { role, label, max_uses, expires_days, ...extra })),
+  createKey: (body: { preset: string; label?: string; max_uses?: number; expires_days?: number; allowed_apps?: string[] }) =>
+    apiFetch<InviteKey>("/v1/admin/keys", json("POST", body)),
+
+  updateKey: (key: string, body: { preset?: string; label?: string; max_uses?: number; expires_days?: number }) =>
+    apiFetch<InviteKey>(`/v1/admin/keys/${enc(key)}`, json("PATCH", body)),
+
+  listPresets: () => apiFetch<{ presets: KeyPreset[] }>("/v1/admin/keys/presets"),
 
   listKeys: () => apiFetch<{ keys: InviteKey[] }>("/v1/admin/keys"),
 
@@ -483,44 +471,132 @@ export const permissionsApi = {
 // ── Integration (mặt phẳng USER) ────────────────────────────────────────────
 
 export type ClientKind = "primary_tool" | "fallback_tool" | "service";
+export type ClientStatus = "draft" | "pending_email_verification" | "active" | "suspended" | "deleted";
+export type Ownership = "personal" | "shared";
+export type RevealState = "pending" | "revealed" | "expired";
 
-export interface IntegrationCredential {
+export interface CredentialSummary {
   key_id: string;
-  scopes: string[];
-  status: string;
-  created_at?: string;
-  expires_at?: string | null;
+  status: "active" | "revoked";
+  reveal_state?: RevealState | null;
+  bound_device_id?: string | null;
+  activated_at?: string | null;
   last_used_at?: string | null;
+  expires_at?: string | null;
 }
 
 export interface IntegrationClient {
   client_id: string;
+  owner_account_id: string;
   tool_name: string;
-  client_kind: ClientKind | string;
-  platforms: string[];
-  status: string;
-  owner_account_id?: string;
-  owner_username?: string;
-  allowed_scopes?: string[];
-  created_at?: string;
-  credentials?: IntegrationCredential[];
-  installations?: { installation_id: string; last_seen_at?: string }[];
+  client_kind: ClientKind;
+  status: ClientStatus;
+  ownership: Ownership;
+  purpose: string;
+  contract_version: string;
+  allowed_platforms: string[];
+  allowed_scopes: string[];
+  created_from: "api" | "provisioning";
+  configured_at?: string | null;
+  activated_at?: string | null;
+  activated_by?: string | null;
+  activated_by_username?: string | null;   // username của admin kích hoạt — ưu tiên hiển thị thay vì account_id
+  created_at: string;
+  updated_at: string;
+  owner_username?: string | null;
+  credentials?: CredentialSummary[] | null;
 }
 
-/** Phản hồi cấp/xoay credential — `api_key` CHỈ xuất hiện một lần, KHÔNG được lưu ở đâu cả. */
-export interface IssuedCredential {
+export interface IntegrationCredential {
   key_id: string;
-  api_key: string;
+  scopes: string[];
+  status: "active" | "revoked";
+  label: string;
+  expires_at?: string | null;
+  last_used_at?: string | null;
+  created_at: string;
+  revoked_at?: string | null;
+  reveal_state?: RevealState | null;
+  reveal_expires_at?: string | null;
+  revealed_at?: string | null;
+  bound_device_id?: string | null;
+  bound_installation_id?: string | null;
+  activated_at?: string | null;
+}
+
+export interface InstallationInfo {
+  installation_id: string;
+  device_id: string;
+  hostname: string;
+  os: string;
+  app_version: string;
+  capabilities: string[];
+  status: string;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface IntegrationClientDetail extends IntegrationClient {
+  installations: InstallationInfo[];
+  credentials: IntegrationCredential[];
+}
+
+/** Phản hồi cấp/xoay credential — `api_key` CHỈ xuất hiện khi chủ (hoặc admin trên client shared) tự nhận plaintext;
+ * admin cấp/xoay hộ client personal => `api_key: null`, `reveal_state: "pending"` (chủ tự nhận qua `revealCredential`). */
+export interface IssuedCredential {
+  client_id: string;
+  key_id: string;
+  api_key: string | null;
   scopes: string[];
   expires_at?: string | null;
+  contract_version: string;
+  allowed_platforms: string[];
+  reveal_state?: RevealState | null;
+  previous_key_id?: string | null;
+  previous_key_expires_at?: string | null;
 }
 
-export interface MyIntegrationStatus {
-  provisioning?: "pending" | "active" | "failed" | string;
-  status?: string;
-  client_id?: string;
-  error?: { code?: string; message?: string } | null;
+export interface ConnectionGuideHeader { name: string; required_when: string; description: string }
+
+export interface ConnectionGuideEndpoint {
+  method: string;
+  path: string;
+  scope: string;
+  summary: string;
+  description: string;
+  request_schema?: Record<string, unknown> | null;
+  example_request?: Record<string, unknown> | null;
+  example_response?: Record<string, unknown> | null;
+  error_codes: string[];
 }
+
+export interface ConnectionGuideErrorCode { code: string; http_status: number; meaning: string }
+
+export interface ConnectionGuideSnapshot {
+  snapshot_id: string;
+  platform: string;
+  status: string;
+  counts?: Record<string, number>;
+  created_at: string;
+  committed_at?: string | null;
+  rejections?: { item_key: string; code: string; message: string }[];
+}
+
+export interface ConnectionGuide {
+  base_url: string | null;
+  contract_version: string;
+  auth: { header: "Authorization"; format: string };
+  required_headers: ConnectionGuideHeader[];
+  client: IntegrationClient;
+  credential: IntegrationCredential | null;
+  installations: InstallationInfo[];
+  endpoints: ConnectionGuideEndpoint[];
+  limits: { batch_max_items: number; body_max_bytes: number };
+  error_codes: ConnectionGuideErrorCode[];
+  recent_snapshots: ConnectionGuideSnapshot[];
+}
+
+export interface PlatformRegistryEntry { key: string; display_name: string; enabled: boolean; description?: string | null }
 
 export const integrationApi = {
   listClients: (owner = "", o?: Opts) => {
@@ -530,16 +606,29 @@ export const integrationApi = {
   },
 
   getClient: (clientId: string, o?: Opts) =>
-    apiFetch<IntegrationClient>(`/v1/integrations/clients/${enc(clientId)}`, undefined, o),
+    apiFetch<IntegrationClientDetail>(`/v1/integrations/clients/${enc(clientId)}`, undefined, o),
 
-  createClient: (data: { tool_name: string; client_kind: ClientKind; platforms: string[] }) =>
+  /** Bước 1 wizard công cụ dùng chung (CHỈ admin). */
+  createSharedClient: (data: { tool_name: string; client_kind: "fallback_tool" | "service"; purpose: string; platforms?: string[] }) =>
     apiFetch<IntegrationClient>("/v1/integrations/clients", json("POST", data)),
 
-  patchClient: (clientId: string, data: { status?: string; allowed_scopes?: string[] }) =>
+  /** Bước 2 wizard (CHỈ admin, chỉ khi client `draft`). */
+  configureClient: (clientId: string, data: { allowed_platforms: string[]; allowed_scopes: string[] }) =>
+    apiFetch<IntegrationClient>(`/v1/integrations/clients/${enc(clientId)}/config`, json("PUT", data)),
+
+  /** Bước 3 wizard (CHỈ admin): `confirm_tool_name` phải khớp `tool_name`. */
+  activateClient: (clientId: string, confirm_tool_name: string) =>
+    apiFetch<IntegrationClient>(`/v1/integrations/clients/${enc(clientId)}/activate`, json("POST", { confirm_tool_name })),
+
+  /** Chuyển chủ client cá nhân (CHỈ admin). */
+  transferClient: (clientId: string, new_owner_account_id: string) =>
+    apiFetch<IntegrationClient>(`/v1/integrations/clients/${enc(clientId)}/transfer`, json("POST", { new_owner_account_id })),
+
+  patchClient: (clientId: string, data: { status?: string; allowed_scopes?: string[]; allowed_platforms?: string[]; tool_name?: string }) =>
     apiFetch<IntegrationClient>(`/v1/integrations/clients/${enc(clientId)}`, json("PATCH", data)),
 
-  issueCredential: (clientId: string) =>
-    apiFetch<IssuedCredential>(`/v1/integrations/clients/${enc(clientId)}/credentials`, json("POST", {})),
+  issueCredential: (clientId: string, data: { scopes?: string[]; expires_in_days?: number; label?: string } = {}) =>
+    apiFetch<IssuedCredential>(`/v1/integrations/clients/${enc(clientId)}/credentials`, json("POST", data)),
 
   rotateCredential: (clientId: string, keyId: string, grace_seconds = 0) =>
     apiFetch<IssuedCredential>(
@@ -548,11 +637,25 @@ export const integrationApi = {
   revokeCredential: (clientId: string, keyId: string) =>
     apiFetch<{ ok?: boolean }>(
       `/v1/integrations/clients/${enc(clientId)}/credentials/${enc(keyId)}`, json("DELETE")),
-};
 
-export const accountsApi = {
-  /** Trạng thái provisioning Tool đăng ký kèm: pending | active | failed (+ error.code). */
-  myIntegration: (o?: Opts) => apiFetch<MyIntegrationStatus>("/v1/accounts/me/integration", undefined, o),
+  /** `GET /v1/integrations/me/connection-guide` — chủ client cá nhân (cần capability:tool_integration). */
+  connectionGuide: (o?: Opts) =>
+    apiFetch<ConnectionGuide>("/v1/integrations/me/connection-guide", undefined, o),
+
+  /** OpenAPI rút gọn chỉ gồm endpoint của connection-guide — dùng để tải `openapi.json`. */
+  myOpenapi: (o?: Opts) =>
+    apiFetch<Record<string, unknown>>("/v1/integrations/me/openapi.json", undefined, o),
+
+  /** Nhận plaintext credential cấp hộ (`reveal_state=pending`) — chỉ hiện MỘT lần. */
+  revealCredential: () =>
+    apiFetch<IssuedCredential>("/v1/integrations/me/credential/reveal", json("POST", {})),
+
+  /** Platform Registry (chỉ admin/dash_admin) — dùng cho wizard công cụ dùng chung, bước cấu hình.
+   *  Server trả `data` là MẢNG (không bọc `items`); chuẩn hoá về `{items}` cho nơi dùng. */
+  listPlatformRegistry: async (): Promise<{ items: PlatformRegistryEntry[] }> => {
+    const d = await apiFetch<PlatformRegistryEntry[] | { items?: PlatformRegistryEntry[] }>("/v1/integrations/admin/platforms");
+    return { items: Array.isArray(d) ? d : (d.items ?? []) };
+  },
 };
 
 // ── Profile API (user tự quản lý) ──────────────────────────────────────────

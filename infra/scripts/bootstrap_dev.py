@@ -27,13 +27,13 @@ TEMPLATES = ROOT / "infra" / "docker" / "templates"
 SERVICES = ("identity", "integration", "analytics", "reward")
 FEED_CONSUMERS = {  # <nguồn phát feed>: <các bên đọc>
     "IDENTITY": ("INTEGRATION", "ANALYTICS", "REWARD"),
-    "INTEGRATION": ("ANALYTICS", "IDENTITY"),
+    "INTEGRATION": ("ANALYTICS",),
 }
 
 # Giá trị KHÔNG phải secret (cổng, tên) — cố định để các script và test dùng chung.
 CONSTANTS = {
     "DEV_PG_HOST": "127.0.0.1",
-    "DEV_PG_PORT": "55440",
+    "DEV_PG_PORT": "55600",
     "DEV_REDIS_HOST": "127.0.0.1",
     "DEV_REDIS_PORT": "26390",
     "DEV_ISSUER": "http://127.0.0.1:8430",
@@ -58,6 +58,7 @@ def generate() -> dict[str, str]:
     values["DEV_REDIS_ANALYTICS_PASSWORD"] = _tok()
     values["IDENTITY_KEY_ENCRYPTION_KEY"] = _fernet_key()   # mã hoá khoá ký private trong DB
     values["REWARD_TOKEN_KEY"] = _fernet_key()              # mã hoá token Discord của Reward
+    values["INTEGRATION_REVEAL_KEY"] = _fernet_key()        # mã hoá reveal credential cấp hộ của Integration
     for source, readers in FEED_CONSUMERS.items():
         for reader in readers:
             values[f"{source}_FEED_KEY_{reader}"] = _tok(32)  # khoá đọc feed nội bộ, mỗi bên một khoá
