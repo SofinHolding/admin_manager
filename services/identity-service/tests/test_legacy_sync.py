@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -104,6 +105,50 @@ async def test_second_run_changes_nothing(db, source):
     assert (r.invite_keys.unchanged, r.accounts.unchanged, r.refresh_tokens.unchanged) == (3, 5, 2)
     assert (r.invite_keys.inserted + r.accounts.inserted + r.refresh_tokens.inserted
             + r.invite_keys.updated + r.accounts.updated + r.refresh_tokens.updated) == 0
+
+
+async def _events(db):
+    async with db.connection() as conn:
+        rows = await conn.fetch("SELECT type, data FROM outbox ORDER BY seq")
+    return [(r["type"], json.loads(r["data"]) if isinstance(r["data"], str) else dict(r["data"])) for r in rows]
+
+
+async def test_new_accounts_emit_registered_and_verified_so_other_services_can_project_them(db, source):
+    await legacy_sync.sync(_dsn(), source)
+    evs = await _events(db)
+    registered = {d["account_id"]: d for t, d in evs if t == "account.registered"}
+    verified = {d["account_id"] for t, d in evs if t == "account.verified"}
+    assert set(registered) == {c * 32 for c in "abcde"}
+    assert (registered["a" * 32]["username"], registered["a" * 32]["role"], registered["a" * 32]["status"]) == ("quan_tri", "admin", "active")
+    assert registered["e" * 32]["status"] == "suspended" and registered["b" * 32]["status"] == "pending"
+    assert verified == {c * 32 for c in "acde"}          # "dang_cho" (b) chưa xác thực email nên không có account.verified
+    assert all("email" not in d and "password_hash" not in d for _, d in evs)
+
+
+async def test_imported_accounts_get_the_same_default_capabilities_as_a_fresh_registration(db, source):
+    await legacy_sync.sync(_dsn(), source)
+    async with db.connection() as conn:
+        rows = await conn.fetch("SELECT account_id, permission FROM account_permissions")
+    caps: dict[str, set[str]] = {}
+    for r in rows:
+        caps.setdefault(r["account_id"], set()).add(r["permission"])
+    assert caps["c" * 32] == {"capability:web_access", "capability:dashboard_access", "capability:manual_channel_mgmt"}   # viewer
+    assert "capability:api_write" in caps["a" * 32] and "capability:tool_integration" not in caps["a" * 32]               # admin
+    assert "e" * 32 not in caps                                                              # discord: không capability mặc định
+    evs = await _events(db)
+    assert sum(t == "account.permission_changed" for t, _ in evs) == sum(len(v) for v in caps.values())
+    await legacy_sync.sync(_dsn(), source)                                                    # chạy lại không cấp thêm
+    async with db.connection() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM account_permissions") == len(rows)
+
+
+async def test_rerun_and_dry_run_do_not_emit_events(db, source, tmp_path):
+    r = await legacy_sync.sync(_dsn(), build_sqlite(tmp_path / "dry.db"), dry_run=True)
+    assert r.accounts.inserted == 5 and await _events(db) == []         # dry-run rollback cả sự kiện
+    await legacy_sync.sync(_dsn(), source)
+    first = len(await _events(db))
+    await legacy_sync.sync(_dsn(), source)
+    assert len(await _events(db)) == first
 
 
 async def test_changes_in_legacy_propagate_on_next_run(db, tmp_path, source):

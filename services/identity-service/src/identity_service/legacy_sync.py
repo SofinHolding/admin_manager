@@ -11,6 +11,10 @@ Nguyên tắc:
   * Idempotent: chạy lại chỉ cập nhật phần khác biệt. Toàn bộ chạy trong MỘT transaction (hoặc không gì cả).
   * Từ chối chạy nếu identity-service đã phục vụ lưu lượng thật (có bản ghi `auth_audit`), trừ khi --force:
     sau cutover, identity là writer duy nhất và nguồn legacy không còn được ghi đè lên nó.
+  * Mỗi tài khoản MỚI được nhập: phát `account.registered`, cấp capability mặc định theo role (như lúc đăng ký:
+    `permissions/capabilities.py`) và phát `account.verified` nếu email đã xác thực — trong cùng savepoint, để
+    integration/analytics/reward dựng được bảng chiếu và người dùng có quyền dùng web. Tài khoản đã có không bị đụng.
+    Quyền đặc biệt (vd tool_integration) KHÔNG tự cấp: admin cấp riêng sau khi chuyển.
 """
 
 from __future__ import annotations
@@ -27,6 +31,9 @@ from urllib.parse import unquote, urlparse
 
 import asyncpg
 
+from identity_service.outbox import events
+from identity_service.permissions import repository as perms_repo
+from identity_service.permissions.capabilities import default_for_role
 from identity_service.security import hash_token
 
 _ROLES = {"viewer", "admin", "discord", "dash_admin"}
@@ -212,6 +219,13 @@ async def sync(target_dsn: str, source_url: str, *, dry_run: bool = False, force
                 await sp.start()
                 try:
                     outcome = await _upsert(conn, "accounts", "id", _ACC_COLS, row)
+                    if outcome == "inserted":
+                        await events.registered(conn, row)
+                        for cap in default_for_role(row["role"]):
+                            if await perms_repo.grant(conn, row["id"], cap, "legacy_sync"):
+                                await events.permission_changed(conn, row["id"], cap, True)
+                        if row["email_verified"]:
+                            await events.verified(conn, row["id"])
                     await sp.commit()
                 except asyncpg.UniqueViolationError as exc:
                     await sp.rollback()

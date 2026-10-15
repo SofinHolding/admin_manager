@@ -12,7 +12,7 @@ services:
     container_name: mp-dev-postgres
     environment:
       POSTGRES_PASSWORD: ${DEV_PG_ADMIN_PASSWORD:?chạy infra/scripts/bootstrap_dev.py trước}
-    ports: ["127.0.0.1:${DEV_PG_PORT:-55600}:5432"]
+    ports: ["127.0.0.1:${DEV_PG_PORT:-26400}:5432"]
     volumes:
       - ../../.dev/initdb:/docker-entrypoint-initdb.d:ro
       - mp_dev_pgdata:/var/lib/postgresql/data

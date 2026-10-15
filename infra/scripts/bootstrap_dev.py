@@ -33,7 +33,7 @@ FEED_CONSUMERS = {  # <nguồn phát feed>: <các bên đọc>
 # Giá trị KHÔNG phải secret (cổng, tên) — cố định để các script và test dùng chung.
 CONSTANTS = {
     "DEV_PG_HOST": "127.0.0.1",
-    "DEV_PG_PORT": "55600",
+    "DEV_PG_PORT": "26400",
     "DEV_REDIS_HOST": "127.0.0.1",
     "DEV_REDIS_PORT": "26390",
     "DEV_ISSUER": "http://127.0.0.1:8430",

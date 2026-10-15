@@ -164,7 +164,8 @@ async def test_account_lifecycle_emits_events_in_order(client, db, mailer):
         "account.registered",
         "account.permission_changed", "account.permission_changed", "account.permission_changed",
         # default caps (sorted: dashboard_access, manual_channel_mgmt, web_access)
-        "account.verified", "account.status_changed", "session.revoked",
+        "account.verified", "account.status_changed",                  # xác thực email: pending -> active (consumer cần biết)
+        "account.status_changed", "session.revoked",                   # admin khoá tài khoản
         "account.permission_changed",                                  # reward:access
         "account.role_changed", "session.revoked", "account.profile_updated",
         "session.revoked", "account.deleted"]
@@ -172,8 +173,9 @@ async def test_account_lifecycle_emits_events_in_order(client, db, mailer):
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
     reg = mine[0]
     assert reg["data"] == {"account_id": u["id"], "username": "vong_doi_su_kien", "role": "viewer", "status": "pending"}
-    assert mine[5]["data"] == {"account_id": u["id"], "status": "suspended", "previous": "active"}
-    assert mine[7]["data"] == {"account_id": u["id"], "permission": "reward:access", "granted": True}
+    assert mine[5]["data"] == {"account_id": u["id"], "status": "active", "previous": "pending"}
+    assert mine[6]["data"] == {"account_id": u["id"], "status": "suspended", "previous": "active"}
+    assert mine[8]["data"] == {"account_id": u["id"], "permission": "reward:access", "granted": True}
 
 
 async def test_events_never_contain_pii_or_secrets(client, db, mailer):
