@@ -382,7 +382,11 @@ export default function MyToolsPage() {
           )}
           {!!guide.platform_rules?.length && (
             <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-              {guide.platform_rules.map((rule) => <li key={rule}>{rule}</li>)}
+              {guide.platform_rules.map((rule) => (
+                <li key={rule}>
+                  {rule.split("`").map((part, i) => (i % 2 ? <code key={i} className="font-mono text-xs">{part}</code> : part))}
+                </li>
+              ))}
             </ul>
           )}
         </Section>

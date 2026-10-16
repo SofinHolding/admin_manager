@@ -28,9 +28,12 @@ const makeResource = (id: string, overrides: Record<string, unknown> = {}) => ({
   verification_status: "unverified", enabled: 1, created_at: "", updated_at: "", ...overrides,
 });
 
+/** Server THẬT trả envelope `{ok:true,data,meta}` (đã bắt gặp lỗi khi mock thiếu `ok`: UI hiện 0 nhóm dù server có nhóm). */
+const envelope = (data: unknown) => ({ ok: true, data, meta: { request_id: "req_test", contract_version: "2026-10-01" } });
+
 /**
  * Server mock cho ChannelsPage.
- * groups → /v1/user/channel-groups (dạng envelope { data: [...] })
+ * groups → /v1/user/channel-groups (envelope thật)
  * items  → /v1/resources
  */
 function channelsServer(
@@ -49,14 +52,14 @@ function channelsServer(
     (c) => c.method === "GET" && c.path === "/v1/resources"
       ? jsonResponse({ items }) : undefined,
     (c) => c.method === "GET" && c.path === "/v1/user/channel-groups"
-      ? jsonResponse({ data: groups }) : undefined,
+      ? jsonResponse(envelope(groups)) : undefined,
     (c) => c.method === "POST" && c.path === "/v1/user/channel-groups"
-      ? jsonResponse({ data: makeGroup("grp-new", JSON.parse(c.body ?? "{}").name ?? "Mới", JSON.parse(c.body ?? "{}").country_code ?? "") })
+      ? jsonResponse(envelope(makeGroup("grp-new", JSON.parse(c.body ?? "{}").name ?? "Mới", JSON.parse(c.body ?? "{}").country_code ?? "")))
       : undefined,
     (c) => c.method === "DELETE" && c.path.startsWith("/v1/user/channel-groups/")
-      ? jsonResponse({ data: { deleted: true } }) : undefined,
+      ? jsonResponse(envelope({ deleted: true })) : undefined,
     (c) => c.method === "PATCH" && c.path.startsWith("/v1/user/channel-groups/")
-      ? jsonResponse({ data: makeGroup(c.path.split("/").pop()!, JSON.parse(c.body ?? "{}").name ?? "") })
+      ? jsonResponse(envelope(makeGroup(c.path.split("/").pop()!, JSON.parse(c.body ?? "{}").name ?? "")))
       : undefined,
   ];
 }

@@ -791,18 +791,17 @@ export interface ChannelGroup {
   created_at: string;
 }
 
+/** Server trả envelope `{ok:true,data,meta}`; `apiFetch` đã bóc `data` nên ở đây nhận thẳng giá trị. */
 export const channelGroupsApi = {
   list: () =>
-    apiFetch<{ data: ChannelGroup[] }>("/v1/user/channel-groups").then((r) => ({ items: r.data ?? [] })),
+    apiFetch<ChannelGroup[]>("/v1/user/channel-groups").then((rows) => ({ items: rows ?? [] })),
 
   create: (name: string, country_code = "") =>
-    apiFetch<{ data: ChannelGroup }>("/v1/user/channel-groups", json("POST", { name, country_code }))
-      .then((r) => r.data),
+    apiFetch<ChannelGroup>("/v1/user/channel-groups", json("POST", { name, country_code })),
 
   update: (id: string, data: Partial<{ name: string; country_code: string }>) =>
-    apiFetch<{ data: ChannelGroup }>(`/v1/user/channel-groups/${enc(id)}`, json("PATCH", data))
-      .then((r) => r.data),
+    apiFetch<ChannelGroup>(`/v1/user/channel-groups/${enc(id)}`, json("PATCH", data)),
 
   delete: (id: string) =>
-    apiFetch<{ data: { deleted: boolean } }>(`/v1/user/channel-groups/${enc(id)}`, json("DELETE")),
+    apiFetch<{ deleted: boolean }>(`/v1/user/channel-groups/${enc(id)}`, json("DELETE")),
 };

@@ -84,7 +84,7 @@ describe("MyToolsPage — mã nền tảng dùng ở trường platform", () => 
       ...guideBase, credential: null,
       platforms: [{ key: "tiktok", display_name: "TikTok", aliases: ["tt", "tik_tok"], codes: ["tiktok", "tt", "tik_tok"] },
                   { key: "facebook", display_name: "Facebook", aliases: [], codes: ["facebook"] }],
-      platform_rules: ["Mỗi snapshot chỉ chứa dữ liệu của MỘT nền tảng."],
+      platform_rules: ["Mỗi snapshot chỉ chứa dữ liệu của MỘT nền tảng, ghi ở trường `platform`."],
     }) : undefined);
     renderPage();
     const section = (await screen.findByText("Mã nền tảng dùng khi gửi dữ liệu")).closest("section") as HTMLElement;
@@ -94,6 +94,8 @@ describe("MyToolsPage — mã nền tảng dùng ở trường platform", () => 
     expect(tiktok.getByText("tik_tok")).toBeInTheDocument();
     expect(within(within(section).getByText("Facebook").closest("tr") as HTMLElement).getByText("—")).toBeInTheDocument();
     expect(within(section).getByText(/chỉ chứa dữ liệu của MỘT nền tảng/)).toBeInTheDocument();
+    expect(within(section).getByText("platform", { selector: "code" })).toBeInTheDocument();   // không hiện dấu ` thô
+    expect(section.textContent).not.toContain("`");
     expect(within(section).queryByRole("textbox")).toBeNull();
     expect(within(section).queryByRole("button")).toBeNull();
   });
