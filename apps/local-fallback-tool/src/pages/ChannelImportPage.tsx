@@ -24,10 +24,6 @@ const PLATFORM_META: Record<string, { label: string; icon: string; color: string
 const PLATFORM_ORDER = ["youtube", "tiktok", "facebook", "other"] as const;
 type PlatformKey = (typeof PLATFORM_ORDER)[number] | "all";
 
-// ── Kết quả fetch gần nhất ──────────────────────────────────────────────────────
-
-interface FetchResult { added: number; updated: number }
-
 // ── Resource trả về từ GET /v1/integrations/resources ──────────────────────────
 
 interface ApiResourceItem {

@@ -30,6 +30,7 @@ Mọi nội dung phản ánh trạng thái repo tại **2026-10-06**, nhánh `re
 | Xác thực giữa service | [`api/service-auth-contract-v1.md`](../api/service-auth-contract-v1.md) |
 | Feed nội bộ + canonical export | [`api/internal-feed-contract-v1.md`](../api/internal-feed-contract-v1.md) |
 | Hợp đồng dữ liệu Tool đẩy lên | [`api/ingest-data-contract-v1.md`](../api/ingest-data-contract-v1.md), schema `packages/contracts/ingest/2026-10-01/` |
+| Thay đổi API dành cho Tool đã liên kết (mã nền tảng, định dạng payload) | [`api/integration-tool-changes-2026-10-16.md`](../api/integration-tool-changes-2026-10-16.md) |
 | API Integration / Analytics | [`api/integration-api-v1.md`](../api/integration-api-v1.md), [`api/analytics-api-v1.md`](../api/analytics-api-v1.md); OpenAPI đóng băng `docs/api/openapi/*.json` |
 | API legacy (baseline) | `docs/api/legacy/*.openapi.json` |
 | Báo cáo triển khai + số liệu test | [`operations/implementation-final-report.md`](../operations/implementation-final-report.md) |

@@ -179,7 +179,7 @@ async def test_backfill_from_zero_gives_same_result_as_incremental(seeded):
     incremental = await snapshot_of_answers(seeded)
     # instance MỚI hoàn toàn (DB rỗng) đồng bộ từ revision 0
     async with seeded.db.transaction() as conn:
-        await conn.execute("TRUNCATE feed_cursor, processed_events, read_projects, read_resources, read_content, "
+        await conn.execute("TRUNCATE feed_cursor, processed_events, read_resources, read_content, "
                            "read_daily_metrics, read_events")
     assert (await summary(seeded))["total_views"] == 0
     await seeded.sync()
@@ -225,7 +225,7 @@ async def test_all_kinds_are_applied_atomically_to_one_head(world):
     world.integration.commit(owner=OWN_A, platform="facebook", content=[post("p2", "pg1", "2026-10-02", 20)])
     await world.sync()
     cur = {r["source"]: r["seq"] for r in await world.fetch("SELECT source, seq FROM feed_cursor")}
-    assert {cur[f"canonical.{k}"] for k in ("projects", "resources", "content", "metrics", "events")} == {2}
+    assert {cur[f"canonical.{k}"] for k in ("resources", "content", "metrics", "events")} == {2}
 
 
 async def test_large_revision_group_is_not_split_across_pages(world):
@@ -486,7 +486,6 @@ async def test_reconcile_matches_when_in_sync(seeded):
     ("UPDATE read_resources SET removed = true WHERE external_id = 'pg2'", "resources", "count"),
     ("UPDATE read_daily_metrics SET revision = revision + 5 WHERE resource_external_id = 'ch1'", "metrics", "checksum"),
     ("DELETE FROM read_events WHERE external_id = 'e1'", "events", "count"),
-    ("DELETE FROM read_projects WHERE project_key = 'itl'", "projects", "count"),
 ])
 async def test_reconcile_detects_deliberate_drift(seeded, tamper, kind, what):
     async with seeded.db.transaction() as conn:

@@ -14,7 +14,9 @@ import pytest
 
 from integration_service.openapi_dump import FROZEN, build_spec, render
 
-PUBLIC_PREFIXES = ("/v1/integrations",)
+# Khớp `public_prefixes` của integration-service trong infra/service-registry.json, TRỪ nhóm legacy (ẩn khỏi OpenAPI công khai):
+# `/v1/integrations` (Tool/máy) và `/v1/user` (tính năng của người dùng, vd nhóm quốc gia — `channel_groups`).
+PUBLIC_PREFIXES = ("/v1/integrations", "/v1/user")
 WRITE_METHODS = {"post", "put", "patch"}
 
 
@@ -178,6 +180,8 @@ def test_every_public_endpoint_is_documented_with_errors_security_and_envelope(s
         if op.get("security") or any("machine" in t for t in op.get("tags", [])):
             assert "429" in statuses or method == "get" or "admin" in op.get("tags", []), (method, path)
         for status, resp in op["responses"].items():
+            if status == "200" and path.endswith("/me/openapi.json"):
+                continue   # trả NGUYÊN tài liệu OpenAPI của Tool (không bọc envelope) — có chủ đích, xem guide/router.py
             schema = resp["content"]["application/json"]["schema"]["$ref"]
             if status.startswith("2"):
                 assert schema.startswith("#/components/schemas/Envelope_"), (method, path, status)
@@ -220,7 +224,7 @@ def test_security_schemes_separate_user_and_machine_planes(spec):
 def test_ingest_models_in_openapi_forbid_extra_properties(spec):
     schemas = spec["components"]["schemas"]
     for name in ("SnapshotCreate", "ResourceItem", "ContentItem", "MetricItem", "EventItem", "CommitRequest",
-                 "ResourceUpsertItem", "HandshakeRequest", "ProjectUpsert", "ClientWizardCreate", "ClientConfigure",
+                 "ResourceUpsertItem", "HandshakeRequest", "ClientWizardCreate", "ClientConfigure",
                  "ClientActivate", "ClientTransferRequest"):
         assert schemas[name].get("additionalProperties") is False, f"{name} cho phép trường lạ (owner spoof)"
         assert not [p for p in schemas[name].get("properties", {}) if p.startswith("owner")], name

@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("collector", {
   readLog:       ()         => ipcRenderer.invoke("collector:log"),
   readConfig:    ()         => ipcRenderer.invoke("collector:config:read"),
   writeConfig:   (cfg)      => ipcRenderer.invoke("collector:config:write", cfg),
+  /** Chọn file kết nối Admin cấp (gateway + api_key) và ghi vào cấu hình. */
+  importConnection: ()      => ipcRenderer.invoke("collector:import-connection"),
   health:        ()         => ipcRenderer.invoke("collector:health"),
   apiGet:        (apiPath)  => ipcRenderer.invoke("collector:api:get", apiPath),
   readStatus:    ()         => ipcRenderer.invoke("collector:status:read"),

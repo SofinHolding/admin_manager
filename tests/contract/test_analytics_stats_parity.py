@@ -18,6 +18,8 @@ KHÁC BIỆT CÓ CHỦ ĐÍCH (đều có assertion riêng bên dưới, không 
   D5. `videos_posted` của summary: legacy chỉ đếm event `post_ok`; analytics đếm SỐ BÀI theo `published_date` (cùng định nghĩa với
       "Số video" của biểu đồ traffic), ngày không có bài nào mới lấy event `post_ok` làm dự phòng. Nhờ vậy Tool chỉ cần đẩy
       bài (content) là thẻ KPI có số, không bắt buộc đẩy thêm nhật ký đăng bài.
+  D6. Chiều chủ đề/project đã gỡ (2026-10-16): `channel-breakdown` của analytics không có `by_group`, mỗi kênh là một đơn vị; phần `by_group`
+      của legacy bị bỏ trước khi so, và dữ liệu mẫu không còn nhóm reup (mọi cặp `group_id=""`).
 """
 
 from __future__ import annotations
@@ -44,8 +46,8 @@ import secrets  # noqa: E402
 
 import stats_core as legacy_stats  # noqa: E402,F401  (xác nhận import được đúng file legacy)
 from analytics_harness import FakeClock, build_world, dsn, reset_database  # noqa: E402
-from analytics_testsupport import (OWN_A, FakeIdentityFeed, FakeIntegration, Issuer, daily, event, post, res,  # noqa: E402
-                                   project)
+from analytics_testsupport import (OWN_A, FakeIdentityFeed, FakeIntegration, Issuer, daily, event, post,  # noqa: E402
+                                   res)
 from db import LocalFileDb  # noqa: E402  (legacy legacy/admin-server/db.py)
 
 from analytics_service import migrate  # noqa: E402
@@ -90,14 +92,13 @@ EVENTS = [
     dict(id="e7", kind="post_ok", date="2026-10-05", target="page:4"),
     dict(id="e8", kind="post_ok", date="2026-10-08", target="page:9"),                            # ngày không có bài -> fallback
 ]
-GROUPS = [dict(id="g-itl", name="ITL", enabled=True, country="Brazil"),
-          dict(id="g-sib", name="Sible", enabled=True, country=""),
-          dict(id="g-off", name="Off", enabled=False, country="Peru")]
+# Project/chủ đề đã gỡ khỏi hệ thống: không còn nhóm reup; mỗi cặp chỉ là "kênh đang quản lý" (bật/tắt).
+GROUPS: list[dict] = []
 PAIRINGS = {
-    "pr1": dict(target="page:1", enabled=True, group_id="g-itl"), "pr2": dict(target="page:1", enabled=True, group_id="g-sib"),
-    "pr3": dict(target="page:2", enabled=True, group_id="g-itl"), "pr4": dict(target="page:3", enabled=False, group_id="g-sib"),
-    "pr5": dict(target="page:5", enabled=True, group_id="g-off"), "pr6": dict(target="page:6", enabled=True, group_id=""),
-    "pr7": dict(target="page:7", enabled=True, group_id="g-gone"), "pr8": dict(target="page:8", enabled=True, group_id="g-itl"),
+    "pr1": dict(target="page:1", enabled=True, group_id=""), "pr3": dict(target="page:2", enabled=True, group_id=""),
+    "pr4": dict(target="page:3", enabled=False, group_id=""), "pr5": dict(target="page:5", enabled=True, group_id=""),
+    "pr6": dict(target="page:6", enabled=True, group_id=""), "pr7": dict(target="page:7", enabled=True, group_id=""),
+    "pr8": dict(target="page:8", enabled=True, group_id=""),
 }
 FB_META = {
     "page:1": dict(target="page:1", name="Page One", country="Brazil"),
@@ -122,24 +123,15 @@ def write_legacy_files(directory: Path) -> None:
 
 def to_canonical(fake: FakeIntegration) -> None:
     """Legacy ACL (ingest-data-contract-v1 mục 7): 7 store cũ -> canonical, rồi COMMIT như một snapshot."""
-    bindings: dict[str, list[tuple[str, bool]]] = {}
-    for pr in PAIRINGS.values():
-        if pr["group_id"]:
-            bindings.setdefault(pr["target"], []).append((pr["group_id"], pr["enabled"]))
     resources = []
     for target, meta in FB_META.items():
-        no_group = [p for p in PAIRINGS.values() if p["target"] == target and not p["group_id"]]
-        all_bindings = [p for p in PAIRINGS.values() if p["target"] == target]
-        # managed=True cho page có BẤT KỲ binding nào (grouped hoặc không), khớp với channel_units() logic.
-        # active chỉ xét các binding không-group (vì group off/on do group quyết định).
-        extra: dict = {"managed": len(all_bindings) > 0}
-        if no_group:
-            extra["active"] = all(p["enabled"] for p in no_group)
-        resources.append(res(target, meta["name"], platform="facebook", country=meta["country"],
-                             projects=bindings.get(target), **extra))
+        mine = [p for p in PAIRINGS.values() if p["target"] == target]
+        extra: dict = {"managed": len(mine) > 0}
+        if mine:
+            extra["active"] = all(p["enabled"] for p in mine)
+        resources.append(res(target, meta["name"], platform="facebook", country=meta["country"], **extra))
     fake.commit(
         owner=OWN_A, platform="facebook",
-        projects=[project(g["id"], g["name"], g["country"], g["enabled"]) for g in GROUPS],
         resources=resources,
         content=[post(p["post_id"], target, p["date"], p["views"], p["reactions"], p["comments_count"])
                  for target, posts in FB_POSTS.items() for p in posts],
@@ -201,7 +193,7 @@ async def test_summary_parity_with_documented_difference_for_managed_channels(le
     # của 08/10 (ngày không có bài nào) = 13. Kỳ trước cả hai đều bằng 1 (bài p7 và event e6 cùng ngày 30/09).
     assert new["videos_posted"] == 13
     # D1: analytics đếm cả kênh YouTube quản lý
-    assert (old["managed_channels"], old["active_channels"]) == (7, 5)
+    assert (old["managed_channels"], old["active_channels"]) == (7, 6)
     assert new["managed_channels"] == old["managed_channels"] + N_YT
     assert new["active_channels"] == old["active_channels"] + N_YT
 
@@ -241,12 +233,18 @@ async def test_country_tags_parity(legacy, analytics):
     assert new == old and "Brazil" in old
 
 
+async def legacy_breakdown(legacy) -> dict:
+    """`channel-breakdown` của legacy bỏ chiều chủ đề (`by_group`): analytics không còn khái niệm chủ đề/project (D6)."""
+    out = await legacy.channel_breakdown()
+    return {**out, "by_platform": [{k: v for k, v in p.items() if k != "by_group"} for p in out["by_platform"]]}
+
+
 async def test_channel_breakdown_parity(legacy, analytics):
-    old = await legacy.channel_breakdown()
+    old = await legacy_breakdown(legacy)
     new = drop_additive(await get(analytics, "channel-breakdown"))
     assert new == old
-    fb = next(p for p in old["by_platform"] if p["platform"] == "facebook")
-    assert {"group": "Không chủ đề", "managed": 2, "active": 2} in fb["by_group"]       # page:6 + page:7 (nhóm không tồn tại)
+    fb = next(p for p in new["by_platform"] if p["platform"] == "facebook")
+    assert "by_group" not in fb and fb["managed"] == 7      # mỗi kênh là một đơn vị
 
 
 async def test_parity_still_holds_after_country_alias_normalization(legacy, analytics):
@@ -267,4 +265,4 @@ async def test_parity_still_holds_after_country_alias_normalization(legacy, anal
     assert after_new == after_old and "br" not in after_old["countries"]
     assert drop_additive(await get(analytics, "traffic", country="Brazil")) == await legacy.traffic_metric(
         FROM, TO, "", "Brazil")
-    assert drop_additive(await get(analytics, "channel-breakdown")) == await legacy.channel_breakdown()
+    assert drop_additive(await get(analytics, "channel-breakdown")) == await legacy_breakdown(legacy)

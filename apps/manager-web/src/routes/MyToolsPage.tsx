@@ -353,6 +353,41 @@ export default function MyToolsPage() {
         )}
       </Section>
 
+      {guide.platforms && (
+        <Section
+          title="Mã nền tảng dùng khi gửi dữ liệu"
+          description="Mỗi lần gửi dữ liệu, Tool phải ghi một mã dưới đây vào trường platform. Mã do quản trị viên quản lý — bạn chỉ xem, không sửa được."
+        >
+          {guide.platforms.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Chưa có nền tảng nào được phép cho Tool này.</p>
+          ) : (
+            <table className="w-full border-collapse text-sm">
+              <thead><tr className="border-b border-border text-left text-muted-foreground">
+                <th className="py-1.5 pr-3">Nền tảng</th><th className="py-1.5 pr-3">Mã chính</th><th className="py-1.5">Mã phụ</th>
+              </tr></thead>
+              <tbody>
+                {guide.platforms.map((p) => (
+                  <tr key={p.key} className="border-b border-border last:border-b-0">
+                    <td className="py-1.5 pr-3">{p.display_name}</td>
+                    <td className="py-1.5 pr-3"><code className="font-mono text-xs">{p.key}</code></td>
+                    <td className="py-1.5">
+                      {p.aliases.length === 0
+                        ? <span className="text-muted-foreground">—</span>
+                        : <span className="flex flex-wrap gap-1.5">{p.aliases.map((a) => <code key={a} className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{a}</code>)}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {!!guide.platform_rules?.length && (
+            <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+              {guide.platform_rules.map((rule) => <li key={rule}>{rule}</li>)}
+            </ul>
+          )}
+        </Section>
+      )}
+
       <Section title="Các bước tích hợp">
         <ol className="list-decimal space-y-2 pl-6 text-sm">
           <li>Nhận khóa kết nối ở mục &ldquo;Khóa kết nối&rdquo; phía trên.</li>

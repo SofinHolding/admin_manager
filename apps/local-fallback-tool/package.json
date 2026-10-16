@@ -6,11 +6,12 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite --port 5176\" \"wait-on http://localhost:5176 && electron electron/main.cjs\"",
-    "electron:build": "vite build && electron-builder"
+    "electron:build": "npm run typecheck && vite build && electron-builder"
   },
   "dependencies": {
     "react": "^19.2.8",

@@ -37,7 +37,15 @@ def list_migrations(directory: Path = MIGRATIONS_DIR) -> list[Path]:
 
 
 def _checksum(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """sha256 của nội dung đã chuẩn hoá về LF: kiểu xuống dòng (CRLF/LF do git, autocrlf, Docker) KHÔNG làm migration 'bị sửa'."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _accepted_checksums(path: Path) -> set[str]:
+    """Checksum chấp nhận cho file đã áp dụng: bản LF (hiện hành) và bản CRLF của cùng nội dung (hàng cũ băm trên byte thô).
+    Chỉ khác kiểu xuống dòng thì chấp nhận; khác NỘI DUNG vẫn bị từ chối."""
+    lf = path.read_bytes().replace(b"\r\n", b"\n")
+    return {hashlib.sha256(b).hexdigest() for b in (lf, lf.replace(b"\n", b"\r\n"))}
 
 
 async def _ensure_table(conn: asyncpg.Connection) -> None:
@@ -63,7 +71,7 @@ async def run(dsn: str, directory: Path = MIGRATIONS_DIR) -> list[str]:
             for path in list_migrations(directory):
                 version, checksum = path.stem, _checksum(path)
                 if version in done:
-                    if done[version] != checksum:
+                    if done[version] not in _accepted_checksums(path):
                         raise MigrationError(f"{path.name} đã áp dụng nhưng nội dung bị sửa (checksum lệch)")
                     continue
                 async with conn.transaction():

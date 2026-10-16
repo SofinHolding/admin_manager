@@ -42,9 +42,6 @@ HANDSHAKE = {"client_id": _CLI, "installation_id": "ins_0123456789abcdef01234567
              "allowed_scopes": ["integration:handshake", "metrics:write", "resources:write", "snapshots:write"],
              "allowed_capabilities": ["metrics.push", "resources.push", "snapshots.push"],
              "accepted_capabilities": ["resources.push", "snapshots.push"], "server_time": _T}
-PROJECT = {"created": True, "changed": True, "project": {
-    "project_key": "itl", "name": "ITL", "platform": "facebook", "country_code": "BR", "enabled": True,
-    "metadata": {"campaign": "q4"}, "revision": 12, "updated_at": _T}}
 BATCH = {"received": 3, "created": 1, "updated": 1, "unchanged": 0, "stale_ignored": 0, "rejected": 1,
          "rejections": [{"index": 2, "external_id": "p9", "code": "RECORD_VALIDATION_FAILED",
                          "message": "metrics.views: int_type"}]}

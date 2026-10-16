@@ -64,6 +64,10 @@ class SnapshotService:
     async def ensure_platform(self, conn: asyncpg.Connection, ctx: MachineContext, platform: str) -> None:
         if platform not in ctx.allowed_platforms or platform not in await registry.enabled_platforms(conn):
             raise forbidden(ErrorCode.PLATFORM_NOT_ALLOWED, "Platform không nằm trong phạm vi client được phép")
+        if ctx.delegated_platform is not None and platform != ctx.delegated_platform:
+            # Ingest ủy quyền gắn với MỘT job = một nền tảng: không để số liệu của kênh này rơi sang nền tảng khác.
+            raise forbidden(ErrorCode.PLATFORM_NOT_ALLOWED, "Ingest ủy quyền phải dùng đúng platform của job",
+                            {"job_platform": ctx.delegated_platform})
 
     async def expire_if_needed(self, snapshot_id: str) -> None:
         """Lazy: snapshot `building` quá TTL không hoạt động => `abandoned` (ghi trên kết nối riêng, trước khi xử lý)."""
@@ -94,12 +98,16 @@ class SnapshotService:
     # ── Tạo snapshot ──────────────────────────────────────────────────────────────
     async def create(self, conn: asyncpg.Connection, ctx: MachineContext, body: schemas.SnapshotCreate,
                      installation_id: str | None) -> dict:
-        await self.ensure_platform(conn, ctx, body.platform)
+        platform = await registry.resolve(conn, body.platform)   # mã Tool gửi (chính/phụ) -> mã chính của nền tảng
+        await self.ensure_platform(conn, ctx, platform)
+        if ctx.delegated_resource_id is not None and body.snapshot_type != "delta":
+            # `full` kèm scope sẽ đánh dấu removed mọi bản ghi vắng mặt: Tool dùng chung chỉ thấy MỘT kênh nên không được.
+            raise invalid("Ingest ủy quyền chỉ được dùng snapshot_type=delta")
         try:
             ZoneInfo(body.report_timezone)
         except (ZoneInfoNotFoundError, ValueError, TypeError, OSError):
             raise invalid("report_timezone không phải múi giờ IANA hợp lệ") from None
-        previous = await repository.last_timezone(conn, ctx.effective_owner, ctx.client_id, body.platform)
+        previous = await repository.last_timezone(conn, ctx.effective_owner, ctx.client_id, platform)
         if previous is not None and previous != body.report_timezone:
             raise conflict(ErrorCode.TIMEZONE_CHANGED, "report_timezone khác snapshot trước của cùng Tool",
                            {"previous": previous})
@@ -112,7 +120,7 @@ class SnapshotService:
         scope = body.scope.model_dump(mode="json", by_alias=True, exclude_none=True) if body.scope else None
         snap = await repository.insert(
             conn, id=new_id("snp"), owner=ctx.effective_owner, client_id=ctx.client_id,
-            installation_id=installation_id, platform=body.platform, snapshot_type=body.snapshot_type,
+            installation_id=installation_id, platform=platform, snapshot_type=body.snapshot_type,
             observed_at=body.observed_at, report_timezone=body.report_timezone, scope=scope,
             expected_counts=body.expected_counts.model_dump(exclude_none=True), now=self._now())
         out = public_snapshot(snap)
@@ -128,10 +136,22 @@ class SnapshotService:
         if snap["status"] != "building":
             raise self._not_building(snap)
         platform = snap["platform"]
+        if ctx.delegated_resource_id is not None and kind == "resources":
+            raise forbidden(ErrorCode.SCOPE_DENIED, "Ingest ủy quyền không được tạo/sửa resource, chỉ gửi số liệu của kênh trong job")
         known = await registry.enabled_metrics(conn) if kind in ("content", "metrics") else None
         staged, rejections, dupes = validate.validate_items(kind, items, known_metrics=known,
                                                             default_observed_at=snap["observed_at"])
         rejections = list(rejections)
+
+        if ctx.delegated_resource_id is not None and staged:
+            # MAPPING: số liệu Tool dùng chung kéo về phải gắn đúng resource (kênh) của job đã claim — khoá = external_id của
+            # chính resource đó (không phải id Tool tự dò ra, vd UC… của YouTube), nên luôn rơi đúng nền tảng/kênh của user.
+            job_ext = await conn.fetchval("SELECT external_id FROM resources WHERE id = $1", ctx.delegated_resource_id)
+            foreign = [s for s in staged if s.payload["resource_external_id"] != job_ext]
+            for s in foreign:
+                rejections.append(Rejection(s.index, s.external_id, ErrorCode.RESOURCE_UNKNOWN.value,
+                                            "resource_external_id không phải kênh của job đang xử lý", s.item_key))
+            staged = [s for s in staged if s.payload["resource_external_id"] == job_ext]
 
         # Tham chiếu resource (content/metrics/events): phải có trong snapshot này hoặc trong kho canonical.
         canonical_ids: dict[str, str] = {}
@@ -178,7 +198,7 @@ class SnapshotService:
             keys = [(s.payload["resource_type"], s.payload["external_id"]) for s in staged]
             canonical = await merge.fetch_resources(conn, ctx.effective_owner, platform, keys)
             rows = [canonical.get(k) for k in keys]
-            datas = [merge.resource_data(s.payload, r["data"] if r else None) for s, r in zip(staged, rows, strict=True)]
+            datas = [merge.resource_data(s.payload) for s in staged]
             immutable = False
         else:
             spec = merge.SPECS[kind]
@@ -194,7 +214,7 @@ class SnapshotService:
             if before is not None:  # đã có trong staging của chính snapshot này
                 prev_payload = before["payload"]
                 prev = {"observed_at": before["observed_at"], "removed": False,
-                        "data": (merge.resource_data(prev_payload, None) if kind == "resources"
+                        "data": (merge.resource_data(prev_payload) if kind == "resources"
                                  else merge.SPECS[kind].data_of(prev_payload))}
                 out.append(merge.decide(prev, s.observed_at, data, immutable=immutable))
             else:

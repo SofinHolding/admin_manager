@@ -81,3 +81,18 @@ async def test_unauthenticated_401(env):
     assert (await env.http.post(BASE, json={"name": "Vietnam"})).status_code == 401
     assert (await env.http.patch(f"{BASE}/00000000-0000-0000-0000-000000000000", json={"name": "x"})).status_code == 401
     assert (await env.http.delete(f"{BASE}/00000000-0000-0000-0000-000000000000")).status_code == 401
+
+
+async def test_writes_are_rate_limited_per_account(env):
+    """Người dùng đã đăng nhập không được tạo/sửa/xoá nhóm vô hạn: vượt 60 thao tác ghi/phút => 429 + Retry-After;
+    tài khoản khác không bị ảnh hưởng (khoá theo `sub`)."""
+    from integration_service.app import USER_WRITES_PER_MIN
+
+    u, other = env.user(), env.user()
+    for i in range(USER_WRITES_PER_MIN):
+        r = await create_group(env, u, name=f"g{i}")
+        assert r.status_code == 201, (i, r.text)
+    r = await create_group(env, u, name="qua-nhieu")
+    assert r.status_code == 429 and r.json()["error"]["code"] == "RATE_LIMITED" and int(r.headers["Retry-After"]) >= 1
+    assert (await create_group(env, other)).status_code == 201
+    assert (await env.http.get(BASE, headers=u["headers"])).status_code == 200   # đọc không bị tính

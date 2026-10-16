@@ -49,6 +49,8 @@ class MachineContext:
     bound_device_id: str | None = None       # None = credential chưa handshake lần nào (CREDENTIAL_NOT_ACTIVATED)
     bound_installation_id: str | None = None
     delegated_owner_id: str | None = None   # PHASE 4: set khi có header X-Delegated-Job hợp lệ (chỉ fallback_tool)
+    delegated_platform: str | None = None    # nền tảng của job: ingest ủy quyền CHỈ được ghi đúng nền tảng này
+    delegated_resource_id: str | None = None  # resource của job: ingest ủy quyền CHỈ được ghi số liệu của resource này
 
     @property
     def effective_owner(self) -> str:

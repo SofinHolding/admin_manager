@@ -121,4 +121,5 @@ async def test_the_service_serves_every_owned_operation_and_hides_them_from_publ
             assert r.status_code in (401, 422), (method, path, r.status_code)   # tồn tại: đòi token / sai body
             assert set(r.json()) == {"detail"}, (method, path)                   # lỗi kiểu legacy
         assert (await client.get("/v1/ops/khong-co")).status_code == 404
-    assert not [p for p in app.openapi()["paths"] if not p.startswith("/v1/integrations")]
+    # Route legacy (resources/ops/viewer-links) phải ẨN khỏi OpenAPI công khai; `/v1/user/*` là API công khai không-legacy.
+    assert not [p for p in app.openapi()["paths"] if p.startswith(("/v1/resources", "/v1/ops", "/v1/viewer/links"))]

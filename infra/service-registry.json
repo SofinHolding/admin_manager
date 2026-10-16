@@ -128,6 +128,7 @@
         "integration_credentials",
         "installations",
         "platform_registry",
+        "platform_aliases",
         "metric_registry",
         "projects",
         "resources",
@@ -185,13 +186,9 @@
           "phase": "2.2",
           "responsibility": "Platform Registry và Metric Registry (dữ liệu, không phải code)"
         },
-        "projects": {
-          "phase": "2.2",
-          "responsibility": "project/source namespace, tự upsert"
-        },
         "resources": {
           "phase": "2.2",
-          "responsibility": "resource (page/channel/profile), liên kết project, execution_mode"
+          "responsibility": "resource (page/channel/profile), execution_mode (bảng projects/resource_project_bindings còn trong DB nhưng chưa dùng — tính năng project sẽ làm lại sau)"
         },
         "idempotency": {
           "phase": "2.2",

@@ -144,7 +144,7 @@ class JobService:
             installation = await conn.fetchrow("SELECT capabilities FROM installations WHERE id = $1",
                                                body.installation_id)
             usable = set(ctx.allowed_platforms) & await registry.enabled_platforms(conn)
-            requested = set(body.platforms) or usable
+            requested = set(await registry.resolve_many(conn, list(body.platforms))) or usable
             denied = sorted(requested - usable)
             if denied:
                 raise forbidden(ErrorCode.PLATFORM_NOT_ALLOWED, "Platform không nằm trong phạm vi client được phép",

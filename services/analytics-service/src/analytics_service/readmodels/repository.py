@@ -13,25 +13,17 @@ import asyncpg
 from analytics_service.readmodels.canonical import checksum_line, checksum_lines, natural_key
 
 _UPSERT = {
-    "projects": (
-        "INSERT INTO read_projects (owner_account_id, project_key, name, platform, country, enabled, observed_at,"
-        " revision, removed) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
-        " ON CONFLICT (owner_account_id, project_key) DO UPDATE SET name=EXCLUDED.name, platform=EXCLUDED.platform,"
-        " country=EXCLUDED.country, enabled=EXCLUDED.enabled, observed_at=EXCLUDED.observed_at,"
-        " revision=EXCLUDED.revision, removed=EXCLUDED.removed WHERE read_projects.revision <= EXCLUDED.revision",
-        ("owner_account_id", "project_key", "name", "platform", "country", "enabled", "observed_at", "revision",
-         "removed")),
     "resources": (
         "INSERT INTO read_resources (owner_account_id, platform, external_id, resource_type, client_id, display_name,"
-        " username, url, country, state, projects, managed, active, observed_at, revision, removed)"
-        " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16)"
+        " username, url, country, state, managed, active, observed_at, revision, removed)"
+        " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"
         " ON CONFLICT (owner_account_id, platform, resource_type, external_id) DO UPDATE SET"
         " client_id=EXCLUDED.client_id, display_name=EXCLUDED.display_name, username=EXCLUDED.username,"
-        " url=EXCLUDED.url, country=EXCLUDED.country, state=EXCLUDED.state, projects=EXCLUDED.projects,"
+        " url=EXCLUDED.url, country=EXCLUDED.country, state=EXCLUDED.state,"
         " managed=EXCLUDED.managed, active=EXCLUDED.active, observed_at=EXCLUDED.observed_at,"
         " revision=EXCLUDED.revision, removed=EXCLUDED.removed WHERE read_resources.revision <= EXCLUDED.revision",
         ("owner_account_id", "platform", "external_id", "resource_type", "client_id", "display_name", "username",
-         "url", "country", "state", "projects", "managed", "active", "observed_at", "revision", "removed")),
+         "url", "country", "state", "managed", "active", "observed_at", "revision", "removed")),
     "content": (
         "INSERT INTO read_content (owner_account_id, platform, resource_type, resource_external_id, external_id,"
         " published_date, views, reactions, comments, state, observed_at, revision, removed)"
@@ -52,21 +44,20 @@ _UPSERT = {
          "observed_at", "revision", "removed")),
     "events": (
         "INSERT INTO read_events (owner_account_id, external_id, platform, resource_type, resource_external_id, kind,"
-        " occurred_date, project_key, observed_at, revision, removed) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+        " occurred_date, observed_at, revision, removed) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
         " ON CONFLICT (owner_account_id, platform, resource_type, resource_external_id, external_id) DO UPDATE SET"
         " kind=EXCLUDED.kind,"
-        " occurred_date=EXCLUDED.occurred_date, project_key=EXCLUDED.project_key,"
+        " occurred_date=EXCLUDED.occurred_date,"
         " observed_at=EXCLUDED.observed_at, revision=EXCLUDED.revision, removed=EXCLUDED.removed"
         " WHERE read_events.revision <= EXCLUDED.revision",
         ("owner_account_id", "external_id", "platform", "resource_type", "resource_external_id", "kind",
-         "occurred_date", "project_key", "observed_at", "revision", "removed")),
+         "occurred_date", "observed_at", "revision", "removed")),
 }
 
-_TABLE = {"projects": "read_projects", "resources": "read_resources", "content": "read_content",
+_TABLE = {"resources": "read_resources", "content": "read_content",
           "metrics": "read_daily_metrics", "events": "read_events"}
 
 _KEY_COLUMNS = {
-    "projects": "owner_account_id, project_key",
     "resources": "owner_account_id, platform, resource_type, external_id",
     "content": "owner_account_id, platform, resource_type, resource_external_id, external_id, views, reactions, comments",
     "metrics": "owner_account_id, platform, resource_type, resource_external_id, metric_date, views",
@@ -90,7 +81,7 @@ async def upsert_rows(conn: asyncpg.Connection, kind: str, rows: list[dict]) -> 
 
 async def clear_read_model(conn: asyncpg.Connection) -> None:
     """Rebuild: xoá sạch read model (trong CÙNG transaction với việc nạp lại nên người đọc không thấy trạng thái rỗng)."""
-    await conn.execute("TRUNCATE read_projects, read_resources, read_content, read_daily_metrics, read_events")
+    await conn.execute("TRUNCATE read_resources, read_content, read_daily_metrics, read_events")
 
 
 async def head_revision(conn: asyncpg.Connection) -> int:

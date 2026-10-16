@@ -13,7 +13,7 @@ docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d
 python infra/scripts/test_all.py                                 # cổng chất lượng đầy đủ (bootstrap lại mọi thứ còn thiếu, chạy ~25-30 phút)
 ```
 
-`test_all.py` tự: sinh `.env.dev` nếu thiếu, `pip install` thư viện thiếu, `docker compose up` (stack DEV riêng), migrate, chạy các bộ: `arch, contract, pkg:*, svc:*, integration, e2e, web:{install?,typecheck,test,build}`.
+`test_all.py` tự: sinh `.env.dev` nếu thiếu, `pip install` thư viện thiếu, `docker compose up` (stack DEV riêng), migrate, chạy các bộ: `arch, contract, pkg:*, app:collector, svc:*, integration, e2e, web:{install?,typecheck,test,build}, collector-ui:{install?,typecheck}`.
 Thoát khác 0 nếu bất kỳ bước/bộ nào đỏ. SKIP vì phụ thuộc ngoài (`NOT_RUN_EXTERNAL_DEPENDENCY`, hiện chỉ `nginx -t`) được liệt kê là "chưa kiểm chứng" nhưng không làm đỏ; **mọi SKIP khác làm đỏ** bản đầy đủ.
 Tùy chọn: `--fast` (bỏ integration/e2e/frontend), `--legacy` (thêm admin-server), `--only <chuỗi>`, `--no-bootstrap`.
 
@@ -59,7 +59,7 @@ Request/response schema, `error.code` ổn định (thêm vào `manager_contract
 Thêm dòng vào Metric Registry (dữ liệu: `PUT /v1/integrations/admin/metrics/{key}`) và schema ingest nếu cần; **không thêm cột tùy tiện**; metric chưa vào registry nằm ở `extensions`.
 
 ### Thêm Tool mới (hoặc nền tảng mới)
-**Không sửa Manager.** Admin thêm dòng Platform Registry (`PUT /v1/integrations/admin/platforms/{key}`); user đăng ký (kèm integration) hoặc admin tạo client; owner cấp credential; Tool dùng `manager_sdk.IntegrationClient` (`handshake → push_snapshot`). Tài liệu cho chủ Tool: `docs/api/integration-api-v1.md` + `ingest-data-contract-v1.md`.
+**Không sửa Manager.** Admin/dash_admin thêm dòng Platform Registry (UI: menu "Nền tảng" → `/admin/platforms`, hoặc `PUT /v1/integrations/admin/platforms/{key}`); Tool cá nhân tự được dùng nền tảng mới, Tool dùng chung cần admin thêm vào `allowed_platforms`; user đăng ký (kèm integration) hoặc admin tạo client; owner cấp credential; Tool lấy key được dùng bằng `GET /v1/integrations/platforms` rồi `manager_sdk.IntegrationClient` (`handshake → push_snapshot`, mỗi snapshot khai `platform`). Tài liệu cho chủ Tool: `docs/api/integration-api-v1.md` + `ingest-data-contract-v1.md`.
 Mẫu chạy thật: `tests/e2e/test_mock_tool_x.py`. Nếu bạn phải sửa code Manager chỉ để nhận tên Tool ⇒ ranh giới đang sai.
 
 ### Thêm website dùng đăng nhập chung
@@ -79,6 +79,8 @@ Commit nhỏ theo bước, thông điệp nêu phase + phạm vi. **Chỉ commit
 - Mỗi thay đổi hành vi có test; mỗi quy tắc kiến trúc có "test của test" (ca giả lập vi phạm). Kiểm bằng **đột biến**: gỡ quy tắc → test phải đỏ → hoàn nguyên (các agent trước đã làm >130 ca; kịch bản nằm ngoài repo).
 - **Không sửa/xóa test kiến trúc để cho qua**; muốn đổi quy tắc: đổi registry/ADR có chủ đích và giải thích ở commit. Không làm yếu assertion để xanh.
 - Test của các service dùng chung DB DEV (`identity_db`, `integration_db`…): **không chạy song song** nhiều bộ test cùng service (có thể làm nhau đỏ ngẫu nhiên). `test_all.py` chạy tuần tự.
+- **Khi stack DEV (docker/dev_stack) đang chạy, chạy test trên DB riêng** — test `TRUNCATE` dữ liệu và giữ khoá bảng, nên chạy trên `*_db` của stack sẽ xoá dữ liệu DEV và gây `deadlock`/`TimeoutError` (consumer Analytics, outbox Integration chạy nền). Tạo một lần `python infra/scripts/test_dbs.py` (chỉ TẠO `<svc>_db_test`, không xoá gì) rồi chạy với `DEV_PG_DB_SUFFIX=_test python infra/scripts/test_all.py` (hoặc `pytest` từng service với cùng biến).
+- Migration checksum **không phụ thuộc kiểu xuống dòng** (CRLF/LF): chuẩn hoá về LF trước khi băm; DB đã áp dụng bằng bản CRLF vẫn được chấp nhận. Chỉ sửa NỘI DUNG file đã áp dụng mới bị từ chối (`MigrationError`).
 - Cặp `tests/contract` và `tests/integration` nằm ở hai thư mục có `pytest.ini` khác nhau — chạy riêng từng thư mục (chạy chung một lệnh gây `RuntimeError` ở fixture).
 
 ## 6.6 Bẫy thường gặp (đã tốn thời gian)

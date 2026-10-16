@@ -26,7 +26,8 @@ def test_frozen_openapi_is_a_valid_3x_document_with_public_paths_only(spec):
     assert spec["openapi"].startswith("3.") and spec["info"]["title"] == "integration-service"
     assert spec["paths"], "OpenAPI rỗng"
     for path in spec["paths"]:
-        assert path.startswith("/v1/integrations"), f"{path} không thuộc namespace chung /v1/integrations/*"
+        assert path.startswith(("/v1/integrations", "/v1/user")), (
+            f"{path} ngoài namespace công khai của integration-service (/v1/integrations/*, /v1/user/* — xem service-registry.json)")
         assert "/internal" not in path and not path.startswith("/health")
 
 
@@ -37,7 +38,7 @@ def test_frozen_openapi_has_every_endpoint_required_by_the_integration_api(spec)
                 ("post", "/v1/integrations/{client_id}/credentials"),
                 ("post", "/v1/integrations/clients/{client_id}/credentials/{key_id}/rotate"),
                 ("delete", "/v1/integrations/clients/{client_id}/credentials/{key_id}"),
-                ("post", "/v1/integrations/handshake"), ("put", "/v1/integrations/projects/{project_key}"),
+                ("post", "/v1/integrations/handshake"),
                 ("post", "/v1/integrations/resources/batch"), ("post", "/v1/integrations/snapshots"),
                 ("post", "/v1/integrations/snapshots/{snapshot_id}/resources"),
                 ("post", "/v1/integrations/snapshots/{snapshot_id}/content"),

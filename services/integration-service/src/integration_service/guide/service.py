@@ -19,6 +19,7 @@ from integration_service.config import MAX_BATCH_ITEMS, Settings
 from integration_service.credentials import repository as credentials_repo
 from integration_service.db import Database
 from integration_service.guide.catalog import CATALOG
+from integration_service.platforms import repository as registry
 from integration_service.installations import repository as installations_repo
 
 _MAX_RECENT_SNAPSHOTS = 5
@@ -43,6 +44,17 @@ _ERRORS: dict[str, tuple[int, str]] = {
     "CONTRACT_VERSION_UNSUPPORTED": (400, f"Chỉ hỗ trợ X-Contract-Version {CONTRACT_VERSION}"),
     "RATE_LIMITED": (429, "Vượt giới hạn request, chờ theo Retry-After"),
 }
+
+
+_CODE_HINT = ("Mã nền tảng do Admin tạo sẵn: một mã trong `platforms[].codes` của hướng dẫn này (mã chính hoặc mã phụ). "
+              "Mã khác bị từ chối PLATFORM_NOT_ALLOWED và dữ liệu không được lưu ở đâu cả.")
+_PLATFORM_RULES = [
+    "Mọi dữ liệu gửi lên PHẢI kèm mã nền tảng (`platform`) — một mã trong `platforms[].codes` (Admin tạo sẵn).",
+    "Mỗi snapshot chỉ chứa dữ liệu của MỘT nền tảng. Tool có dữ liệu của nhiều nền tảng: tạo MỘT snapshot cho mỗi nền tảng, "
+    "mỗi snapshot kèm mã nền tảng của dữ liệu đó (SDK: `push_by_platform`).",
+    "Server chuẩn hoá mã phụ về mã chính trước khi lưu, nên Dashboard gom đúng nền tảng.",
+    "Mã không đúng (không có trong danh sách, đã gỡ, nền tảng đã tắt) bị từ chối `PLATFORM_NOT_ALLOWED`; dữ liệu đó không được lưu ở đâu cả.",
+]
 
 
 def _resolve(node, components: dict, depth: int = 0, seen: frozenset[str] = frozenset()):
@@ -70,6 +82,24 @@ def _request_doc(spec: dict, method: str, path: str) -> tuple[dict | None, dict 
     return _resolve(schema, spec.get("components", {}).get("schemas", {})), body.get("example")
 
 
+def _inject_codes(node, codes: list[str]) -> None:
+    """Gắn danh sách mã nền tảng ĐƯỢC DÙNG của client vào mọi trường `platform`/`platforms` của schema đã resolve, để chủ Tool
+    thấy chính xác mã nào hợp lệ ngay trong schema request (không phải đoán)."""
+    if isinstance(node, list):
+        for x in node:
+            _inject_codes(x, codes)
+    elif isinstance(node, dict):
+        props = node.get("properties")
+        if isinstance(props, dict):
+            if isinstance(props.get("platform"), dict):
+                props["platform"] = {**props["platform"], "enum": codes, "description": _CODE_HINT}
+            plural = props.get("platforms")
+            if isinstance(plural, dict) and isinstance(plural.get("items"), dict):
+                props["platforms"] = {**plural, "items": {**plural["items"], "enum": codes}, "description": _CODE_HINT}
+        for v in node.values():
+            _inject_codes(v, codes)
+
+
 class GuideService:
     def __init__(self, db: Database, settings: Settings, clients: ClientService, now: Callable[[], datetime]) -> None:
         self._db = db
@@ -86,12 +116,18 @@ class GuideService:
             allowed_scopes = set(credential["scopes"]) if credential else set(client["allowed_scopes"])
             installs = await installations_repo.list_for_client(conn, client["id"])
             snapshots = await self._recent_snapshots(conn, client["id"])
+            platforms = [{"key": p["key"], "display_name": p["display_name"], "aliases": list(p["aliases"]),
+                          "codes": [p["key"], *p["aliases"]]}
+                         for p in await registry.list_platforms(conn)
+                         if p["enabled"] and p["key"] in client["allowed_platforms"]]
+        codes = sorted(c for p in platforms for c in p["codes"])
         spec = app.openapi()
         endpoints = []
         for e in CATALOG:
             if e.scope != "integration:handshake" and e.scope not in allowed_scopes:
                 continue
             schema, example = _request_doc(spec, e.method, e.path)
+            _inject_codes(schema, codes)
             endpoints.append({"method": e.method, "path": e.path, "scope": e.scope, "summary": e.summary,
                               "description": e.description, "request_schema": schema,
                               "example_request": e.example_request if e.example_request is not None else example,
@@ -111,7 +147,7 @@ class GuideService:
             "limits": {"batch_max_items": MAX_BATCH_ITEMS, "body_max_bytes": self._settings.max_body_bytes},
             "error_codes": [{"code": code, "http_status": status, "meaning": meaning}
                             for code, (status, meaning) in sorted(_ERRORS.items(), key=lambda kv: (kv[1][0], kv[0]))],
-            "recent_snapshots": snapshots}
+            "recent_snapshots": snapshots, "platforms": platforms, "platform_rules": _PLATFORM_RULES}
 
     async def _recent_snapshots(self, conn, client_id: str) -> list[dict]:
         rows = await conn.fetch(

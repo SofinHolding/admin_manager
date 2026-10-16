@@ -131,14 +131,12 @@ async def test_canonical_export_pagination_removed_and_only_committed(env):
 
 async def test_canonical_item_fields_follow_the_contract(env):
     tool = await env.tool()
-    await tool.put("/v1/integrations/projects/itl", {"name": "ITL", "country_code": "BR"})
-    await ingest_full(tool, resources=[res("r1", display_name="P", country={"code": "BR", "name": "Brazil"},
-                                           projects=[{"project_key": "itl", "enabled": True}], managed=True)],
+    await ingest_full(tool, resources=[res("r1", display_name="P", country={"code": "BR", "name": "Brazil"}, managed=True)],
                       content=[post("p1", views=3, reactions=None)], metrics=[daily("r1", "2026-10-04", views=9)],
-                      events=[{**event("e1"), "project_key": "itl", "occurred_at": "2026-10-04T12:00:00Z"}])
+                      events=[{**event("e1"), "occurred_at": "2026-10-04T12:00:00Z"}])
     r = (await canonical(env, "resources"))["items"][0]
     assert {"id", "revision", "removed", "owner_account_id", "client_id", "platform", "resource_type", "external_id",
-            "state", "observed_at", "display_name", "country", "projects", "project_keys"} <= set(r)
+            "state", "observed_at", "display_name", "country"} <= set(r)
     assert r["owner_account_id"] == tool.owner and r["client_id"] == tool.client_id and r["platform"] == "facebook"
     assert r["country"] == {"code": "BR", "name": "Brazil"} and r["managed"] is True
     c = (await canonical(env, "content"))["items"][0]
@@ -147,9 +145,8 @@ async def test_canonical_item_fields_follow_the_contract(env):
     m = (await canonical(env, "metrics"))["items"][0]
     assert m["date"] == "2026-10-04" and m["resource_external_id"] == "r1" and m["metrics"] == {"views": 9}
     e = (await canonical(env, "events"))["items"][0]
-    assert e["kind"] == "post_ok" and e["occurred_date"] == "2026-10-04" and e["project_key"] == "itl"
-    p = (await canonical(env, "projects"))["items"][0]
-    assert p["project_key"] == "itl" and p["country_code"] == "BR" and p["owner_account_id"] == tool.owner
+    assert e["kind"] == "post_ok" and e["occurred_date"] == "2026-10-04" and "project_key" not in e
+    assert "projects" not in r and "project_keys" not in r      # liên kết project đã gỡ khỏi hợp đồng canonical
 
 
 def _n(v):
@@ -160,8 +157,6 @@ def _line(kind: str, i: dict) -> str:
     """Dòng checksum theo HỢP ĐỒNG ĐỐI SOÁT (khoá tự nhiên, không phải id nội bộ) — viết độc lập với service."""
     o, p = i["owner_account_id"], i.get("platform")
     tail = f"|{i['revision']}|{1 if i['removed'] else 0}"
-    if kind == "projects":
-        return f"{o}|{i['project_key']}{tail}"
     if kind == "resources":
         return f"{o}|{p}|{i['resource_type']}|{i['external_id']}{tail}"
     base = f"{o}|{p}|{i['resource_type']}|{i['resource_external_id']}"
@@ -186,12 +181,12 @@ async def test_summary_counts_and_checksum_let_a_consumer_reconcile(env):
                       metrics=[daily("r1", "2026-10-01")], events=[event("e1")])
     await ingest_full(tool, resources=[res("r1", obs=5)], content=[post("p1", obs=5, views=7)], obs=5)
     s = (await env.http.get("/internal/v1/canonical/summary", headers=KEY)).json()
-    for kind in ("projects", "resources", "content", "metrics", "events"):
+    for kind in ("resources", "content", "metrics", "events"):
         items = (await canonical(env, kind))["items"]
         assert s["counts"][kind] == {"total": len(items), "active": len([i for i in items if not i["removed"]])}, kind
         assert s["checksum"][kind] == checksum(kind, items), kind
     every = []
-    for k in ("projects", "resources", "content", "metrics", "events"):
+    for k in ("resources", "content", "metrics", "events"):
         every += [i["revision"] for i in (await canonical(env, k))["items"]]
     assert s["head_revision"] == max(every)
     # đổi dữ liệu => checksum đổi (Analytics phát hiện lệch)
@@ -256,21 +251,22 @@ async def revision_scenario(db) -> set[str]:
     """Tương tự cho `revision` canonical: consumer kéo theo after_revision không được bỏ lỡ bản ghi."""
     from integration_service.feed import canonical
     async with db.connection() as conn:
-        await conn.execute("TRUNCATE projects, outbox RESTART IDENTITY CASCADE")
+        await conn.execute("TRUNCATE resources, outbox RESTART IDENTITY CASCADE")
         await conn.execute("ALTER SEQUENCE canonical_revision_seq RESTART")
     seen: set[str] = set()
     cursor = 0
 
     async def insert(conn, key):
         (rev,) = await outbox.next_revisions(conn, 1)
-        await conn.execute("INSERT INTO projects (id, owner_account_id, client_id, project_key, name, revision, created_at, "
-                           "updated_at) VALUES ($1,'o','c',$2,$2,$3,now(),now())", "prj_" + key, key, rev)
+        await conn.execute("INSERT INTO resources (id, owner_account_id, client_id, platform, resource_type, external_id, state, "
+                           "observed_at, data, revision, created_at, updated_at) VALUES ($1,'o','c','facebook','page',$2,'active',"
+                           "now(),'{}'::jsonb,$3,now(),now())", "res_" + key, key, rev)
 
     async def poll():
         nonlocal cursor
         async with db.connection() as conn:
-            page = await canonical.export(conn, "projects", cursor, 100)
-        seen.update(i["project_key"] for i in page["items"])
+            page = await canonical.export(conn, "resources", cursor, 100)
+        seen.update(i["external_id"] for i in page["items"])
         cursor = page["next_revision"]
 
     holder = await db.pool.acquire()

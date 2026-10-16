@@ -49,9 +49,8 @@ from integration_service.legacy_acl import errors as legacy_errors
 from integration_service.legacy_acl.router import build_routers as build_legacy_routers
 from integration_service.legacy_acl.service import LegacyService
 from integration_service.machine_runner import MachineRunner
+from integration_service.platforms.router import machine_router as platforms_machine_router
 from integration_service.platforms.router import router as platforms_router
-from integration_service.projects.router import router as projects_router
-from integration_service.projects.service import ProjectService, ProjectUpsert
 from integration_service.provisioning.consumer import ProvisioningConsumer
 from integration_service.ratelimit import FixedWindowLimiter
 from integration_service.resources.router import admin_router as resources_admin_router
@@ -67,9 +66,10 @@ logger = logging.getLogger("integration.app")
 # Dependency (DB) tạm chết: trả 503 thay vì 500 và KHÔNG làm sập tiến trình.
 _DB_DOWN = (OSError, asyncpg.PostgresConnectionError, asyncpg.InterfaceError, TimeoutError, asyncio.TimeoutError)
 FAILED_AUTH_PER_MIN = 30   # số lần xác thực API key SAI tối đa mỗi phút mỗi IP
+USER_WRITES_PER_MIN = 60   # số thao tác GHI tối đa mỗi phút mỗi tài khoản ở mặt phẳng user (vd channel-groups)
 
 _DOC_MODELS = [schemas.ResourceBatch, schemas.ResourceUpsertBatch, schemas.ContentBatch, schemas.MetricsBatch,
-               schemas.EventBatch, schemas.CommitRequest, schemas.SnapshotCreate, HandshakeRequest, ProjectUpsert,
+               schemas.EventBatch, schemas.CommitRequest, schemas.SnapshotCreate, HandshakeRequest,
                CredentialCreate, RotateRequest, ClientPatch, job_schemas.JobCreate, job_schemas.JobClaimRequest,
                job_schemas.JobCompleteRequest, job_schemas.JobFailRequest, job_schemas.JobHeartbeatRequest]
 
@@ -129,6 +129,7 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
     rate_clock = clock or __import__("time").monotonic
     rate_limiter = FixedWindowLimiter(settings.rate_limit_per_min, clock=rate_clock)
     fail_limiter = FixedWindowLimiter(FAILED_AUTH_PER_MIN, clock=rate_clock)
+    user_write_limiter = FixedWindowLimiter(USER_WRITES_PER_MIN, clock=rate_clock)
     audit = AuditService(db, now)
     jobs = JobService(db, settings, now)
     redeem_limiter = FixedWindowLimiter(settings.legacy_redeem_per_window, clock=rate_clock,
@@ -140,11 +141,11 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
     app.state.container = Container(
         settings=settings, db=db, now=now, verifier=verifier, service_auth=ServiceKeyAuth(dict(settings.feed_keys)),
         audit=audit, clients=clients, credentials=credentials,
-        installations=InstallationService(now), projects=ProjectService(db, now), resources=ResourceService(db, now),
+        installations=InstallationService(now), resources=ResourceService(db, now),
         snapshots=SnapshotService(db, settings, now), guide=GuideService(db, settings, clients, now),
         runner=MachineRunner(db, now, audit),
         jobs=jobs, legacy=LegacyService(db, settings, now, jobs, redeem_limiter),
-        rate_limiter=rate_limiter, fail_limiter=fail_limiter)
+        rate_limiter=rate_limiter, fail_limiter=fail_limiter, user_write_limiter=user_write_limiter)
 
     # Consumer provisioning: thiếu URL/khoá => tắt (service vẫn chạy bình thường).
     app.state.provisioning = None
@@ -171,8 +172,6 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
         owner = any(f["loc"] and f["loc"][-1].lower().startswith("owner") and f["type"] == "extra_forbidden"
                     for f in fields)
         code = ErrorCode.RECORD_VALIDATION_FAILED if machine_plane else ErrorCode.REQUEST_VALIDATION_FAILED
-        if machine_plane and request.url.path.startswith("/v1/integrations/projects/"):
-            code = ErrorCode.PROJECT_VALIDATION_FAILED
         message = ("Trường owner_* không được gửi: quyền sở hữu suy ra từ credential" if owner
                    else "Request validation failed")
         return EnvelopeResponse(status_code=422, content=error_envelope(
@@ -197,9 +196,9 @@ def create_app(settings: Settings | None = None, *, database: Database | None = 
         return EnvelopeResponse(status_code=422, content=error_envelope(
             ErrorCode.RECORD_VALIDATION_FAILED.value, "Dữ liệu không hợp lệ", request_id=current_request_id()))
 
-    for router in (clients_router, credentials_router, installations_router, projects_router, resources_router,
+    for router in (clients_router, credentials_router, installations_router, resources_router,
                    snapshots_router, platforms_router, audit_router, resources_admin_router, jobs_machine_router,
-                   jobs_user_router, workers_router, channel_groups_router, guide_router):
+                   jobs_user_router, workers_router, channel_groups_router, guide_router, platforms_machine_router):
         app.include_router(router)
     legacy_errors.install(app)
     for legacy_router in build_legacy_routers(include_in_schema=False):   # ACL: hợp đồng = OpenAPI legacy đóng băng

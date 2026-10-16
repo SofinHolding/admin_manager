@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -65,6 +66,105 @@ YT_API = "https://www.googleapis.com/youtube/v3"
 _UC_RE = re.compile(r"^UC[A-Za-z0-9_-]{10,}$")
 _CHANNEL_PATH_RE = re.compile(r"/channel/(UC[A-Za-z0-9_-]+)")
 _HANDLE_RE = re.compile(r"(?:/@|@)([A-Za-z0-9._-]+)")
+
+# ── Kết nối / ánh xạ dữ liệu (thuần, có test: tests/test_collect_push.py) ────────────────────
+
+CONNECTION_FORMAT = "manager-connection/1"
+
+
+class PushError(Exception):
+    """Đẩy số liệu lên thất bại: job phải fail kèm lý do, không được coi là hoàn tất."""
+
+
+class JobAbort(Exception):
+    """Job không thể hoàn tất vì lý do nghiệp vụ (không phải lỗi hạ tầng): báo `fail` kèm lý do; `retryable=False` = đừng thử lại."""
+
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+class ConnectionFileError(Exception):
+    pass
+
+
+def load_connection_file(path: str) -> dict:
+    """Đọc file kết nối Admin cấp kèm key dùng chung: {format, gateway, api_key, ...}. Không log nội dung (có secret)."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ConnectionFileError(f"không thấy file kết nối: {path}") from None
+    except (OSError, ValueError):
+        raise ConnectionFileError(f"file kết nối không đọc được hoặc không phải JSON: {path}") from None
+    if not isinstance(data, dict) or data.get("format") != CONNECTION_FORMAT:
+        raise ConnectionFileError(f"file kết nối sai định dạng (cần format={CONNECTION_FORMAT})")
+    gateway, api_key = data.get("gateway"), data.get("api_key")
+    if not (isinstance(gateway, str) and gateway.startswith(("http://", "https://"))):
+        raise ConnectionFileError("file kết nối thiếu `gateway` (http/https)")
+    if not (isinstance(api_key, str) and api_key.startswith("mpk_")):
+        raise ConnectionFileError("file kết nối thiếu `api_key` hợp lệ")
+    return {"gateway": gateway.rstrip("/"), "api_key": api_key}
+
+
+def select_platforms(allowed: list[str], narrowed: list[str] | None) -> list[str]:
+    """Nền tảng collector xử lý = key được phép ∩ collector có adapter (∩ --platforms nếu có). Giữ thứ tự `PLATFORMS`."""
+    return [p for p in PLATFORMS if p in allowed and (not narrowed or p in narrowed)]
+
+
+def _published_date(published_at: str | None, fallback: datetime) -> str:
+    if published_at:
+        try:
+            return datetime.fromisoformat(published_at.replace("Z", "+00:00")).astimezone(timezone.utc).date().isoformat()
+        except ValueError:
+            pass
+    return fallback.date().isoformat()
+
+
+# Chỉ số của KÊNH (cấu trúc đã thiết kế sẵn, adapter nền tảng điền khi lấy được). Khoá = Metric Registry:
+#   followers = số người theo dõi, videos_posted = tổng số video, likes = tổng lượt thích của kênh.
+# Giá trị là SỐ TUYỆT ĐỐI tại thời điểm đo; server ghi theo ngày (daily_metrics) nên có lịch sử theo ngày.
+CHANNEL_METRIC_KEYS = ("followers", "videos_posted", "likes")
+
+
+def build_content_items(resource_ext: str, items: list[dict], now: datetime, platform: str | None = None) -> list[dict]:
+    """Số liệu đo được -> `content` của hợp đồng ingest, gắn `resource_external_id` của KÊNH trong job.
+
+    `views/likes/comments/shares` -> metrics `views/reactions/comments/shares` (khoá canonical của Metric Registry).
+    `title/duration_seconds/cover_url` (nếu adapter có) -> `extensions.<platform>` để hiển thị/tra cứu sau này.
+    Bản ghi thiếu external_id bị bỏ (không đoán). Trùng external_id: bản sau thắng. Số âm/không phải số nguyên bị bỏ.
+    """
+    out: dict[str, dict] = {}
+    for it in items:
+        ext = str(it.get("external_id") or "").strip()
+        if not ext:
+            continue
+        if len(ext) > 200:
+            ext = "h_" + hashlib.sha1(ext.encode("utf-8")).hexdigest()
+        metrics = {key: int(it[src]) for key, src in (("views", "views"), ("reactions", "likes"), ("comments", "comments"),
+                                                       ("shares", "shares"))
+                   if isinstance(it.get(src), (int, float)) and not isinstance(it.get(src), bool) and it[src] >= 0}
+        row = {"external_id": ext, "resource_external_id": resource_ext,
+               "published_date": _published_date(it.get("published_at"), now), "metrics": metrics,
+               "observed_at": now.isoformat()}
+        if it.get("url"):
+            row["url"] = str(it["url"])[:500]
+        extra = {k: (str(it[k])[:300] if k != "duration_seconds" else it[k])
+                 for k in ("title", "duration_seconds", "cover_url")
+                 if it.get(k) not in (None, "") and (k != "duration_seconds" or isinstance(it[k], int))}
+        if extra and platform:
+            row["extensions"] = {platform: extra}
+        out[ext] = row
+    return list(out.values())
+
+
+def build_channel_metrics(resource_ext: str, stats: dict | None, now: datetime) -> list[dict]:
+    """Chỉ số của kênh -> MỘT bản ghi `metrics` (khoá `(kênh, ngày UTC)`); rỗng nếu adapter không có chỉ số nào hợp lệ."""
+    metrics = {k: int(stats[k]) for k in CHANNEL_METRIC_KEYS
+               if stats and isinstance(stats.get(k), (int, float)) and not isinstance(stats.get(k), bool) and stats[k] >= 0}
+    if not metrics:
+        return []
+    return [{"resource_external_id": resource_ext, "date": now.date().isoformat(), "metrics": metrics,
+             "observed_at": now.isoformat()}]
 
 # ── Status tracker ────────────────────────────────────────────────────────────
 
@@ -204,41 +304,73 @@ class IntegrationClient:
         data = r.json().get("data", {})
         return data.get("jobs", []) if isinstance(data, dict) else []
 
-    async def push_snapshot(self, job_id: str, platform: str, items: list[dict]) -> None:
-        """Đẩy snapshot kèm X-Delegated-Job để gán owner từ job (delegated ingestion)."""
-        idempotency_key = f"collect-{job_id}"
-        r = await self._http.post(
-            "/v1/integrations/snapshots",
-            headers={"X-Delegated-Job": job_id, "Idempotency-Key": idempotency_key},
-            json={"platform": platform},   # platform từ job, không hardcode
-        )
+    async def allowed_platforms(self) -> list[str]:
+        """Khoá nền tảng key này được phép gửi (giao của `allowed_platforms` và Platform Registry đang bật)."""
+        r = await self._http.get("/v1/integrations/platforms")
         r.raise_for_status()
-        snap = r.json()["data"]["snapshot_id"]
-        BATCH = 500
-        for i in range(0, max(len(items), 1), BATCH):
-            batch = items[i:i + BATCH]
-            if batch:
-                await self._http.post(
-                    f"/v1/integrations/snapshots/{snap}/items",
-                    headers={"X-Delegated-Job": job_id},
-                    json={"items": batch},
-                )
-        await self._http.post(
-            f"/v1/integrations/snapshots/{snap}/commit",
-            headers={"X-Delegated-Job": job_id},
+        return [p["key"] for p in r.json().get("data", [])]
+
+    async def _checked(self, r: httpx.Response, what: str) -> dict:
+        """Mọi bước đẩy dữ liệu PHẢI được kiểm: lỗi HTTP hay `rejections` đều làm job thất bại (không mất số liệu im lặng)."""
+        if r.status_code >= 400:
+            raise PushError(f"{what}: HTTP {r.status_code} {r.text[:300]}")
+        return r.json().get("data") or {}
+
+    async def push_snapshot(self, job: dict, items: list[dict], channel_stats: dict | None = None) -> dict:
+        """Đẩy số liệu của MỘT kênh (job) lên dashboard bằng ingest ủy quyền.
+
+        Gồm: danh sách video của kênh (`content`, mỗi video kèm metrics) và — nếu adapter lấy được — chỉ số của chính kênh
+        (`metrics` theo ngày: followers/videos_posted/likes). Mapping: `platform` và `resource_external_id` lấy từ chính job
+        (resource do user nhập, đã gắn nền tảng) — không phải id Tool tự dò. Snapshot `delta` + `expected_counts`: server kiểm
+        đủ số bản ghi mới commit, thiếu thì lỗi.
+        """
+        job_id, platform = job["job_id"], job["platform"]
+        resource_ext = (job.get("resource") or {}).get("external_id")
+        if not job_id or not platform or not resource_ext:
+            raise PushError("job thiếu job_id/platform/resource.external_id — không thể ánh xạ kênh")
+        now = datetime.now(timezone.utc)
+        content = build_content_items(resource_ext, items, now, platform)
+        channel = build_channel_metrics(resource_ext, channel_stats, now)
+        if not content and not channel:
+            raise PushError("không có bản ghi hợp lệ để đẩy")
+        hdr = {"X-Delegated-Job": job_id}
+        attempt = job.get("attempt") or 1
+        expected = {k: len(v) for k, v in (("content", content), ("metrics", channel)) if v}
+        snap = await self._checked(await self._http.post(
+            "/v1/integrations/snapshots", headers={**hdr, "Idempotency-Key": f"collect-{job_id}-{attempt}"},
+            json={"platform": platform, "snapshot_type": "delta", "observed_at": now.isoformat(),
+                  "report_timezone": "UTC", "expected_counts": expected}), "tạo snapshot")
+        sid = snap["snapshot_id"]
+        for kind, rows in (("metrics", channel), ("content", content)):
+            for i in range(0, len(rows), 500):
+                res = await self._checked(await self._http.post(
+                    f"/v1/integrations/snapshots/{sid}/{kind}", headers=hdr, json={"items": rows[i:i + 500]}),
+                    f"gửi {kind}")
+                if res.get("rejected"):
+                    raise PushError(f"server từ chối {res['rejected']} bản ghi {kind}: {res.get('rejections', [])[:3]}")
+        return await self._checked(await self._http.post(
+            f"/v1/integrations/snapshots/{sid}/commit", headers=hdr, json={}), "commit")
+
+    async def complete_job(self, job: dict, result: dict | None = None) -> None:
+        """Báo job xong. Dữ liệu đã commit trước đó nên lỗi ở bước này chỉ cảnh báo (job sẽ hết lease và được xử lý lại,
+        upsert theo khoá tự nhiên nên không nhân đôi số liệu)."""
+        r = await self._http.post(f"/v1/integrations/jobs/{job['job_id']}/complete",
+                                  json={"result": result or {}, "lease_token": job.get("lease_token")})
+        if r.status_code >= 400:
+            log.warning("complete job=%s thất bại: HTTP %s %s", job["job_id"], r.status_code, r.text[:200])
+
+    async def fail_job(self, job: dict, reason: str, *, retryable: bool = True) -> None:
+        r = await self._http.post(
+            f"/v1/integrations/jobs/{job['job_id']}/fail",
+            json={"error_code": "COLLECT_FAILED", "message": reason[:500], "retryable": retryable,
+                  "lease_token": job.get("lease_token")},
         )
+        if r.status_code >= 400:
+            log.warning("fail job=%s không ghi được: HTTP %s %s", job["job_id"], r.status_code, r.text[:200])
 
-    async def complete_job(self, job_id: str) -> None:
-        await self._http.post(f"/v1/integrations/jobs/{job_id}/complete")
-
-    async def fail_job(self, job_id: str, reason: str) -> None:
-        await self._http.post(
-            f"/v1/integrations/jobs/{job_id}/fail",
-            json={"reason": reason[:500]},
-        )
-
-    async def heartbeat(self, job_id: str) -> None:
-        await self._http.post(f"/v1/integrations/jobs/{job_id}/heartbeat")
+    async def heartbeat(self, job: dict) -> None:
+        await self._http.post(f"/v1/integrations/jobs/{job['job_id']}/heartbeat",
+                              json={"lease_seconds": 300, "lease_token": job.get("lease_token")})
 
 # ── CheckviewV2 subprocess caller ─────────────────────────────────────────────
 
@@ -431,12 +563,13 @@ async def process_job(
     try:
         # ── 1. Resolve kênh → lấy danh sách video ───────────────────────────
         items: list[dict] = []
+        # Chỉ số của chính kênh (followers/videos_posted/likes) — adapter nào lấy được thì điền, rỗng = không gửi.
+        channel_stats: dict = {}
 
         if platform == "youtube":
             resolved = await resolve_youtube_channel(input_ref, youtube_api_key, http)
             if not resolved:
-                await client.fail_job(job_id, f"Cannot resolve YouTube channel: {input_ref}")
-                return
+                raise JobAbort(f"Cannot resolve YouTube channel: {input_ref}", retryable=False)
             channel_id, channel_title = resolved
             log.info("YouTube channel_id=%s title=%s", channel_id, channel_title)
 
@@ -486,16 +619,17 @@ async def process_job(
             })
 
         else:
-            log.warning("Unsupported platform: %s", platform)
-            await client.fail_job(job_id, f"Unsupported platform: {platform}")
-            return
+            raise JobAbort(f"Unsupported platform: {platform}", retryable=False)
 
         # ── 3. Push snapshot (delegated ingestion) ───────────────────────────
-        if items:
-            await client.push_snapshot(job_id, platform, items)
-            log.info("Pushed %d items for job=%s platform=%s", len(items), job_id, platform)
+        # Chỉ đẩy số liệu ĐO ĐƯỢC. Kênh không có số liệu hợp lệ nào => job FAIL có lý do (không im lặng, không đẩy 0 giả).
+        items = [it for it in items if it.get("check_status") == "ok" and it.get("external_id")]
+        if not items and not channel_stats:
+            raise JobAbort("Không lấy được số liệu hợp lệ nào cho kênh này", retryable=True)
+        await client.push_snapshot(job, items, channel_stats)
+        log.info("Pushed %d items for job=%s platform=%s", len(items), job_id, platform)
 
-        await client.complete_job(job_id)
+        await client.complete_job(job, {"items": len(items)})
         log.info("Completed job=%s", job_id)
         duration_ms = int((time.monotonic() - start_time) * 1000)
         tracker.job_done(job_id, platform, channel_id, channel_name, owner, len(items), duration_ms)
@@ -505,7 +639,7 @@ async def process_job(
         duration_ms = int((time.monotonic() - start_time) * 1000)
         tracker.job_failed(job_id, platform, channel_id, channel_name, owner, str(exc)[:400], duration_ms)
         try:
-            await client.fail_job(job_id, str(exc)[:400])
+            await client.fail_job(job, str(exc)[:400], retryable=getattr(exc, "retryable", True))
         except Exception:  # noqa: BLE001
             pass
 
@@ -521,14 +655,11 @@ async def run_loop(args: argparse.Namespace) -> None:
     sem = asyncio.Semaphore(args.max_concurrent)
     tracker = StatusTracker(args.status_file or "")
 
-    active_platforms = list(args.platforms) if args.platforms else list(PLATFORMS)
-    log.info("Collector started. gateway=%s platforms=%s poll_interval=%ds",
-             args.gateway, ",".join(active_platforms), args.poll_interval)
-
-    # Handshake để lấy installation_id — retry tối đa 5 lần nếu gateway chưa sẵn sàng
+    # Handshake để lấy installation_id — retry tối đa 5 lần nếu gateway chưa sẵn sàng.
+    # `platforms` khai lúc handshake chỉ là gợi ý; nguồn sự thật là danh sách key được phép trên server (bước bên dưới).
     for attempt in range(5):
         try:
-            await client.handshake(active_platforms)
+            await client.handshake([])   # [] = mọi nền tảng key được phép; thu hẹp --platforms áp ở select_platforms bên dưới
             break
         except Exception as exc:  # noqa: BLE001
             log.warning("Handshake attempt %d/5 failed: %s — chờ 5s", attempt + 1, exc)
@@ -536,6 +667,19 @@ async def run_loop(args: argparse.Namespace) -> None:
     else:
         log.error("Handshake thất bại sau 5 lần — dừng collector")
         return
+
+    try:
+        allowed = await client.allowed_platforms()
+    except Exception as exc:  # noqa: BLE001
+        log.error("Không lấy được danh sách nền tảng được phép: %s — dừng collector", exc)
+        return
+    active_platforms = select_platforms(allowed, args.platforms)
+    if not active_platforms:
+        log.error("Không có nền tảng nào vừa được key cho phép (%s) vừa có adapter (%s) — dừng collector",
+                  ",".join(allowed) or "-", ",".join(PLATFORMS))
+        return
+    log.info("Collector started. gateway=%s platforms=%s poll_interval=%ds",
+             args.gateway, ",".join(active_platforms), args.poll_interval)
 
     async def _process(job: dict) -> None:
         async with sem:
@@ -564,7 +708,10 @@ async def run_loop(args: argparse.Namespace) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Channel data collector (fallback_tool)")
-    ap.add_argument("--gateway", default=os.environ.get("GATEWAY_URL", "http://127.0.0.1:57595"))
+    ap.add_argument("--connection-file", default=os.environ.get("COLLECTOR_CONNECTION_FILE", ""),
+                    help="File kết nối do Admin cấp cùng key dùng chung (JSON: gateway + api_key + nền tảng). "
+                         "Có file này thì không cần --gateway/--api-key")
+    ap.add_argument("--gateway", default=os.environ.get("GATEWAY_URL", ""))
     ap.add_argument("--api-key", default=os.environ.get("MACHINE_API_KEY", ""),
                     help="Machine API key (mpk_<key_id>.<secret>)")
     ap.add_argument("--checkview-dir",
@@ -578,13 +725,23 @@ def main() -> None:
     ap.add_argument("--poll-interval", type=int, default=30, help="Giây chờ khi không có job")
     ap.add_argument("--max-concurrent", type=int, default=3, help="Số job chạy song song")
     ap.add_argument("--platforms", type=lambda s: [p.strip() for p in s.split(",") if p.strip()],
-                    default=None, help="Platforms kích hoạt, cách nhau bằng dấu phẩy (mặc định: tất cả)")
+                    default=None, help="Thu hẹp nền tảng xử lý, cách nhau bằng dấu phẩy "
+                                       "(mặc định: mọi nền tảng key được phép VÀ collector có adapter)")
     ap.add_argument("--status-file", default=os.environ.get("COLLECTOR_STATUS_FILE", ""),
                     help="Đường dẫn file JSON ghi trạng thái collector (owner, channel, errors)")
     args = ap.parse_args()
 
+    if args.connection_file:
+        try:
+            conn = load_connection_file(args.connection_file)
+        except ConnectionFileError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+        args.gateway, args.api_key = conn["gateway"], conn["api_key"]
+    args.gateway = args.gateway or "http://127.0.0.1:57595"
+
     if not args.api_key:
-        print("ERROR: --api-key hoặc MACHINE_API_KEY bắt buộc", file=sys.stderr)
+        print("ERROR: cần --connection-file hoặc --api-key/MACHINE_API_KEY", file=sys.stderr)
         sys.exit(1)
 
     asyncio.run(run_loop(args))

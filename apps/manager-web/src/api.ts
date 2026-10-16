@@ -175,7 +175,6 @@ export interface ChannelBreakdownRow {
   managed: number;
   active: number;
   is_custom_tag?: boolean;
-  by_group?: { group: string; managed: number; active: number }[];
   by_country?: { country: string; managed: number; active: number }[];
 }
 
@@ -185,9 +184,9 @@ export interface ChannelBreakdown extends AnalyticsMeta {
 }
 
 /** `GET /v1/analytics/compare/{dimension}` — country có biểu đồ RIÊNG, "Biểu đồ chung" không dùng. */
-export type CompareDimension = "platform" | "owner" | "country" | "channel" | "group" | "project";
-/** Chiều xuất hiện trong "Biểu đồ chung" — KHÔNG có `country` (biểu đồ riêng) và chưa có UI cho `project`. */
-export type CommonCompareDimension = Exclude<CompareDimension, "country" | "project">;
+export type CompareDimension = "platform" | "owner" | "country" | "channel" | "group";
+/** Chiều xuất hiện trong "Biểu đồ chung" — KHÔNG có `country` (biểu đồ riêng). */
+export type CommonCompareDimension = Exclude<CompareDimension, "country">;
 
 export interface CompareItem {
   key: string;
@@ -594,9 +593,16 @@ export interface ConnectionGuide {
   limits: { batch_max_items: number; body_max_bytes: number };
   error_codes: ConnectionGuideErrorCode[];
   recent_snapshots: ConnectionGuideSnapshot[];
+  /** Nền tảng + mã Tool này được dùng ở trường `platform` (mã chính `key` hoặc mã phụ `aliases`). Chỉ Admin sửa được. */
+  platforms?: { key: string; display_name: string; aliases: string[]; codes: string[] }[];
+  platform_rules?: string[];
 }
 
-export interface PlatformRegistryEntry { key: string; display_name: string; enabled: boolean; description?: string | null }
+export interface PlatformRegistryEntry {
+  key: string; display_name: string; enabled: boolean; description?: string | null;
+  /** Mã phụ (Tool gửi mã nào trong `key` + `aliases` cũng được gom về nền tảng này). */
+  aliases?: string[];
+}
 
 export const integrationApi = {
   listClients: (owner = "", o?: Opts) => {
@@ -658,6 +664,25 @@ export const integrationApi = {
   },
 };
 
+// ── Platform Registry (admin/dash_admin) ───────────────────────────────────
+
+export const platformsApi = {
+  /** Sửa tên hiển thị / bật-tắt một nền tảng ĐÃ CÓ (admin|dash_admin). */
+  putPlatform: (key: string, data: { display_name: string; enabled: boolean }) =>
+    apiFetch<PlatformRegistryEntry>(`/v1/integrations/admin/platforms/${enc(key)}`, json("PUT", data)),
+
+  /** Tạo nền tảng mới: server chặn trùng MỌI mã (chính + phụ) bằng 409 `PLATFORM_CODE_EXISTS`. */
+  createPlatform: (data: { key: string; display_name: string; aliases?: string[] }) =>
+    apiFetch<PlatformRegistryEntry>("/v1/integrations/admin/platforms", json("POST", data)),
+
+  /** Thêm mã phụ cho nền tảng `key` (409 nếu mã đã được giữ bởi bất kỳ nền tảng nào). */
+  addAlias: (key: string, alias: string) =>
+    apiFetch<PlatformRegistryEntry>(`/v1/integrations/admin/platforms/${enc(key)}/aliases`, json("POST", { alias })),
+
+  removeAlias: (key: string, alias: string) =>
+    apiFetch<PlatformRegistryEntry>(`/v1/integrations/admin/platforms/${enc(key)}/aliases/${enc(alias)}`, json("DELETE")),
+};
+
 // ── Profile API (user tự quản lý) ──────────────────────────────────────────
 
 export const profileApi = {
@@ -712,7 +737,7 @@ export interface ImportSkip {
 }
 
 export const resourcesApi = {
-  listPlatforms: () => apiFetch<{ items: { platform: string }[] }>("/v1/resources/platforms"),
+  listPlatforms: () => apiFetch<{ items: { platform: string; display_name?: string }[] }>("/v1/resources/platforms"),
 
   listSources: () => apiFetch<{ items: ResourceSource[] }>("/v1/resources/sources"),
 

@@ -37,9 +37,10 @@ async def list_groups(request: Request, principal: Principal = Depends(require_u
 @router.post("", status_code=201, summary="Tạo nhóm quốc gia + kênh",
              description="Owner = `sub` của access token (không nhận từ body). Tên trùng trong phạm vi owner => 409.",
              responses={201: ok_response(Envelope[ChannelGroupOut], "Nhóm đã tạo", _EXAMPLE),
-                        **error_responses(401, 409, 422, 503)})
+                        **error_responses(401, 409, 422, 429, 503)})
 async def create_group(request: Request, body: ChannelGroupCreate, principal: Principal = Depends(require_user)):
     c = get_container(request)
+    c.user_write_limiter.check(principal.sub, "Thao tác quá nhanh, thử lại sau")
     try:
         async with c.db.transaction() as conn:
             row = await repository.create(conn, principal.sub, body.name, body.country_code)
@@ -51,10 +52,11 @@ async def create_group(request: Request, body: ChannelGroupCreate, principal: Pr
 @router.patch("/{group_id}", summary="Sửa nhóm quốc gia + kênh",
               description="Chỉ chủ nhóm mới sửa được. Không tìm thấy => 404. Đổi sang tên đã dùng => 409.",
               responses={200: ok_response(Envelope[ChannelGroupOut], "Nhóm sau khi sửa", _EXAMPLE),
-                         **error_responses(401, 404, 409, 422, 503)})
+                         **error_responses(401, 404, 409, 422, 429, 503)})
 async def update_group(request: Request, group_id: str, body: ChannelGroupUpdate,
                        principal: Principal = Depends(require_user)):
     c = get_container(request)
+    c.user_write_limiter.check(principal.sub, "Thao tác quá nhanh, thử lại sau")
     fields = body.model_dump(exclude_unset=True)
     try:
         async with c.db.transaction() as conn:
@@ -69,9 +71,10 @@ async def update_group(request: Request, group_id: str, body: ChannelGroupUpdate
 @router.delete("/{group_id}", summary="Xoá nhóm quốc gia + kênh",
                description="Chỉ chủ nhóm mới xoá được. Không tìm thấy => 404.",
                responses={200: ok_response(Envelope[dict], "Đã xoá", {"deleted": True}),
-                          **error_responses(401, 404, 422, 503)})
+                          **error_responses(401, 404, 422, 429, 503)})
 async def delete_group(request: Request, group_id: str, principal: Principal = Depends(require_user)):
     c = get_container(request)
+    c.user_write_limiter.check(principal.sub, "Thao tác quá nhanh, thử lại sau")
     async with c.db.transaction() as conn:
         deleted = await repository.delete(conn, group_id, principal.sub)
     if not deleted:

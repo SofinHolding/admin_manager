@@ -19,12 +19,12 @@ describe("filterState (thuần)", () => {
     for (const k of FILTER_KEYS) if (k !== "date_from" && k !== "date_to") expect(f[k]).toBe("");
   });
 
-  it("parse đủ 8 tham số chuẩn từ URL", () => {
+  it("parse đủ 7 tham số chuẩn từ URL", () => {
     const f = parseFilter(new URLSearchParams(
-      "date_from=2026-01-01&date_to=2026-01-31&owner_account_id=u1&platform=youtube&country=Vietnam&project=p1&group_id=g1&platform_tag=tiktok"), NOW);
+      "date_from=2026-01-01&date_to=2026-01-31&owner_account_id=u1&platform=youtube&country=Vietnam&group_id=g1&platform_tag=tiktok"), NOW);
     expect(f).toEqual({
       date_from: "2026-01-01", date_to: "2026-01-31", owner_account_id: "u1", platform: "youtube",
-      country: "Vietnam", project: "p1", group_id: "g1", platform_tag: "tiktok",
+      country: "Vietnam", group_id: "g1", platform_tag: "tiktok",
     });
   });
 
@@ -44,8 +44,8 @@ describe("filterState (thuần)", () => {
   });
 
   it("danh mục: country-tags bỏ ngày + country; platform-tags chỉ owner", () => {
-    const f = { ...defaultFilter(NOW), country: "VN", owner_account_id: "u1", group_id: "g", platform_tag: "t", platform: "youtube", project: "p" };
-    expect(Object.fromEntries(countryCatalogParams(f))).toEqual({ owner_account_id: "u1", group_id: "g", platform_tag: "t", platform: "youtube", project: "p" });
+    const f = { ...defaultFilter(NOW), country: "VN", owner_account_id: "u1", group_id: "g", platform_tag: "t", platform: "youtube" };
+    expect(Object.fromEntries(countryCatalogParams(f))).toEqual({ owner_account_id: "u1", group_id: "g", platform_tag: "t", platform: "youtube" });
     expect(Object.fromEntries(platformTagCatalogParams(f))).toEqual({ owner_account_id: "u1" });
   });
 

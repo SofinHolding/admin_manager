@@ -14,7 +14,7 @@ router = APIRouter(tags=["analytics"])
 
 
 def _build(ds, ctx, sel, extra) -> dict:
-    body = summary(ds, sel, ctx.date_from, ctx.date_to, ctx.project)
+    body = summary(ds, sel, ctx.date_from, ctx.date_to)
     body["linked"] = bool(ds.entities)    # false = phạm vi này chưa có kênh nào (FE hiện hướng dẫn kết nối)
     return body
 

@@ -13,9 +13,8 @@ Query params (mọi endpoint dữ liệu nhận cùng bộ này):
 | `owner_account_id` | chỉ `admin`/`dash_admin` được chọn người khác; người dùng thường **luôn bị ép về chính mình** (`sub`) |
 | `platform` | `facebook|youtube|...` (dữ liệu, không hardcode) |
 | `country` | tên quốc gia đã chuẩn hoá (alias → canonical), so khớp không phân biệt hoa/thường |
-| `project` | `project_key` (chủ đề/nguồn) |
 | `group_id` | nhóm kênh do viewer tạo (legacy `channel_groups`) |
-| `platform_tag` | nhãn nền tảng tự do của nhóm kênh |
+| `platform_tag` | nhãn tự do của nhóm kênh (legacy). Trang Nhóm kênh **không còn cho tạo nhãn mới** (nền tảng lấy từ Platform Registry); Dashboard vẫn lọc được theo nhãn đã có, API vẫn nhận để tương thích |
 
 Một hàm duy nhất dựng `FilterContext` từ query+principal; mọi endpoint dùng lại ⇒ KPI và chart luôn cùng bộ lọc.
 Response mang `filter` (bộ lọc đã áp dụng sau khi ép quyền) và `freshness`.
@@ -37,8 +36,8 @@ Dashboard luôn hiển thị được dữ liệu cũ kèm `stale`, **không** t
 | `GET /v1/analytics/top-channels` | `/v1/viewer/top-channels` | `{items:[{id,name,platform,country,views}]}` |
 | `GET /v1/analytics/views-by-country` | `/v1/viewer/views-by-country` | **biểu đồ so sánh quốc gia riêng** |
 | `GET /v1/analytics/country-tags` · `platform-tags` · `metrics` | `/v1/viewer/...` | danh mục lọc |
-| `GET /v1/analytics/channel-breakdown` | `/v1/viewer/channel-breakdown` | nền tảng × chủ đề × quốc gia |
-| `GET /v1/analytics/compare/{dimension}` | — | `dimension ∈ platform|owner|country|channel|group|project`; mỗi mục có `series` theo ngày + `total` |
+| `GET /v1/analytics/channel-breakdown` | `/v1/viewer/channel-breakdown` | nền tảng × quốc gia |
+| `GET /v1/analytics/compare/{dimension}` | — | `dimension ∈ platform|owner|country|channel|group`; mỗi mục có `series` theo ngày + `total` |
 | `GET /v1/analytics/freshness` | — | trạng thái đồng bộ (cursor, lag, dead-letter đếm) |
 | `GET/POST/PATCH/DELETE /v1/analytics/groups[...]` | `/v1/viewer/groups[...]` | nhóm kênh + thành viên (`channel_ref`, `platform_tag`, `country_override`) |
 | `GET/POST/PATCH/DELETE /v1/analytics/admin/country-aliases` · `country-canonicals` | `/v1/admin/country-*` | admin |
@@ -47,8 +46,8 @@ Dashboard luôn hiển thị được dữ liệu cũ kèm `stale`, **không** t
 | `POST /v1/analytics/admin/reconcile` | — | admin: so read model với `canonical/summary`, trả chênh lệch |
 
 Quy tắc nghiệp vụ giữ nguyên `legacy/admin-server/stats_core.py`: lượt xem FB của một ngày = tổng `views` các bài có **ngày đăng** đó (số cộng dồn hiện tại);
-YouTube = `metrics.views` theo ngày; `videos_posted` (và "Số video" của biểu đồ traffic, cùng một định nghĩa) = **số bài** (`content`) theo `published_date`; ngày không có bài nào thì dùng số event `kind=post_ok` theo `occurred_date` làm dự phòng (khác hệ cũ: D5 trong `tests/contract/test_analytics_stats_parity.py`); `None≠0`; kênh quản lý/hoạt động theo `managed/active` của resource
-(FB đếm theo cặp (resource, project)); quốc gia: `country_override` của nhóm > quốc gia resource > quốc gia của project; "Khác" khi trống.
+YouTube = `metrics.views` theo ngày; `videos_posted` (và "Số video" của biểu đồ traffic, cùng một định nghĩa) = **số bài** (`content`) theo `published_date`; ngày không có bài nào thì dùng số event `kind=post_ok` theo `occurred_date` làm dự phòng (khác hệ cũ: D5 trong `tests/contract/test_analytics_stats_parity.py`); `None≠0`; kênh quản lý/hoạt động theo `managed/active` của resource;
+quốc gia: `country_override` của nhóm > quốc gia resource; "Khác" khi trống.
 
 ## 4. Cache-Aside (Redis tuỳ chọn)
 

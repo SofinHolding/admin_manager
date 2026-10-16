@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
-  Ban, Check, CheckCircle2, Clock, Copy, Globe, Lock, Pencil, Plus, Search, ShieldPlus,
+  Ban, Check, CheckCircle2, Clock, Copy, Download, Globe, Lock, Pencil, Plus, Search, ShieldPlus,
   Trash2, Unlock, UserCheck, UserX, X, XCircle, KeyRound, Info,
 } from "lucide-react";
 import {
@@ -34,6 +34,7 @@ import { roleLabel } from "../nav";
 import { SecretOnceDialog, type OneTimeSecret } from "../components/SecretOnceDialog";
 import { cn } from "../lib/utils";
 import { errorMessage } from "../lib/errors";
+import { buildConnectionFile, connectionFileCommand, downloadConnectionFile } from "../lib/connectionFile";
 import {
   ADMIN_ONLY_REASON, adminErrorText, CAP_LABEL, SCOPE_LABEL, SHARED_SCOPE_OPTIONS, validateKeyParams,
 } from "./adminKeyForm";
@@ -1527,9 +1528,31 @@ function SharedToolsTab({ isDashAdmin }: { isDashAdmin: boolean }) {
     try {
       const issued = await integrationApi.issueCredential(c.client_id);
       if (issued.api_key) {
+        const file = buildConnectionFile({
+          gateway: window.location.origin,
+          toolName: c.tool_name,
+          clientId: issued.client_id,
+          keyId: issued.key_id,
+          apiKey: issued.api_key,
+          allowedPlatforms: issued.allowed_platforms,
+          contractVersion: issued.contract_version,
+        });
         setSecret({
           title: "Khóa kết nối mới — sao chép ngay", label: "Khóa kết nối", value: issued.api_key,
           details: [{ label: "key_id", value: issued.key_id }, { label: "quyền", value: issued.scopes.join(", ") }],
+          extra: (
+            <div className="mt-4 border-t border-border pt-3">
+              <Button variant="outline" onClick={() => downloadConnectionFile(file)}>
+                <Download aria-hidden /> Tải file kết nối (.json)
+              </Button>
+              <p className="mt-2 text-sm text-muted-foreground">
+                File chứa khóa bí mật — giữ riêng tư, chỉ hiện một lần. Chạy Tool với:
+              </p>
+              <code className="mt-1 block break-all rounded-md border border-border-strong bg-surface-2 px-3 py-2 font-mono text-xs">
+                {connectionFileCommand(file.client_id)}
+              </code>
+            </div>
+          ),
         });
       }
       void loadDetail(c.client_id);

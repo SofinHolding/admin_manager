@@ -1,6 +1,6 @@
 // Electron main process — Channel Collector desktop shell.
 // Quản lý subprocess collect.py, scheduler hẹn giờ, config và log.
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -201,6 +201,32 @@ ipcMain.handle("collector:config:write", (_event, cfg) => {
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
   return { ok: true };
+});
+
+/** Nạp file kết nối Admin cấp cùng key dùng chung ({format:"manager-connection/1", gateway, api_key}). Không log secret. */
+function parseConnectionFile(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { return { error: "File không phải JSON hợp lệ" }; }
+  if (!data || data.format !== "manager-connection/1") return { error: "Sai định dạng (cần format=manager-connection/1)" };
+  if (typeof data.gateway !== "string" || !/^https?:\/\//.test(data.gateway)) return { error: "File thiếu gateway (http/https)" };
+  if (typeof data.api_key !== "string" || !data.api_key.startsWith("mpk_")) return { error: "File thiếu api_key hợp lệ" };
+  return { gateway: data.gateway.replace(/\/$/, ""), api_key: data.api_key };
+}
+
+ipcMain.handle("collector:import-connection", async () => {
+  const pick = await dialog.showOpenDialog(mainWindow, {
+    title: "Chọn file kết nối do Admin cấp", properties: ["openFile"], filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (pick.canceled || !pick.filePaths[0]) return { ok: false, canceled: true };
+  let text;
+  try { text = fs.readFileSync(pick.filePaths[0], "utf-8"); } catch { return { ok: false, error: "Không đọc được file" }; }
+  const parsed = parseConnectionFile(text);
+  if (parsed.error) return { ok: false, error: parsed.error };
+  const merged = { ...readConfigFile(), gateway: parsed.gateway, api_key: parsed.api_key };
+  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
+  machineInstallation = null;   // key mới => bind/installation mới
+  return { ok: true, gateway: parsed.gateway };
 });
 
 ipcMain.handle("collector:health", async () => {

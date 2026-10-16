@@ -28,8 +28,12 @@ class ResourceService:
 
     async def upsert_batch(self, conn: asyncpg.Connection, ctx: MachineContext, items: list) -> dict:
         enabled = await registry.enabled_platforms(conn)
+        codes = await registry.code_map(conn)   # mã Tool gửi (chính/phụ) -> mã chính; lưu & kiểm quyền theo mã chính
+        items = [{**it, "platform": codes.get(it["platform"], it["platform"])}
+                 if isinstance(it, dict) and isinstance(it.get("platform"), str) else it for it in items]
         requested = {it["platform"] for it in items if isinstance(it, dict) and isinstance(it.get("platform"), str)}
-        denied = sorted(p for p in requested if p not in ctx.allowed_platforms or p not in enabled)
+        denied = sorted(p for p in requested if p not in ctx.allowed_platforms or p not in enabled
+                        or (ctx.delegated_platform is not None and p != ctx.delegated_platform))
         if denied:  # platform là vấn đề PHÂN QUYỀN, từ chối cả request
             raise forbidden(ErrorCode.PLATFORM_NOT_ALLOWED, "Platform không nằm trong phạm vi client được phép",
                             {"platforms": denied[:10]})
@@ -70,6 +74,9 @@ class ResourceService:
         Các client_kind khác:
           → chỉ thấy resource của chính owner_account_id của key.
         """
+        if platform:   # bộ lọc nhận mã bất kỳ (chính/phụ) -> mã chính, khớp cột `platform` đã chuẩn hoá lúc lưu
+            async with self._db.connection() as conn:
+                platform = await registry.resolve(conn, platform)
         is_shared = ctx.client_kind == "fallback_tool"
         # owner filter: shared + có param → lọc param; shared + không param → tất cả; không shared → chỉ self
         effective_owner = owner_account_id if (is_shared and owner_account_id) else (

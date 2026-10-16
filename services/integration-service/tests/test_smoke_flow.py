@@ -19,17 +19,16 @@ async def test_full_happy_path(env):
     assert data["accepted_capabilities"] == ["resources.push", "snapshots.push"]
 
     out = await ingest_full(
-        tool, resources=[res("r1", display_name="Page 1", projects=[{"project_key": "itl", "enabled": True}])],
+        tool, resources=[res("r1", display_name="Page 1")],
         content=[post("p1", views=120, reactions=5, comments=None), post("p2", views=0)],
         metrics=[daily("r1", "2026-10-04", views=77)], events=[event("e1")])
     assert out["status"] == "committed" and out["totals"] == {"resources": 1, "content": 2, "metrics": 1, "events": 1}
 
     res_items = (await canonical(env, "resources"))["items"]
-    assert res_items[0]["external_id"] == "r1" and res_items[0]["project_keys"] == ["itl"]
+    assert res_items[0]["external_id"] == "r1" and "project_keys" not in res_items[0]
     content = (await canonical(env, "content"))["items"]
     by_id = {i["external_id"]: i for i in content}
     assert by_id["p1"]["metrics"] == {"views": 120, "reactions": 5, "comments": None}
     assert by_id["p2"]["metrics"] == {"views": 0}
-    assert (await canonical(env, "projects"))["items"][0]["project_key"] == "itl"
     assert (await canonical(env, "metrics"))["items"][0]["metrics"] == {"views": 77}
     assert (await canonical(env, "events"))["items"][0]["kind"] == "post_ok"

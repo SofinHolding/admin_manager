@@ -19,8 +19,8 @@ Nguồn: `legacy/admin-server/stats_core.py` (docstring "Hình dạng input chu�
 | Lượt xem Facebook theo ngày, tương tác, bình luận | từng bài đăng | `fb_posts` (khóa `<target>\|<post_id>`) | `target`, `date`, `views`, `reactions`, `comments_count` |
 | Lượt xem YouTube theo ngày | số liệu kênh theo ngày | `yt_insights_daily` (khóa `YYYY-MM-DD\|channel_id`) | `channel_id`, `date`, `views` |
 | Số video đăng | nhật ký đăng bài | `repost_events` | `kind` (`post_ok`), `date`, `target` |
-| Kênh quản lý / đang hoạt động | cặp reup | `repost_pairings` | `target`, `enabled`, `group_id` |
-| Nhóm chủ đề, quốc gia theo nhóm | nhóm reup | `repost_groups` | `id`, `name`, `enabled`, `country` |
+| Kênh quản lý / đang hoạt động | trạng thái kênh | `repost_pairings` (cũ) → `managed`/`active` của resource | `target`, `enabled` |
+| (đã gỡ) Nhóm chủ đề | nhóm reup | `repost_groups` | không còn gửi — xem 4.1 |
 | Tên và quốc gia của page Facebook | meta page | `fb_page_meta` | `target`, `name`, `country` |
 | Tên và quốc gia của kênh YouTube | meta kênh | `yt_channels` | `id`, `title`, `country` |
 
@@ -28,7 +28,7 @@ Nguồn: `legacy/admin-server/stats_core.py` (docstring "Hình dạng input chu�
 - Lượt xem Facebook của một ngày = tổng `views` của các bài có **ngày đăng** là ngày đó. `views` của bài là
   số **cộng dồn hiện tại**, nên khi bài cũ có thêm lượt xem, số của **ngày cũ** phải đổi theo.
 - `null` = chưa có dữ liệu, `0` = có dữ liệu và bằng 0. Không được ép `null` thành `0`.
-- Kênh quản lý Facebook đếm theo cặp (target, chủ đề). Một page chạy hai chủ đề được tính là hai kênh.
+- (Lịch sử) Kênh quản lý Facebook từng đếm theo cặp (target, chủ đề); khái niệm chủ đề/project đã gỡ khỏi hợp đồng — mỗi kênh là một đơn vị.
 
 ## 2. Nguyên tắc để dữ liệu luôn mới và đúng
 
@@ -62,12 +62,11 @@ Dùng đúng namespace chung, không endpoint riêng theo Tool:
 
 ```text
 POST /v1/integrations/snapshots                      → tạo snapshot (status=building)
-POST /v1/integrations/snapshots/{id}/resources       → kênh/page + liên kết chủ đề
+POST /v1/integrations/snapshots/{id}/resources       → kênh/page (kèm quốc gia)
 POST /v1/integrations/snapshots/{id}/content         → bài đăng/video + metric cộng dồn
 POST /v1/integrations/snapshots/{id}/metrics         → metric theo ngày của kênh
 POST /v1/integrations/snapshots/{id}/events          → sự kiện (đăng bài thành công, ...)
 POST /v1/integrations/snapshots/{id}/commit          → commit atomic
-PUT  /v1/integrations/projects/{project_key}         → chủ đề/nhóm (đã có trong contract trước)
 ```
 
 - `/content` và `/events` là hai endpoint **bổ sung** vào contract `api-first-integration-contract-v1`. Hai
@@ -80,8 +79,12 @@ PUT  /v1/integrations/projects/{project_key}         → chủ đề/nhóm (đã
 
 Chi tiết kiểu dữ liệu: xem schema. Cột **Bắt buộc** là tập tối thiểu Dashboard cần.
 
-### 4.1 Project (chủ đề/nhóm) — `PUT /projects/{project_key}`
-Ánh xạ `repost_groups`. Body theo contract trước: `name`, `platform`, `country_code`, `metadata`. Bổ sung: `enabled` (bool).
+### 4.1 Project — ĐÃ GỠ (2026-10-16)
+`PUT /projects/{project_key}`, trường `projects[]` của resource và `project_key` của event **không còn trong hợp đồng**: gửi vào bị `404` (endpoint) hoặc `RECORD_VALIDATION_FAILED` (trường lạ, vì mọi object đều `additionalProperties:false`).
+Gom/phân loại kênh và người dùng do **Nhóm kênh** trên website đảm nhiệm, Tool không phải gửi gì thêm. Tính năng project sẽ được thiết kế lại và bổ sung sau.
+
+> **Mã nền tảng (`platform`)** ở MỌI nơi (snapshot, `resources/batch`, handshake, claim) là một mã của nền tảng do Admin/dash_admin tạo — mã chính hoặc mã phụ
+> (lấy danh sách bằng `GET /v1/integrations/platforms` → `codes`). Server chuẩn hoá về mã chính trước khi lưu để Dashboard gom đúng nền tảng; mã không có trong danh sách → `403 PLATFORM_NOT_ALLOWED`.
 
 ### 4.2 Resource (kênh/page) — khóa `(platform, resource_type, external_id)`
 
@@ -93,8 +96,7 @@ Chi tiết kiểu dữ liệu: xem schema. Cột **Bắt buộc** là tập tố
 | `display_name`, `username`, `url` | không | Tên hiển thị trên Dashboard |
 | `country` | không | `{code}` (ISO-3166 alpha-2) và/hoặc `{name}` thô. Manager chuẩn hóa tên qua bảng alias quốc gia |
 | `state` | không | `active` (mặc định) hoặc `disabled` |
-| `projects[]` | không | `{project_key, enabled}`. Mỗi phần tử tương ứng một cặp reup (`repost_pairings`) |
-| `managed`, `active` | không | Chỉ cần cho nền tảng **không có chủ đề** (như YouTube). Vắng thì suy ra: `managed` = có ≥ 1 liên kết chủ đề; `active` = có liên kết bật và chủ đề không tắt |
+| `managed`, `active` | không | Vắng `managed` thì `managed = active` (mặc định `false`); vắng `active` thì `active = managed` và kênh không bị `state: disabled`. Kênh nhập từ website do Manager tự đặt |
 
 ### 4.3 Content item (bài đăng/video) — khóa `(resource, external_id)`
 
@@ -112,7 +114,7 @@ Chi tiết kiểu dữ liệu: xem schema. Cột **Bắt buộc** là tập tố
 `resource_external_id`, `date`, `metrics{views,...}`, `observed_at`. Dùng cho YouTube. Ngày đã gửi có thể được sửa lại.
 
 ### 4.5 Activity event (sự kiện) — khóa `(external_id)`
-`external_id`, `resource_external_id`, `kind`, `occurred_date`; tùy chọn `occurred_at`, `project_key`.
+`external_id`, `resource_external_id`, `kind`, `occurred_date`; tùy chọn `occurred_at`. (`project_key` đã gỡ — gửi vào sẽ bị `RECORD_VALIDATION_FAILED`.)
 `kind = post_ok` nghĩa là một lần đăng thành công. Dashboard đếm "số video đăng" theo **số bài (`content`) theo `published_date`**; event `post_ok`
 chỉ được đếm cho những ngày không có bài nào (dự phòng), nên Tool đã đẩy đủ bài thì KHÔNG cần đẩy thêm `post_ok`. Sự kiện bất biến.
 
@@ -120,6 +122,22 @@ chỉ được đếm cho những ngày không có bài nào (dự phòng), nên
 `views`, `reactions`, `comments` được dùng bởi Dashboard hiện tại. **`reactions` là khóa canonical mới** cần
 thêm vào registry vì Dashboard đang dùng nó cho "tương tác" (contract trước chỉ có `likes`). Metric lạ nằm trong
 `extensions.<platform>` cho tới khi được nâng lên registry.
+
+### 4.7 Tool dùng chung (collector): danh sách video + chỉ số của kênh
+Luồng: user nhập danh sách kênh (chọn nền tảng + quốc gia) trên website → mỗi kênh thành một job → Tool dùng chung nhận job → kéo thông tin kênh → lấy danh sách video →
+gửi lên **một snapshot `delta` cho kênh đó** (header `X-Delegated-Job`). Tool không tạo/sửa kênh; chỉ ghi số liệu của đúng kênh trong job (nền tảng = nền tảng của job).
+
+| Dữ liệu | Gửi qua | Khóa lưu | Trường |
+|---|---|---|---|
+| Chỉ số của **kênh** | `/snapshots/{id}/metrics` | `(kênh, ngày UTC)` → có lịch sử theo ngày | `resource_external_id` (= kênh của job), `date`, `metrics{followers, videos_posted, likes}`, `observed_at` |
+| Từng **video** của kênh | `/snapshots/{id}/content` | `(kênh, external_id video)` → luôn là số mới nhất | `external_id`, `resource_external_id`, `published_date`, `url`, `metrics{views, reactions, comments, shares}`, `observed_at`, `extensions.<nền tảng>{title, duration_seconds, cover_url}` |
+
+- Số liệu là **tuyệt đối tại `observed_at`**, gửi lại thì ghi đè (không cộng dồn). Chỉ số kênh cùng ngày: lần gửi sau thắng.
+- `expected_counts` phải khai đúng số bản ghi từng loại (`{"content": N, "metrics": 1}`); thiếu/lệch thì commit lỗi và **không lưu gì**.
+- Khóa metric nằm trong Metric Registry (`followers`, `videos_posted`, `likes`, `views`, `reactions`, `comments`, `shares`). Thông tin mô tả video (tiêu đề...) đi vào `extensions.<nền tảng>`, không phải `metrics`.
+- `views` ở mức **kênh** (`metrics`) giữ nghĩa "lượt xem trong ngày" (YouTube insights); Tool dùng chung không gửi tổng lượt xem tích lũy của kênh vào khóa này.
+- Hiện lưu đủ để Dashboard hiển thị sau này; Dashboard đang chỉ đọc `views/reactions/comments` của video, chưa hiển thị chỉ số kênh mới.
+- Tool **cá nhân** (có sẵn danh sách link kênh theo quốc gia + nền tảng) dùng cùng cấu trúc ở mục 4.2–4.4 nhưng tự gửi cả `resources` (kênh kèm `country`) và mỗi nền tảng một snapshot.
 
 ## 5. Tool chỉ nên đẩy gì (giảm tối đa dữ liệu)
 
@@ -160,8 +178,7 @@ Trong giai đoạn chuyển tiếp, Tool cũ vẫn ghi `documents`. Lớp canoni
 |---|---|
 | `fb_page_meta` | Resource `page` (`target`→`external_id`, `name`→`display_name`, `country`→`country.name`) |
 | `yt_channels` | Resource `channel` (`id`, `title`, `country`) |
-| `repost_groups` | Project (`id`→`project_key`, `name`, `enabled`, `country`) |
-| `repost_pairings` | Liên kết `projects[]` của Resource (`target`, `group_id`, `enabled`) |
+| `repost_groups`, `repost_pairings` | **Không còn ánh xạ** — khái niệm project/chủ đề đã gỡ khỏi hợp đồng (2026-10-16); sẽ thiết kế lại sau |
 | `fb_posts` | Content item (`<target>\|<post_id>`; `date`→`published_date`, `comments_count`→`comments`) |
 | `yt_insights_daily` | Daily metric (`channel_id`, `date`, `views`) |
 | `repost_events` | Activity event (`id`, `kind`, `date`→`occurred_date`, `target`) |

@@ -150,7 +150,6 @@ export default function CollectorPage() {
   const [dirty,     setDirty]     = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [saveMsg,   setSaveMsg]   = useState("");
-  const [configOpen,setConfigOpen]= useState(false);
 
   // Connection
   const [health,         setHealth]         = useState<"unknown" | "ok" | "fail">("unknown");
@@ -182,7 +181,7 @@ export default function CollectorPage() {
 
   const refreshStatus = useCallback(async () => {
     if (!isElectron) return;
-    const s = await window.collector.status();
+    const s = await bridge().status();
     setRunning(s.running);
     setPid(s.running ? s.pid : null);
     setAutoState(s.autoState ?? null);
@@ -190,7 +189,7 @@ export default function CollectorPage() {
 
   const refreshLog = useCallback(async () => {
     if (!isElectron) return;
-    setLogText(await window.collector.readLog() || "");
+    setLogText(await bridge().readLog() || "");
   }, [isElectron]);
 
   const refreshCStatus = useCallback(async () => {
@@ -200,13 +199,13 @@ export default function CollectorPage() {
 
   useEffect(() => {
     if (!isElectron) return;
-    window.collector.readConfig().then((cfg: CollectorConfig) =>
+    bridge().readConfig().then((cfg: CollectorConfig) =>
       setConfig({
         ...DEFAULT_CONFIG, ...cfg,
         platforms: {
-          youtube:  { ...DEF_PLAT, ...cfg.platforms?.youtube },
-          tiktok:   { ...DEF_PLAT, interval: 60, ...cfg.platforms?.tiktok },
-          facebook: { ...DEF_PLAT, enabled: false, interval: 120, ...cfg.platforms?.facebook },
+          youtube:  { ...DEF_PLAT, ...(cfg.platforms?.youtube as Partial<PlatformCfg> | undefined) },
+          tiktok:   { ...DEF_PLAT, interval: 60, ...(cfg.platforms?.tiktok as Partial<PlatformCfg> | undefined) },
+          facebook: { ...DEF_PLAT, enabled: false, interval: 120, ...(cfg.platforms?.facebook as Partial<PlatformCfg> | undefined) },
         },
       })
     );
@@ -214,8 +213,8 @@ export default function CollectorPage() {
     refreshLog();
     refreshCStatus();
 
-    if (window.collector.onScheduleEvent) {
-      window.collector.onScheduleEvent((ev: { type: string }) => {
+    if (window.collector?.onScheduleEvent) {
+      bridge().onScheduleEvent((ev: { type: string }) => {
         refreshStatus();
         if (ev.type === "auto_started") refreshLog();
       });
@@ -251,7 +250,7 @@ export default function CollectorPage() {
     if (!isElectron) return;
     setStartError(""); setStarting(true);
     try {
-      const res = await window.collector.start(config);
+      const res = await bridge().start(config);
       if (res.ok) { setRunning(true); setPid(res.pid ?? null); setStartedAt(Date.now()); }
       else setStartError(res.reason || "Không thể khởi động");
     } catch (e) {
@@ -261,7 +260,7 @@ export default function CollectorPage() {
 
   const handleStop = async () => {
     if (!isElectron) return;
-    await window.collector.stop();
+    await bridge().stop();
     setRunning(false); setPid(null); setStartedAt(null); setAutoState(null);
     await refreshLog();
   };
@@ -271,17 +270,27 @@ export default function CollectorPage() {
     if (!isElectron) return;
     setSaving(true); setSaveMsg("");
     try {
-      await window.collector.writeConfig(config);
+      await bridge().writeConfig(config);
       setSaveMsg("Đã lưu"); setDirty(false);
       setTimeout(() => setSaveMsg(""), 2500);
     } finally { setSaving(false); }
+  };
+
+  const handleImportConnection = async () => {
+    if (!isElectron) return;
+    const r = await bridge().importConnection();
+    if (r.canceled) return;
+    if (!r.ok) { setSaveMsg(r.error ?? "Không nạp được file kết nối"); setTimeout(() => setSaveMsg(""), 4000); return; }
+    const cfg: CollectorConfig = await bridge().readConfig();
+    setConfig(c => ({ ...c, gateway: cfg.gateway, api_key: cfg.api_key }));
+    setSaveMsg("Đã nạp file kết nối ✓"); setTimeout(() => setSaveMsg(""), 2500);
   };
 
   const handleHealth = async () => {
     if (!isElectron) return;
     setCheckingHealth(true); setHealth("unknown"); setHealthMsg("");
     try {
-      const r = await window.collector.health();
+      const r = await bridge().health();
       setHealth(r.ok ? "ok" : "fail");
       setHealthMsg(r.ok ? `Kết nối OK (${r.status ?? 200})` : (r.reason || "Không kết nối được"));
     } finally { setCheckingHealth(false); }
@@ -295,7 +304,7 @@ export default function CollectorPage() {
     setConfig(newCfg);
     setDirty(true);
     if (isElectron) {
-      window.collector.writeConfig(newCfg)
+      bridge().writeConfig(newCfg)
         .then(() => { setSaveMsg("Đã lưu ✓"); setTimeout(() => setSaveMsg(""), 1500); })
         .catch(() => {});
     }
@@ -925,7 +934,14 @@ export default function CollectorPage() {
             <div style={{ flex: 1, overflowY: "auto" }}>
               <form onSubmit={handleSave} style={{ padding: "20px 28px", maxWidth: 700, margin: "0 auto" }}>
 
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 14 }}>Kết nối</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Kết nối</div>
+                  <button type="button" onClick={handleImportConnection}
+                          title="Chọn file .json Admin cấp cùng key dùng chung — tự điền Gateway URL và API Key"
+                          style={{ ...inputCss, height: 28, width: "auto", padding: "0 12px", cursor: "pointer" }}>
+                    Nạp file kết nối…
+                  </button>
+                </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <CfgField label="Gateway URL">
@@ -1110,6 +1126,13 @@ function CfgField({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
+/** Cầu IPC của Electron — chỉ gọi sau khi đã kiểm `isElectron` (TS không thu hẹp `window.collector` xuyên hàm). */
+function bridge() {
+  const c = window.collector;
+  if (!c) throw new Error("Chỉ chạy được trong ứng dụng Electron");
+  return c;
+}
+
 // Extend Window for Electron IPC bridge
 declare global {
   interface Window {
@@ -1120,6 +1143,7 @@ declare global {
       readLog:         () => Promise<string>;
       readConfig:      () => Promise<CollectorConfig>;
       writeConfig:     (cfg: CollectorConfig) => Promise<{ ok: boolean }>;
+      importConnection:() => Promise<{ ok: boolean; canceled?: boolean; error?: string; gateway?: string }>;
       health:          () => Promise<{ ok: boolean; status?: number; reason?: string }>;
       apiGet:          (path: string) => Promise<unknown>;
       readStatus:      () => Promise<CollectorStatus | null>;

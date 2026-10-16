@@ -3,7 +3,7 @@ liệu CHO owner của job đã claim thay vì owner của chính credential, xe
 
 Chỉ `client_kind=fallback_tool` được dùng header; job phải đang `leased` bởi ĐÚNG client này và có `resource_owner_id`.
 
-`require_for_shared=True` (các endpoint GHI dữ liệu: resources/batch, projects PUT, snapshot create/batch/commit):
+`require_for_shared=True` (các endpoint GHI dữ liệu: resources/batch, snapshot create/batch/commit):
 client `ownership=shared` (fallback_tool hoặc service) BẮT BUỘC có `X-Delegated-Job` hợp lệ, nếu không => 403
 `SHARED_CLIENT_REQUIRES_DELEGATION` (luật 0.5 của thiết kế tool-key: khóa dùng chung không được ghi dữ liệu đứng
 tên admin). Vắng ở các endpoint ĐỌC (`require_for_shared=False`, mặc định) — hành vi y hệt `machine(scope)`.
@@ -39,7 +39,8 @@ def delegated(scope: str, *, require_for_shared: bool = False):
                 raise conflict(Extra.JOB_INVALID_STATE, f"Job không ở trạng thái leased ({job['status']})")
             if job["resource_owner_id"] is None:
                 raise conflict(Extra.JOB_INVALID_STATE, "Job này không hỗ trợ delegated ingestion (thiếu resource_owner_id)")
-            ctx = dataclasses.replace(ctx, delegated_owner_id=job["resource_owner_id"])
+            ctx = dataclasses.replace(ctx, delegated_owner_id=job["resource_owner_id"], delegated_platform=job["platform"],
+                                      delegated_resource_id=job["resource_id"])
         if require_for_shared and ctx.ownership == "shared" and ctx.delegated_owner_id is None:
             raise forbidden(Extra.SHARED_CLIENT_REQUIRES_DELEGATION,
                             "Client dùng chung phải ghi dữ liệu qua X-Delegated-Job (job đã claim)")

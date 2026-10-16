@@ -25,7 +25,7 @@ interface Opts {
 
 function echoFilter(c: FetchCall) {
   const f: Record<string, string> = {};
-  for (const k of ["date_from", "date_to", "owner_account_id", "platform", "country", "project", "group_id", "platform_tag"]) {
+  for (const k of ["date_from", "date_to", "owner_account_id", "platform", "country", "group_id", "platform_tag"]) {
     const v = c.params.get(k);
     if (v) f[k] = v;
   }
@@ -98,17 +98,17 @@ function renderDashboard(url: string, user: User = adminUser) {
   );
 }
 
-const FULL = "/dashboard?date_from=2026-09-01&date_to=2026-09-30&owner_account_id=u1&platform=youtube&country=Vietnam&project=p1&group_id=g1&platform_tag=tiktok";
+const FULL = "/dashboard?date_from=2026-09-01&date_to=2026-09-30&owner_account_id=u1&platform=youtube&country=Vietnam&group_id=g1&platform_tag=tiktok";
 const FULL_PARAMS = {
   date_from: "2026-09-01", date_to: "2026-09-30", owner_account_id: "u1", platform: "youtube",
-  country: "Vietnam", project: "p1", group_id: "g1", platform_tag: "tiktok",
+  country: "Vietnam", group_id: "g1", platform_tag: "tiktok",
 };
 
 const waitAllData = (f: ReturnType<typeof installFetch>, n = 1) =>
   waitFor(() => { for (const e of DATA_ENDPOINTS) expect(f.byPath(at(e)).length).toBeGreaterThanOrEqual(n); });
 
 describe("Dashboard — MỌI KPI/biểu đồ dùng CÙNG MỘT Filter Context", () => {
-  it("5 endpoint dữ liệu gửi CHÍNH XÁC cùng bộ tham số (đủ 8 tham số chuẩn)", async () => {
+  it("5 endpoint dữ liệu gửi CHÍNH XÁC cùng bộ tham số (đủ 7 tham số chuẩn)", async () => {
     const f = installFetch(analytics());
     renderDashboard(FULL);
     await waitAllData(f);

@@ -1280,19 +1280,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -1353,7 +1340,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Kênh/page theo nền tảng + chủ đề + quốc gia",
+        "summary": "Kênh/page theo nền tảng + quốc gia",
         "tags": [
           "analytics"
         ]
@@ -1448,19 +1435,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -1521,7 +1495,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "So sánh lượt xem theo chiều: platform|owner|country|channel|group|project",
+        "summary": "So sánh lượt xem theo chiều: platform|owner|country|channel|group",
         "tags": [
           "analytics"
         ]
@@ -1591,19 +1565,6 @@
               "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
               "maxLength": 100,
               "title": "Country",
-              "type": "string"
-            }
-          },
-          {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
               "type": "string"
             }
           },
@@ -2139,19 +2100,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -2286,19 +2234,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -2360,6 +2295,140 @@
           }
         },
         "summary": "Danh sách nhãn nền tảng đã gắn (tự do, từ nhóm kênh)",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/analytics/platforms": {
+      "get": {
+        "operationId": "platforms__v1_analytics_platforms_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Platforms  V1 Analytics Platforms Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách nền tảng ĐANG CÓ dữ liệu trong phạm vi người gọi (Tool nào đẩy lên cũng hiện)",
         "tags": [
           "groups"
         ]
@@ -2429,19 +2498,6 @@
               "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
               "maxLength": 100,
               "title": "Country",
-              "type": "string"
-            }
-          },
-          {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
               "type": "string"
             }
           },
@@ -2592,19 +2648,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -2751,19 +2794,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -2894,19 +2924,6 @@
               "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
               "maxLength": 100,
               "title": "Country",
-              "type": "string"
-            }
-          },
-          {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
               "type": "string"
             }
           },
@@ -3045,19 +3062,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -3118,7 +3122,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Kênh/page theo nền tảng + chủ đề + quốc gia",
+        "summary": "Kênh/page theo nền tảng + quốc gia",
         "tags": [
           "analytics"
         ]
@@ -3188,19 +3192,6 @@
               "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
               "maxLength": 100,
               "title": "Country",
-              "type": "string"
-            }
-          },
-          {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
               "type": "string"
             }
           },
@@ -3691,19 +3682,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -3838,19 +3816,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -3912,6 +3877,140 @@
           }
         },
         "summary": "Danh sách nhãn nền tảng đã gắn (tự do, từ nhóm kênh)",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/viewer/platforms": {
+      "get": {
+        "operationId": "platforms__v1_viewer_platforms_get",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định 30 ngày gần nhất",
+              "title": "Date From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "YYYY-MM-DD (bao gồm); mặc định hôm nay (UTC)",
+              "title": "Date To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "admin/dash_admin: soi một account; người khác bị ép về chính mình",
+              "maxLength": 64,
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+            "in": "query",
+            "name": "platform",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nền tảng (dữ liệu, vd youtube/facebook)",
+              "maxLength": 40,
+              "title": "Platform",
+              "type": "string"
+            }
+          },
+          {
+            "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
+              "maxLength": 100,
+              "title": "Country",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhóm kênh do viewer tạo",
+            "in": "query",
+            "name": "group_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhóm kênh do viewer tạo",
+              "maxLength": 64,
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+            "in": "query",
+            "name": "platform_tag",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)",
+              "maxLength": 50,
+              "title": "Platform Tag",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Platforms  V1 Viewer Platforms Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Danh sách nền tảng ĐANG CÓ dữ liệu trong phạm vi người gọi (Tool nào đẩy lên cũng hiện)",
         "tags": [
           "groups"
         ]
@@ -3981,19 +4080,6 @@
               "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
               "maxLength": 100,
               "title": "Country",
-              "type": "string"
-            }
-          },
-          {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
               "type": "string"
             }
           },
@@ -4144,19 +4230,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -4303,19 +4376,6 @@
             }
           },
           {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
-              "type": "string"
-            }
-          },
-          {
             "description": "nhóm kênh do viewer tạo",
             "in": "query",
             "name": "group_id",
@@ -4446,19 +4506,6 @@
               "description": "tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)",
               "maxLength": 100,
               "title": "Country",
-              "type": "string"
-            }
-          },
-          {
-            "description": "project_key (chủ đề/nguồn)",
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "default": "",
-              "description": "project_key (chủ đề/nguồn)",
-              "maxLength": 100,
-              "title": "Project",
               "type": "string"
             }
           },

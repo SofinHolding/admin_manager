@@ -3,9 +3,8 @@
 Đây là đầu vào của MỌI phép tính (KPI, traffic, so sánh quốc gia, breakdown, compare): cùng một dataset, cùng một hàm
 `select_entities` ⇒ KPI và biểu đồ không thể lệch bộ lọc.
 
-Kênh (Entity) khoá theo `(owner, platform, external_id)`. Quy tắc quốc gia (giữ nguyên legacy, thêm project):
-override của nhóm kênh > quốc gia của resource > quốc gia của project (liên kết đầu tiên có quốc gia); rồi alias → tên
-chuẩn; rỗng = chưa biết (hiển thị "Khác").
+Kênh (Entity) khoá theo `(owner, platform, external_id)`. Quy tắc quốc gia: override của nhóm kênh > quốc gia của
+resource; rồi alias → tên chuẩn; rỗng = chưa biết (hiển thị "Khác").
 """
 
 from __future__ import annotations
@@ -22,12 +21,6 @@ ADMIN_ROLES = frozenset({"admin", "dash_admin"})
 EntityKey = tuple  # (owner, platform, external_id)
 
 
-@dataclass(frozen=True)
-class Binding:
-    project_key: str
-    enabled: bool
-
-
 @dataclass
 class Entity:
     key: EntityKey
@@ -37,18 +30,9 @@ class Entity:
     name: str
     country: str                    # hiệu lực: sau override + alias; "" = chưa biết
     state: str
-    bindings: list[Binding]
     managed_flag: bool | None
     active_flag: bool | None
     observed_at: datetime | None
-
-
-@dataclass(frozen=True)
-class ProjectInfo:
-    key: str
-    name: str
-    enabled: bool
-    country: str
 
 
 @dataclass(frozen=True)
@@ -88,7 +72,6 @@ class EventRow:
     resource: str
     kind: str
     date: str
-    project_key: str
 
     @property
     def ek(self) -> EntityKey:
@@ -106,7 +89,6 @@ class GroupInfo:
 @dataclass
 class Dataset:
     entities: dict[EntityKey, Entity]
-    projects: dict[tuple[str, str], ProjectInfo]
     content: list[ContentRow]
     daily: list[DailyRow]
     events: list[EventRow]
@@ -114,9 +96,6 @@ class Dataset:
     aliases: dict[str, str]
     accounts: dict[str, dict]
     platforms: set[str]
-
-    def project_of(self, entity: Entity, key: str) -> ProjectInfo | None:
-        return self.projects.get((entity.owner, key))
 
     def group_owner_is_admin(self, account_id: str) -> bool:
         return (self.accounts.get(account_id) or {}).get("role") in ADMIN_ROLES
@@ -145,13 +124,6 @@ async def load_dataset(conn: asyncpg.Connection, owner_scope: list[str] | None, 
     """Nạp dữ liệu của phạm vi owner. `window=(from,to)` giới hạn hàng content/metrics/events theo ngày (YYYY-MM-DD)."""
     aliases = {r["alias"]: r["canonical"] for r in await conn.fetch("SELECT alias, canonical FROM country_aliases")}
 
-    prow = await conn.fetch(
-        "SELECT owner_account_id, project_key, name, country, enabled FROM read_projects"
-        " WHERE NOT removed AND ($1::text[] IS NULL OR owner_account_id = ANY($1))", owner_scope)
-    projects = {(r["owner_account_id"], r["project_key"]): ProjectInfo(
-        r["project_key"], r["name"] or r["project_key"], r["enabled"], normalize_country(r["country"], aliases))
-        for r in prow}
-
     accounts = {r["account_id"]: dict(r) for r in await conn.fetch(
         "SELECT account_id, username, role, status, deleted FROM account_projection")}
 
@@ -173,7 +145,7 @@ async def load_dataset(conn: asyncpg.Connection, owner_scope: list[str] | None, 
                 overrides[(r["account_id"], r["channel_ref"])] = value
 
     rrows = await conn.fetch(
-        "SELECT owner_account_id, platform, resource_type, external_id, display_name, username, country, state, projects, managed,"
+        "SELECT owner_account_id, platform, resource_type, external_id, display_name, username, country, state, managed,"
         " active, observed_at, removed FROM read_resources WHERE ($1::text[] IS NULL OR owner_account_id = ANY($1))"
         " ORDER BY owner_account_id, platform, external_id, resource_type", owner_scope)
     entities: dict[EntityKey, Entity] = {}
@@ -185,17 +157,10 @@ async def load_dataset(conn: asyncpg.Connection, owner_scope: list[str] | None, 
             continue
         if key in entities:     # hai resource_type cùng external_id: kênh hiển thị gộp một (giữ bản đầu theo thứ tự ổn định)
             continue
-        bindings = [Binding(b["project_key"], b.get("enabled", True)) for b in (r["projects"] or [])]
         country = (overrides.get((r["owner_account_id"], r["external_id"])) or admin_overrides.get(r["external_id"])
                    or normalize_country(r["country"], aliases))
-        if not country:
-            for b in bindings:
-                proj = projects.get((r["owner_account_id"], b.project_key))
-                if proj and proj.country:
-                    country = proj.country
-                    break
         entities[key] = Entity(key, r["owner_account_id"], r["platform"], r["external_id"],
-                               r["display_name"] or r["username"] or r["external_id"], country, r["state"], bindings,
+                               r["display_name"] or r["username"] or r["external_id"], country, r["state"],
                                r["managed"], r["active"], r["observed_at"])
 
     removed_keys -= set(entities)   # một resource_type bị gỡ không được che resource_type khác còn sống cùng external_id
@@ -230,17 +195,16 @@ async def load_dataset(conn: asyncpg.Connection, owner_scope: list[str] | None, 
                 daily.append(DailyRow(key[0], key[1], key[2], r["metric_date"].isoformat(), r["views"],
                                       r["observed_at"]))
         for r in await conn.fetch(
-                "SELECT owner_account_id, platform, resource_external_id, kind, occurred_date, project_key"
+                "SELECT owner_account_id, platform, resource_external_id, kind, occurred_date"
                 " FROM read_events WHERE NOT removed AND occurred_date BETWEEN $2 AND $3"
                 " AND ($1::text[] IS NULL OR owner_account_id = ANY($1))"
                 " ORDER BY owner_account_id, occurred_date, external_id", owner_scope, d0, d1):
             platform = r["platform"] or by_owner_ext.get((r["owner_account_id"], r["resource_external_id"]), "")
             key = (r["owner_account_id"], platform, r["resource_external_id"])
             if key not in removed_keys:
-                events.append(EventRow(key[0], key[1], key[2], r["kind"], r["occurred_date"].isoformat(),
-                                       r["project_key"]))
+                events.append(EventRow(key[0], key[1], key[2], r["kind"], r["occurred_date"].isoformat()))
 
-    return Dataset(entities, projects, content, daily, events, groups, aliases, accounts,
+    return Dataset(entities, content, daily, events, groups, aliases, accounts,
                    {e.platform for e in entities.values()})
 
 
@@ -252,7 +216,7 @@ class Selection:
 
     `keys=None`: không thu hẹp. Hàng số liệu của kênh CHƯA có resource (không nằm trong `known`) chỉ được giữ khi mọi bộ lọc
     đang bật đều đánh giá được từ chính hàng đó (nền tảng / quốc gia "Khác"): `unknown_natives` là các nền tảng bắt buộc
-    khớp, hoặc None nếu có bộ lọc cần thông tin kênh (nhóm, nhãn, chủ đề, quốc gia cụ thể) ⇒ loại hàng mồ côi."""
+    khớp, hoặc None nếu có bộ lọc cần thông tin kênh (nhóm, nhãn, quốc gia cụ thể) ⇒ loại hàng mồ côi."""
 
     keys: frozenset | None
     native_scope: str           # nền tảng gốc đang lọc ("" nếu không)
@@ -298,10 +262,6 @@ def select_entities(ds: Dataset, ctx, *, ignore_country: bool = False) -> Select
         group = ds.groups.get(ctx.group_id)   # chỉ có nhóm thuộc phạm vi owner (đã lọc lúc nạp)
         chosen = {k for k in chosen if group is not None
                   and ds.group_applies(group, ds.entities[k].owner, ds.entities[k].ext_id)}
-        narrowed = needs_entity_info = True
-
-    if ctx.project:
-        chosen = {k for k in chosen if any(b.project_key == ctx.project for b in ds.entities[k].bindings)}
         narrowed = needs_entity_info = True
 
     country = ""

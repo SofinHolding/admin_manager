@@ -19,7 +19,6 @@ admin_router = APIRouter(prefix="/v1/integrations", tags=["admin"], dependencies
 
 _BATCH_EXAMPLE = {"items": [{"platform": "facebook", "resource_type": "page", "external_id": "123456789",
                              "display_name": "Example Page", "username": "example", "country": {"code": "BR"},
-                             "projects": [{"project_key": "itl", "enabled": True}],
                              "observed_at": "2026-10-05T06:55:00Z"}]}
 
 

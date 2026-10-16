@@ -60,11 +60,8 @@ def decide(row: dict | None, observed_at: datetime, data: dict, *, immutable: bo
 _RESOURCE_KEYS = ("resource_type", "external_id", "observed_at", "platform")
 
 
-def resource_data(payload: dict, existing: dict | None) -> dict:
-    data = {k: v for k, v in payload.items() if k not in _RESOURCE_KEYS}
-    if data.get("projects") is None:  # không khai `projects` => giữ nguyên liên kết cũ
-        data["projects"] = (existing or {}).get("projects", [])
-    return data
+def resource_data(payload: dict) -> dict:
+    return {k: v for k, v in payload.items() if k not in _RESOURCE_KEYS}
 
 
 async def fetch_resources(conn: asyncpg.Connection, owner: str, platform: str,
@@ -75,7 +72,9 @@ async def fetch_resources(conn: asyncpg.Connection, owner: str, platform: str,
         "SELECT * FROM resources WHERE owner_account_id = $1 AND platform = $2 "
         "AND (resource_type, external_id) IN (SELECT * FROM unnest($3::text[], $4::text[]))",
         owner, platform, [k[0] for k in keys], [k[1] for k in keys])
-    return {(r["resource_type"], r["external_id"]): dict(r) for r in rows}
+    # `projects` (liên kết chủ đề đã gỡ khỏi hợp đồng): bỏ khỏi dữ liệu cũ khi so sánh để không tạo revision giả cho kênh đã có.
+    return {(r["resource_type"], r["external_id"]): {**r, "data": {k: v for k, v in r["data"].items() if k != "projects"}}
+            for r in map(dict, rows)}
 
 
 async def resolve_resources(conn: asyncpg.Connection, owner: str, platform: str,
@@ -101,27 +100,6 @@ async def resolve_resource_ids(conn: asyncpg.Connection, owner: str, platform: s
     return (await resolve_resources(conn, owner, platform, external_ids))[0]
 
 
-async def _ensure_projects(conn: asyncpg.Connection, owner: str, client_id: str, platform: str, keys: set[str],
-                           now: datetime, stats: MergeStats) -> dict[str, str]:
-    """Project được nhắc tới trong resource tự được tạo (stub) — không có bước Admin mapping."""
-    if not keys:
-        return {}
-    rows = await conn.fetch("SELECT project_key, id FROM projects WHERE owner_account_id = $1 AND project_key = ANY($2::text[])",
-                            owner, sorted(keys))
-    ids = {r["project_key"]: r["id"] for r in rows}
-    missing = sorted(keys - set(ids))
-    if missing:
-        revs = await outbox.next_revisions(conn, len(missing))
-        stats.revisions += revs
-        for key, rev in zip(missing, revs, strict=True):
-            pid = new_id("prj")
-            await conn.execute(
-                "INSERT INTO projects (id, owner_account_id, client_id, project_key, platform, name, revision, created_at, "
-                "updated_at) VALUES ($1,$2,$3,$4,$5,$4,$6,$7,$7)", pid, owner, client_id, key, platform, rev, now)
-            ids[key] = pid
-    return ids
-
-
 async def merge_resources(conn: asyncpg.Connection, *, owner: str, client_id: str, platform: str,
                           items: list[Staged], snapshot_id: str | None, now: datetime, origin: str | None = None,
                           execution_mode: str | None = None) -> MergeStats:
@@ -135,7 +113,7 @@ async def merge_resources(conn: asyncpg.Connection, *, owner: str, client_id: st
     plan: list[tuple[str, Staged, dict | None, dict]] = []
     for s, key in zip(items, keys, strict=True):
         row = existing.get(key)
-        data = resource_data(s.payload, row["data"] if row else None)
+        data = resource_data(s.payload)
         verdict = decide(row, s.observed_at, data)
         if verdict == "stale":
             stats.stale_ignored += 1
@@ -157,8 +135,6 @@ async def merge_resources(conn: asyncpg.Connection, *, owner: str, client_id: st
 
     revs = await outbox.next_revisions(conn, len(plan))
     stats.revisions += revs
-    project_keys = {p["project_key"] for _, _, _, d in plan for p in (d.get("projects") or [])}
-    project_ids = await _ensure_projects(conn, owner, client_id, platform, project_keys, now, stats)
     for (verdict, s, row, data), rev in zip(plan, revs, strict=True):
         if verdict == "created":
             rid = new_id("res")
@@ -180,12 +156,6 @@ async def merge_resources(conn: asyncpg.Connection, *, owner: str, client_id: st
         stats.present_ids.append(rid)
         stats.changed.append((rid, verdict))
         stats.outcomes.append((s.index, rid, verdict))
-        await conn.execute("DELETE FROM resource_project_bindings WHERE resource_id = $1", rid)
-        for ref in data.get("projects") or []:
-            await conn.execute(
-                "INSERT INTO resource_project_bindings (resource_id, project_id, enabled, revision) VALUES ($1,$2,$3,$4)",
-                rid, project_ids.get(ref["project_key"]) or await _project_id(conn, owner, ref["project_key"]),
-                ref["enabled"], rev)
     return stats
 
 
@@ -203,10 +173,6 @@ async def remove_resource(conn: asyncpg.Connection, resource_id: str, now: datet
                                   platform=row["platform"], external_id=row["external_id"], state=row["state"],
                                   revision=rev)
     return True
-
-
-async def _project_id(conn: asyncpg.Connection, owner: str, key: str) -> str:
-    return await conn.fetchval("SELECT id FROM projects WHERE owner_account_id = $1 AND project_key = $2", owner, key)
 
 
 async def emit_resource_changes(conn: asyncpg.Connection, owner: str, platform: str, stats: MergeStats) -> None:

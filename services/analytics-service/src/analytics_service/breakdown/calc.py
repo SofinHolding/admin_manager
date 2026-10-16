@@ -1,4 +1,4 @@
-"""Kênh theo nền tảng × chủ đề × quốc gia và các phép SO SÁNH theo chiều — port/tổng quát hoá từ legacy."""
+"""Kênh theo nền tảng × quốc gia và các phép SO SÁNH theo chiều — port/tổng quát hoá từ legacy."""
 
 from __future__ import annotations
 
@@ -7,26 +7,24 @@ from analytics_service.readmodels.aggregate import views_by_entity_day
 from analytics_service.readmodels.channels import channel_units
 from analytics_service.readmodels.dataset import KHAC, Dataset, Selection
 
-NO_TOPIC = "Không chủ đề"
-DIMENSIONS = ("platform", "owner", "country", "channel", "group", "project")
+DIMENSIONS = ("platform", "owner", "country", "channel", "group")
 
 
 def channel_breakdown(ds: Dataset, sel: Selection, custom_tag_refs: dict[str, set[str]]) -> dict:
-    """`managed` đếm theo CẶP (kênh, chủ đề): một page chạy hai chủ đề = hai kênh riêng. Kênh không có chủ đề là một đơn vị.
+    """`managed` đếm theo KÊNH: mỗi kênh là một đơn vị.
 
     `custom_tag_refs`: nhãn tự do (từ Nhóm kênh) -> tập channel_ref, để thêm các dòng `is_custom_tag`."""
     rows: dict[str, dict] = {}
     for e in sorted(ds.entities.values(), key=lambda x: x.key):
         if not sel.allows(e.key):
             continue
-        plat = rows.setdefault(e.platform, {"pairs": {}, "has_topic": False})
+        plat = rows.setdefault(e.platform, {"pairs": {}, "meta": {}})
         for u in channel_units(ds, e):
             if not u.managed:
                 continue
-            key = (e.owner, e.ext_id, u.project_key)
+            key = (e.owner, e.ext_id)
             plat["pairs"][key] = plat["pairs"].get(key, False) or u.active
-            plat["has_topic"] = plat["has_topic"] or u.project_key is not None
-            plat.setdefault("meta", {})[key] = e
+            plat["meta"][key] = e
 
     by_platform: list[dict] = []
     total_managed = total_active = 0
@@ -35,27 +33,15 @@ def channel_breakdown(ds: Dataset, sel: Selection, custom_tag_refs: dict[str, se
         pairs = plat["pairs"]
         managed = len(pairs)
         active = sum(1 for v in pairs.values() if v)
-        by_group: dict[str, dict] = {}
         by_country: dict[str, dict] = {}
-        for (owner, ext_id, project_key), is_active in pairs.items():
-            entity = plat["meta"][(owner, ext_id, project_key)]
-            if plat["has_topic"]:
-                if project_key is not None:
-                    proj = ds.projects.get((owner, project_key))
-                    label = proj.name if proj else NO_TOPIC
-                else:
-                    label = NO_TOPIC
-                g = by_group.setdefault(label, {"managed": 0, "active": 0})
-                g["managed"] += 1
-                g["active"] += 1 if is_active else 0
+        for (owner, ext_id), is_active in pairs.items():
+            entity = plat["meta"][(owner, ext_id)]
             cname = entity.country or KHAC
             c = by_country.setdefault(cname, {"managed": 0, "active": 0})
             c["managed"] += 1
             c["active"] += 1 if is_active else 0
-        row = {"platform": platform, "managed": managed, "active": active}
-        if plat["has_topic"]:
-            row["by_group"] = [{"group": k, **v} for k, v in sorted(by_group.items())]
-        row["by_country"] = [{"country": k, **v} for k, v in sorted(by_country.items())]
+        row = {"platform": platform, "managed": managed, "active": active,
+               "by_country": [{"country": k, **v} for k, v in sorted(by_country.items())]}
         by_platform.append(row)
         total_managed += managed
         total_active += active
@@ -77,7 +63,7 @@ def _series(days: list[str], by_day: dict[str, int]) -> tuple[list[dict], int]:
 
 
 def compare(ds: Dataset, sel: Selection, date_from: str, date_to: str, dimension: str, limit: int) -> dict:
-    """Mỗi mục: `{id, name, series:[{date, views}], total}`. Một kênh thuộc nhiều nhóm/chủ đề được tính ở từng mục."""
+    """Mỗi mục: `{id, name, series:[{date, views}], total}`. Một kênh thuộc nhiều nhóm được tính ở từng mục."""
     days = days_between(date_from, date_to)
     per_entity = views_by_entity_day(ds, days, sel)
     buckets: dict[str, dict] = {}
@@ -101,13 +87,6 @@ def compare(ds: Dataset, sel: Selection, date_from: str, date_to: str, dimension
             add(cname, cname, ek)
         elif dimension == "channel":
             add(f"{ek[1]}:{ek[2]}", e.name if e else ek[2], ek, {"platform": ek[1]})
-        elif dimension == "project":
-            keys = [b.project_key for b in e.bindings] if e else []
-            if not keys:
-                add(NO_TOPIC, NO_TOPIC, ek)
-            for k in keys:
-                proj = ds.projects.get((ek[0], k))
-                add(k, proj.name if proj else k, ek)
         elif dimension == "group":
             for g in ds.groups.values():
                 if ds.group_applies(g, ek[0], ek[2]):

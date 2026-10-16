@@ -35,6 +35,7 @@ class Extra(str, Enum):
     REVEAL_NOT_AVAILABLE = "REVEAL_NOT_AVAILABLE"             # 404 không có credential đang chờ reveal
     REVEAL_EXPIRED = "REVEAL_EXPIRED"                         # 410 reveal đã hết hạn
     PERSONAL_CLIENT_EXISTS = "PERSONAL_CLIENT_EXISTS"         # 409 owner đích đã có client personal pending/active
+    PLATFORM_CODE_EXISTS = "PLATFORM_CODE_EXISTS"             # 409 mã nền tảng (chính hoặc phụ) đã được nền tảng khác/chính nó giữ
 
 
 Code = ErrorCode | Extra

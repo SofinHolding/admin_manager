@@ -113,14 +113,11 @@ def normalize(kind: str, model: schemas.BaseModel) -> dict:
             if country["code"] is None and country["name"] is None:
                 country = None
         raw["country"] = country
-        if raw.get("projects") is not None:
-            raw["projects"] = sorted(raw["projects"], key=lambda p: p["project_key"])
         raw["extensions"] = raw.get("extensions") or {}
     else:
         raw["extensions"] = raw.get("extensions") or {}
-    for k in ("country_code", "project_key", "enabled"):
-        if kind == "resources" and k in raw:
-            raw.pop(k)  # trường tiện ích của /resources/batch đã gộp vào country/projects
+    if kind == "resources":
+        raw.pop("country_code", None)   # trường tiện ích của /resources/batch đã gộp vào country
     return raw
 
 

@@ -17,7 +17,9 @@ RESOURCE_KEYS = {"id", "owner_account_id", "platform", "resource_type", "canonic
                  "enabled", "created_at", "updated_at"}
 SOURCE_KEYS = {"id", "owner_account_id", "name", "platform", "project_key", "default_country", "origin", "created_at",
                "updated_at"}
-POLICY_KEYS = {"platform", "web_entry_enabled", "fallback_enabled", "adapter_status", "updated_by", "updated_at"}
+# `display_name` là trường CỘNG THÊM so với hợp đồng legacy (lấy từ Platform Registry); các trường legacy giữ nguyên.
+POLICY_KEYS = {"platform", "display_name", "web_entry_enabled", "fallback_enabled", "adapter_status", "updated_by",
+               "updated_at"}
 ITEM_KEYS = {"id", "batch_id", "resource_id", "source_assignment_id", "owner_account_id", "platform", "status", "priority",
              "attempts", "last_error", "created_at", "updated_at"}
 
@@ -64,7 +66,8 @@ def lg(env) -> L:
 async def test_platforms_list_only_web_entry_enabled(lg):
     u = await lg.user()
     body = (await lg.call("GET", f"{RES}/platforms", u)).json()
-    assert body == {"items": [{"platform": p} for p in ("facebook", "instagram", "tiktok", "youtube")]}
+    assert body == {"items": [{"platform": p, "display_name": n} for p, n in (
+        ("facebook", "Facebook"), ("instagram", "Instagram"), ("tiktok", "TikTok"), ("youtube", "YouTube"))]}
     admin = await lg.user("admin")
     await lg.call("PATCH", f"{OPS}/platform-policies/tiktok", admin, json={"web_entry_enabled": False})
     assert {i["platform"] for i in (await lg.call("GET", f"{RES}/platforms", u)).json()["items"]} == {
@@ -130,8 +133,7 @@ async def test_create_resource_goes_through_the_canonical_pipeline(lg, env):
     assert row["data"]["username"] == "page1" and row["data"]["country"]["name"] == "Brazil"
     events = await env.rows("SELECT type, data FROM outbox WHERE type = 'resource.changed'")
     assert [e["data"]["resource_id"] for e in events] == [res["id"]]
-    assert await env.scalar("SELECT count(*) FROM projects WHERE owner_account_id = $1 AND project_key = 'itl'", u["sub"]) == 1
-    assert await env.scalar("SELECT count(*) FROM resource_project_bindings WHERE resource_id = $1", res["id"]) == 1
+    assert await env.scalar("SELECT count(*) FROM projects") == 0       # project đã gỡ: nguồn có project_key vẫn không sinh liên kết
     listed = (await lg.call("GET", RES, u)).json()["items"]
     assert [r["id"] for r in listed] == [res["id"]] and set(listed[0]) == RESOURCE_KEYS | {"source_ids"}
     assert listed[0]["source_ids"] == [src["id"]]
@@ -308,14 +310,16 @@ async def test_legacy_edits_reach_the_feed_with_new_revisions(lg, env):
     assert len(evs) == 3 and [e["data"]["revision"] for e in evs] == sorted(e["data"]["revision"] for e in evs)
 
 
-async def test_source_project_key_change_rebinds_resources_canonically(lg, env):
+async def test_legacy_source_project_key_is_kept_as_an_inert_field(lg, env):
+    """`project_key` của Source là trường legacy (hợp đồng đóng băng): vẫn lưu/trả lại nhưng KHÔNG sinh project canonical."""
     u = await lg.user()
     src = await lg.source(u, project_key="ITL")
     res = await lg.resource(u, src, "p")
     await lg.call("PATCH", f"{RES}/sources/{src['id']}", u, json={"project_key": "Sible Pro"})
-    keys = await env.rows("SELECT p.project_key FROM resource_project_bindings b JOIN projects p ON p.id = b.project_id "
-                          "WHERE b.resource_id = $1", res["id"])
-    assert [k["project_key"] for k in keys] == ["sible_pro"]
+    got = (await lg.call("GET", f"{RES}/sources", u)).json()["items"][0]
+    assert got["project_key"] == "Sible Pro"
+    assert await env.scalar("SELECT count(*) FROM projects") == 0
+    assert await env.scalar("SELECT count(*) FROM resource_project_bindings WHERE resource_id = $1", res["id"]) == 0
 
 
 # ── /v1/ops ───────────────────────────────────────────────────────────────────────────
@@ -362,8 +366,11 @@ async def test_platform_policies_read_and_admin_partial_update(lg):
     out = (await lg.call("PATCH", f"{OPS}/platform-policies/instagram", admin, json={"fallback_enabled": True})).json()
     assert set(out) == POLICY_KEYS and out["fallback_enabled"] is True and out["web_entry_enabled"] is True
     assert out["adapter_status"] == "none" and out["updated_by"] == admin["sub"]
+    r = await lg.call("PATCH", f"{OPS}/platform-policies/threads", admin, expect=404, json={"adapter_status": "planned"})
+    assert "chưa được tạo" in r.json()["detail"]   # nền tảng phải có trong Platform Registry trước
+    await lg.call("PUT", "/v1/integrations/admin/platforms/threads", admin, json={"display_name": "Threads"})
     new = (await lg.call("PATCH", f"{OPS}/platform-policies/threads", admin, json={"adapter_status": "planned"})).json()
-    assert new["platform"] == "threads" and new["web_entry_enabled"] is True and new["fallback_enabled"] is False
+    assert new["platform"] == "threads" and new["web_entry_enabled"] is True and new["fallback_enabled"] is True
     r = await lg.call("PATCH", f"{OPS}/platform-policies/threads", admin, expect=422, json={"adapter_status": "gibberish"})
     assert r.json()["detail"][0]["loc"] == ["body", "adapter_status"]
     r = await lg.call("PATCH", f"{OPS}/platform-policies/Bad Name", admin, expect=400, json={})
@@ -636,7 +643,7 @@ async def test_import_is_all_or_nothing(lg, env, monkeypatch):
 
 async def test_tool_push_takes_over_a_manually_entered_resource(lg, env):
     """Nhập tay (origin web_manual) rồi Tool đẩy CÙNG khoá: Tool tiếp quản (origin='tool'). Legacy không còn thấy/sửa nó
-    (404), dữ liệu Tool cung cấp (extensions/managed/active/projects) nguyên vẹn; Legacy không tạo đè (409)."""
+    (404), dữ liệu Tool cung cấp (extensions/managed/active) nguyên vẹn; Legacy không tạo đè (409)."""
     u = await lg.user()
     src = await lg.source(u)
     web = await lg.resource(u, src, "takeover-ext", display_name="Tay")
@@ -646,7 +653,7 @@ async def test_tool_push_takes_over_a_manually_entered_resource(lg, env):
     r = await tool.post("/v1/integrations/resources/batch", {"items": [{
         "platform": "facebook", "resource_type": before["resource_type"], "external_id": before["external_id"],
         "display_name": "Do Tool", "observed_at": ts(5), "managed": True, "active": True,
-        "projects": [{"project_key": "tool_proj", "enabled": True}], "extensions": {"facebook": {"fans": 12}}}]})
+        "extensions": {"facebook": {"fans": 12}}}]})
     assert r.status_code == 200, r.text
     after = await lg.canon(web["id"])
     assert after["origin"] == "tool"
@@ -661,7 +668,7 @@ async def test_tool_push_takes_over_a_manually_entered_resource(lg, env):
     item = [i for i in (await canonical(env, "resources"))["items"] if i["id"] == web["id"]][0]
     assert item["removed"] is False and item["origin"] == "tool" and item["display_name"] == "Do Tool"
     assert item["managed"] is True and item["active"] is True
-    assert item["extensions"].get("facebook") == {"fans": 12} and item["project_keys"] == ["tool_proj"]
+    assert item["extensions"].get("facebook") == {"fans": 12} and "project_keys" not in item
 
 
 async def test_tool_push_with_identical_data_still_takes_over(lg, env):
@@ -675,7 +682,7 @@ async def test_tool_push_with_identical_data_still_takes_over(lg, env):
     # đưa dữ liệu hiện có (kể cả extensions.legacy) y nguyên qua đường Tool
     payload.update(display_name=row["data"]["display_name"], state=row["state"],
                    extensions=row["data"].get("extensions", {}))
-    for k in ("username", "url", "country", "projects", "managed", "active"):
+    for k in ("username", "url", "country", "managed", "active"):
         if row["data"].get(k) is not None:
             payload[k] = row["data"][k]
     r = await tool.post("/v1/integrations/resources/batch", {"items": [payload]})

@@ -12,6 +12,7 @@ import DashboardPage from "./routes/DashboardPage";
 import AdminPage from "./routes/AdminPage";
 import ProfilePage from "./routes/ProfilePage";
 import GroupsPage from "./routes/GroupsPage";
+import PlatformsPage from "./routes/PlatformsPage";
 import OidcCallbackPage from "./routes/OidcCallbackPage";
 import ChannelsPage from "./routes/ChannelsPage";
 import MyToolsPage from "./routes/MyToolsPage";
@@ -52,6 +53,7 @@ export default function App() {
             </Route>
             <Route element={<RoleGate allow={["admin", "dash_admin"]} />}>
               <Route path="/admin/manage" element={<AdminPage />} />
+              <Route path="/admin/platforms" element={<PlatformsPage />} />
             </Route>
 
             {/* Công cụ — capability:tool_integration (không cần role admin) */}

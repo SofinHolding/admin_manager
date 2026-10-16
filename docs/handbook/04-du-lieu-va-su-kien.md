@@ -4,11 +4,11 @@
 
 ```text
 Tool ──(API key, SDK)──► api-gateway ──► integration-service
-   handshake · project · resources · snapshot(create → content/metrics/events/resources lô ≤500 → commit)
+   handshake · resources · snapshot(create → content/metrics/events/resources lô ≤500 → commit)
                                         │  một transaction: validate → merge(LWW, tuyệt đối) → current → outbox
                                         ▼
                          integration_db: resources, content_items, daily_metrics, activity_events, snapshots(+revision), outbox
-                                        │  GET /internal/v1/canonical/{projects|resources|content|metrics|events}?after_revision=
+                                        │  GET /internal/v1/canonical/{resources|content|metrics|events}?after_revision=
                                         │  GET /internal/v1/canonical/summary   (head_revision + checksum + counts)
                                         │  GET /internal/v1/feed                (tín hiệu: snapshot.committed, resource.changed …)
                                         ▼
@@ -37,10 +37,10 @@ Backfill = `after_revision=0`. `POST /v1/analytics/admin/rebuild` kéo hết r�
 | `null ≠ 0` | `null` = chưa có dữ liệu; không ép thành 0 |
 | Events bất biến | Bản đầu thắng |
 
-Loại dữ liệu trong một snapshot: `resources` (page/channel/profile; `external_id`, `resource_type`, `display_name`, `country{code,name}`, `state`, `projects[]`), `content` (bài đăng: `published_date`, `metrics{views,reactions,comments,…}`),
+Loại dữ liệu trong một snapshot: `resources` (page/channel/profile; `external_id`, `resource_type`, `display_name`, `country{code,name}`, `state`), `content` (bài đăng: `published_date`, `metrics{views,reactions,comments,…}`),
 `metrics` (số liệu theo ngày của resource: `resource_external_id`, `date`, `metrics`), `events` (`kind` như `post_ok`, `occurred_date`). Metric lạ phải được thêm vào Metric Registry (dữ liệu) hoặc đặt vào `extensions`.
 
-Nhận dạng platform/metric/project **không có trong code**: `platform_registry`, `metric_registry` là bảng; client chỉ được ghi vào platform nằm trong `allowed_platforms` của nó.
+Nhận dạng platform/metric **không có trong code**: `platform_registry`, `metric_registry` là bảng; client chỉ được ghi vào platform nằm trong `allowed_platforms` của nó.
 
 ## 4.3 Outbox và change feed (bất đồng bộ giữa service)
 
@@ -68,14 +68,14 @@ Nhận dạng platform/metric/project **không có trong code**: `platform_regis
 ## 4.4 Hợp đồng đối soát Integration ↔ Analytics (đừng phá)
 
 - `canonical/summary` trả `head_revision`, `counts` (`active` = `removed=false`) và `checksum[kind]` = sha256 các dòng đã sort (byte) `<khóa tự nhiên>|<revision>|<removed 0/1>` (+ số liệu hiển thị views/reactions/comments cho `content`, views cho `metrics`; null viết `n`).
-  Khóa tự nhiên (**gồm `resource_type`**, khớp UNIQUE của Integration): `projects owner|project_key` · `resources owner|platform|resource_type|external_id` · `content owner|platform|resource_type|resource_external_id|external_id` · `metrics …|YYYY-MM-DD` · `events owner|platform|resource_type|resource_external_id|external_id`. Item canonical của content/metrics/events mang thêm `resource_type` (additive). Hai bên tính độc lập; test xuyên hai service chống lệch.
-- Mỗi item canonical phải có `owner_account_id` và `platform`; kênh không có chủ đề (như YouTube) phải gửi `managed`/`active`; metric theo ngày dùng trường `date`.
+  Khóa tự nhiên (**gồm `resource_type`**, khớp UNIQUE của Integration): `resources owner|platform|resource_type|external_id` · `content owner|platform|resource_type|resource_external_id|external_id` · `metrics …|YYYY-MM-DD` · `events owner|platform|resource_type|resource_external_id|external_id`. Item canonical của content/metrics/events mang thêm `resource_type` (additive). Hai bên tính độc lập; test xuyên hai service chống lệch. Kind `projects` đã gỡ khỏi feed.
+- Mỗi item canonical phải có `owner_account_id` và `platform`; metric theo ngày dùng trường `date`. `managed`/`active` do Tool khai (vắng ⇒ suy ra, xem ingest contract §4.2).
 - Một trang `canonical/{kind}` không được cắt ngang một revision (có thể dài hơn `limit`).
 - Checksum **không phủ** tên/quốc gia của resource (giới hạn đã biết).
 
 ## 4.5 FilterContext (Analytics + Web)
 
-Một ngữ cảnh lọc duy nhất cho **mọi** KPI và biểu đồ: `date_from, date_to` (mặc định 30 ngày; sai định dạng ⇒ 422), `owner_account_id`, `platform`, `country`, `project`, `group_id`, `platform_tag` (8 tham số chuẩn).
+Một ngữ cảnh lọc duy nhất cho **mọi** KPI và biểu đồ: `date_from, date_to` (mặc định 30 ngày; sai định dạng ⇒ 422), `owner_account_id`, `platform`, `country`, `group_id`, `platform_tag` (7 tham số chuẩn; `project` đã gỡ 2026-10-16).
 - Server: viewer bị ép `owner = chính mình`; admin/dash_admin xem toàn bộ. Response luôn trả lại `filter` đã áp dụng (+ `ignored_filters` khi một biểu đồ cố ý bỏ qua tham số, vd `country` ở so sánh quốc gia) và `freshness`.
 - Web: `FilterContext.tsx` là nguồn sự thật duy nhất, đồng bộ hai chiều với URL; đổi bộ lọc ⇒ **tất cả** biểu đồ đổi cùng nhau; so sánh quốc gia nằm ở biểu đồ riêng.
 

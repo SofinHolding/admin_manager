@@ -51,7 +51,7 @@ Thêm trường vào `data` là tương thích; đổi/xoá trường = tăng `d
 
 Analytics **không đọc DB Integration và không đọc payload thô**. Nó kéo trạng thái canonical đã commit:
 
-`GET /internal/v1/canonical/{kind}?after_revision=<r>&limit=<1..1000>` — `kind ∈ projects | resources | content | metrics | events`.
+`GET /internal/v1/canonical/{kind}?after_revision=<r>&limit=<1..1000>` — `kind ∈ resources | content | metrics | events`.
 
 ```json
 { "items": [ { "revision": 120, "removed": false, ... trường canonical của kind ... } ],
@@ -63,8 +63,8 @@ Analytics **không đọc DB Integration và không đọc payload thô**. Nó k
 - Chỉ trả dữ liệu của snapshot **đã commit**. Snapshot building/failed/abandoned không bao giờ xuất hiện.
 - `GET /internal/v1/canonical/summary` → `{head_revision, counts{kind:{total,active}}, checksum{kind: "<sha256 hex>"}, checksum_algorithm}` để Analytics đối soát.
   `checksum[kind]` = sha256 (UTF-8) của các dòng sort theo byte nối bằng LF; mỗi dòng `<khoá tự nhiên>|<revision>|<0/1 removed>[|<số liệu hiển thị>]` với khoá tự nhiên KHÔNG dùng id nội bộ:
-  `projects owner|project_key` · `resources owner|platform|resource_type|external_id` · `content owner|platform|resource_type|resource_external_id|external_id` + `|views,reactions,comments` · `metrics owner|platform|resource_type|resource_external_id|YYYY-MM-DD` + `|views` · `events owner|platform|resource_type|resource_external_id|external_id` (null viết `n`).
-- Trường canonical theo `docs/api/ingest-data-contract-v1.md` mục 4, thêm: `owner_account_id`, `client_id`, `platform`, `project_keys` (resources),
+  `resources owner|platform|resource_type|external_id` · `content owner|platform|resource_type|resource_external_id|external_id` + `|views,reactions,comments` · `metrics owner|platform|resource_type|resource_external_id|YYYY-MM-DD` + `|views` · `events owner|platform|resource_type|resource_external_id|external_id` (null viết `n`). Kind `projects` đã gỡ (2026-10-16).
+- Trường canonical theo `docs/api/ingest-data-contract-v1.md` mục 4, thêm: `owner_account_id`, `client_id`, `platform`,
   `resource_id`/`resource_external_id`/`resource_type` (content, metrics, events — `resource_type` của resource cha, additive), `observed_at`, `revision`, `removed`.
 
 Analytics: đọc feed để **biết có gì mới** (event `snapshot.committed`), rồi kéo `canonical/*` từ `after_revision` đã lưu. Mất event cũng không

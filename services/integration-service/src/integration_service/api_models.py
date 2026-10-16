@@ -169,7 +169,7 @@ class CredentialRevoked(BaseModel):
     already_revoked: bool
 
 
-# ── Handshake / project / resource (mặt phẳng MÁY) ──────────────────────────────────
+# ── Handshake / resource (mặt phẳng MÁY) ────────────────────────────────────────────
 
 class HandshakeOut(BaseModel):
     client_id: str
@@ -182,23 +182,6 @@ class HandshakeOut(BaseModel):
     allowed_capabilities: list[str]
     accepted_capabilities: list[str]
     server_time: datetime
-
-
-class ProjectOut(BaseModel):
-    project_key: str
-    name: str
-    platform: str | None
-    country_code: str | None
-    enabled: bool
-    metadata: dict[str, Any]
-    revision: int
-    updated_at: datetime
-
-
-class ProjectUpsertOut(BaseModel):
-    created: bool
-    changed: bool
-    project: ProjectOut
 
 
 class Rejection(BaseModel):
@@ -293,11 +276,26 @@ class MetricPut(BaseModel):
     enabled: bool = True
 
 
+class PlatformCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {
+        "key": "tiktok", "display_name": "TikTok", "aliases": ["tiktok_vn", "douyin"]}})
+    key: Key
+    display_name: Annotated[str, StringConstraints(min_length=1, max_length=100)]
+    aliases: list[Key] = Field(default_factory=list, max_length=20)
+
+
+class AliasCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {"alias": "tiktok_vn"}})
+    alias: Key
+
+
 class RegistryEntry(BaseModel):
     key: str
     display_name: str
     enabled: bool
     description: str | None = None
+    aliases: list[str] | None = None    # mã phụ của nền tảng (chỉ có ở Platform Registry)
+    codes: list[str] | None = None      # = [key, *aliases]: mọi mã Tool được gửi lên (chỉ ở GET /platforms của máy)
 
 
 class ResourceStatePatch(BaseModel):

@@ -92,14 +92,6 @@ def test_merge_decision_table(row, obs, data, immutable, expected):
     assert merge.decide(row, obs, data, immutable=immutable) == expected
 
 
-def test_resource_data_keeps_existing_projects_when_not_declared():
-    payload = {"resource_type": "page", "external_id": "x", "observed_at": "t", "state": "active", "projects": None}
-    assert merge.resource_data(payload, {"projects": [{"project_key": "a", "enabled": True}]})["projects"] == [
-        {"project_key": "a", "enabled": True}]
-    assert merge.resource_data(payload, None)["projects"] == []
-    assert merge.resource_data({**payload, "projects": []}, {"projects": [{"project_key": "a"}]})["projects"] == []
-
-
 # ── Validate bản ghi ────────────────────────────────────────────────────────────
 
 def item(**over):
