@@ -53,13 +53,13 @@ class SmtpMailer:
         await asyncio.to_thread(self._send_sync, to, subject, content)
 
     async def send_verify(self, email: str, token: str, username: str) -> None:
-        link = f"{self._s.base_url}/admin/verify-email?token={token}"
+        link = f"{self._s.base_url}/verify-email?token={token}"
         await self._send(email, "Xác thực tài khoản", _page(
             "Xác thực email", username, "Nhấn nút bên dưới để xác thực email và kích hoạt tài khoản.",
             link, "Link có hiệu lực trong 24 giờ. Nếu bạn không yêu cầu, hãy bỏ qua email này."))
 
     async def send_reset(self, email: str, token: str, username: str) -> None:
-        link = f"{self._s.base_url}/admin/reset-password?token={token}"
+        link = f"{self._s.base_url}/reset-password?token={token}"
         await self._send(email, "Đặt lại mật khẩu", _page(
             "Đặt lại mật khẩu", username, "Nhấn nút bên dưới để tạo mật khẩu mới.",
             link, "Link có hiệu lực trong 1 giờ. Nếu bạn không yêu cầu, hãy bỏ qua email này."))

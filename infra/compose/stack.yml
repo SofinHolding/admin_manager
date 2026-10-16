@@ -26,6 +26,13 @@ services:
       IDENTITY_FEED_KEY_ANALYTICS: ${IDENTITY_FEED_KEY_ANALYTICS:?}
       IDENTITY_FEED_KEY_INTEGRATION: ${IDENTITY_FEED_KEY_INTEGRATION:?}
       IDENTITY_FEED_KEY_REWARD: ${IDENTITY_FEED_KEY_REWARD:?}
+      # Gửi email xác thực/đặt lại mật khẩu (Gmail SMTP). Để trống => LogMailer (không gửi). Giá trị nằm trong .env.dev, không commit.
+      IDENTITY_SMTP_HOST: ${IDENTITY_SMTP_HOST:-}
+      IDENTITY_SMTP_PORT: ${IDENTITY_SMTP_PORT:-587}
+      IDENTITY_SMTP_USER: ${IDENTITY_SMTP_USER:-}
+      IDENTITY_SMTP_PASS: ${IDENTITY_SMTP_PASS:-}
+      IDENTITY_SMTP_FROM: ${IDENTITY_SMTP_FROM:-}
+      IDENTITY_BASE_URL: ${IDENTITY_BASE_URL:-http://localhost:8421}   # gốc web để dựng link trong email (https://statsdash.dnlabs.space)
 
   identity:
     <<: *svc
