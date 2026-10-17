@@ -21,7 +21,7 @@ env:
 
 jobs:
   arch-and-contracts:
-    name: Kiến trúc + hợp đồng
+    name: Kiến trúc
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -30,7 +30,6 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -r tests/arch/requirements.txt fastapi httpx cryptography
       - run: cd tests/arch && python -m pytest -q -rs
-      - run: cd tests/contract && python -m pytest -q -rs
 
   service:
     name: Service ${{ matrix.service }}
@@ -78,7 +77,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install fastapi "uvicorn[standard]" httpx pytest pydantic cryptography
+      - name: Cài thư viện của mọi service (test khởi chạy tiến trình thật)
+        run: |
+          pip install -r services/identity-service/requirements.txt -r services/integration-service/requirements.txt -r services/analytics-service/requirements.txt -r services/reward-service/requirements.txt -r services/api-gateway/requirements.txt
+          pip install pytest pytest-asyncio httpx pyyaml redis bcrypt cryptography
       - run: cd tests/integration && python -m pytest -q
 
   e2e:
@@ -98,6 +100,8 @@ jobs:
           python infra/scripts/bootstrap_dev.py
           docker compose --env-file .env.dev -f infra/docker/compose.dev.yml up -d --wait
       - run: cd tests/e2e && python -m pytest -q -p no:cacheprovider -rs | tee /tmp/pytest.log
+      - name: Hợp đồng (parity, reconcile — cần DB DEV)
+        run: cd tests/contract && python -m pytest -q -p no:cacheprovider -rs | tee -a /tmp/pytest.log
       - name: Không được SKIP vì thiếu hạ tầng
         run: "! grep -E 'SKIPPED .*(hạ tầng DEV|Postgres|Redis)' /tmp/pytest.log"
 
