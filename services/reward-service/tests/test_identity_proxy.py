@@ -289,11 +289,12 @@ async def test_requests_with_valid_token_are_served_while_identity_is_dead(clien
 
 
 async def test_cold_start_with_identity_dead_returns_401_not_crash(db_conn, identity):
-    """Chưa có JWKS trong cache mà Identity chết ⇒ 401 rõ ràng cho request cần xác thực; app vẫn sống."""
+    """Identity chết NGAY KHI app khởi động (prefetch JWKS thất bại, cache rỗng) ⇒ 401 rõ ràng cho request cần xác thực;
+    app vẫn sống và tự khỏi khi Identity sống lại."""
     user = identity.add_user(role="viewer", perms=("reward:access",))
     token = identity.token(user)
+    await identity.stop()
     async with app_client(identity) as ac:
-        await identity.stop()
         assert (await ac.get(USER_ROUTE, headers=_hdr(token))).status_code == 401
         assert (await ac.get("/v1/reward/health")).status_code == 200
         await identity.start(identity.port)
