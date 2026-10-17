@@ -42,6 +42,10 @@ class JobAbort(Exception):
         self.retryable = retryable
 
 
+class EmptyChannel(Exception):
+    """Kênh có thật nhưng CHƯA CÓ video: không phải lỗi. `process_job` hoàn tất job với 0 mục (không đẩy gì, không báo lỗi)."""
+
+
 @dataclass
 class Credentials:
     youtube_keys: list[str] = field(default_factory=list)
@@ -133,7 +137,7 @@ def _collect_youtube_ytdlp(input_ref: str, creds: Credentials) -> tuple[list[dic
         ids = list(_with_listing(creds, lambda p: yt_checker.list_channel_ytdlp(channel_url, YTDLP_RECENT, p)))
     except Exception as exc:  # noqa: BLE001
         if "does not have a videos tab" in str(exc):
-            raise JobAbort("Kênh YouTube chưa có video công khai (không có tab Videos)", retryable=False) from exc
+            raise EmptyChannel("Kênh YouTube chưa có video công khai (không có tab Videos)") from exc
         raise JobAbort(f"yt-dlp không liệt kê được video: {str(exc)[:200]} (thêm YouTube API key ở Cấu hình để ổn định hơn)") from exc
     items = []
     for vid in ids:
@@ -161,9 +165,7 @@ def collect_tiktok(input_ref: str, creds: Credentials) -> tuple[list[dict], dict
         raise JobAbort(str(exc)) from exc
     videos = listing["videos"][:TIKTOK_RECENT]
     if not videos:
-        if listing["kind"] == "empty":
-            return [], {}                       # kênh chưa có video: không phải lỗi, nhưng cũng không có gì để đẩy
-        raise JobAbort("TikTok không trả video nào cho kênh này")
+        raise EmptyChannel("Kênh TikTok chưa có video") if listing["kind"] == "empty" else JobAbort("TikTok không trả video nào cho kênh này")
     items = []
     for v in videos:
         result = _with_proxy(creds, lambda p, u=v["url"]: tt_checker.check_video(u, p))

@@ -85,13 +85,12 @@ def test_youtube_without_keys_falls_back_to_ytdlp_through_a_proxy(monkeypatch):
     assert {p for _, p in used} == {"http://1.1.1.1:80"}
 
 
-def test_youtube_channel_without_videos_tab_is_a_clear_non_retryable_abort(monkeypatch):
+def test_youtube_channel_without_videos_tab_is_an_empty_channel_not_an_error(monkeypatch):
     def no_tab(url, limit, proxy):
         raise RuntimeError("ERROR: [youtube:tab] UC1: This channel does not have a videos tab")
     monkeypatch.setattr(yt, "list_channel_ytdlp", no_tab)
-    with pytest.raises(cc.JobAbort, match="chưa có video") as exc:
+    with pytest.raises(cc.EmptyChannel, match="chưa có video"):
         cc.collect_channel("youtube", "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv", cc.Credentials())
-    assert exc.value.retryable is False
 
 
 # ── TikTok ───────────────────────────────────────────────────────────────────────────────
@@ -123,9 +122,10 @@ def test_tiktok_listing_failure_becomes_a_job_abort_with_the_reason(monkeypatch)
         cc.collect_channel("tiktok", "@a", cc.Credentials())
 
 
-def test_tiktok_channel_without_videos_is_not_a_failure(monkeypatch):
-    monkeypatch.setattr(tiktok_links, "fetch_links", lambda ref, **kw: {"videos": [], "kind": "empty", "via": "x", "browser_opens": 0})
-    assert cc.collect_channel("tiktok", "@a", cc.Credentials()) == ([], {})
+def test_tiktok_channel_without_videos_is_an_empty_channel_not_a_failure(monkeypatch):
+    monkeypatch.setattr(tiktok_links, "fetch_links", lambda ref, **kw: {"videos": [], "kind": "empty", "via": "x", "attempts": 1})
+    with pytest.raises(cc.EmptyChannel, match="chưa có video"):
+        cc.collect_channel("tiktok", "@a", cc.Credentials())
 
 
 # ── Facebook ─────────────────────────────────────────────────────────────────────────────

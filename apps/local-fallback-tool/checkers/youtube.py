@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from checkers.common import fail, stat
+from checkers.common import QuietYdlLogger, fail, stat
 from health import classify_youtube
 from pools import Pool, force_remote_dns
 
@@ -183,7 +183,7 @@ def _extract_info(url: str, opts: dict) -> dict | None:
 
 
 def _ydl_opts(proxy: str | None, **extra: Any) -> dict:
-    return {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True, "socket_timeout": 30,
+    return {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True, "socket_timeout": 30, "logger": QuietYdlLogger(),
             "proxy": force_remote_dns(proxy) or None, "extractor_args": {"youtube": {"skip": ["authcheck"]}}, **extra}
 
 

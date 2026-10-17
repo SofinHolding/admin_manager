@@ -137,6 +137,14 @@ Cổng chặn **ngẫu nhiên ~75% lượt gọi** (yt-dlp báo `Unable to extra
 nên lặp là cách ít lỗi nhất. Kênh trống / riêng tư được nhận ra ngay (không lặp). Hết 25 lượt thì báo rõ và gợi ý thêm/đổi proxy (nên dùng proxy dân cư).
 Không có proxy thì đi bằng IP máy này (IP không tốt có thể trượt cả 25 lượt). Mỗi lần gọi bắt đầu từ một proxy ngẫu nhiên để job song song không dồn vào một proxy.
 
+**Kênh chưa đăng video (0 người theo dõi) không phải lỗi.** Đo thật: kênh như vậy (vd `@happyai81`, `@indoai23`) có trang không chứa dữ liệu kênh nên yt-dlp luôn báo
+`Unable to extract secondary user ID` — giống hệt khi bị chặn (mở bằng Chrome thật thì thấy kênh có thật, 0 người theo dõi, danh sách video trả về rỗng với `statusCode 0`).
+Khi yt-dlp báo rõ "chưa có video" thì job **hoàn tất với 0 mục** (không báo lỗi, server không thử lại). Khi trượt hết 25 lượt, tool hỏi oEmbed công khai của TikTok (qua tối đa 3 proxy):
+kênh có thật => báo "kênh có tồn tại nhưng không đọc được video: thường là kênh chưa đăng video, hoặc TikTok chặn"; không xác nhận được => gợi ý đổi proxy.
+
+Nhật ký: mỗi lượt thử bị chặn là bình thường nên lỗi của yt-dlp bị nén (không còn dòng `ERROR: [tiktok:user] ...` mỗi lượt); lỗi nghiệp vụ đã dự kiến (`JobAbort`) chỉ in một dòng, không traceback;
+lỗi lập trình bất ngờ vẫn in traceback. `HTTP 403` của tikwm là proxy đó bị chặn: tool đổi sang proxy khác.
+
 
 ## "Chạy ngay" (không chờ lịch)
 

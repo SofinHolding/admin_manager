@@ -67,6 +67,7 @@ def test_tiktok_blocking_is_reported_as_error_not_exception(env, monkeypatch):
         raise BLOCKED
     monkeypatch.setattr(tl, "_extract_flat", blocked)
     monkeypatch.setattr(tl, "MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(tl, "_profile_confirmed", lambda user, proxy: False)   # không gọi oEmbed thật
     assert "3 lượt" in vl.run_fetch({"platform": "tiktok", "channel_id": "c1", "url": TT}, settings_path=env)["error"]
 
 

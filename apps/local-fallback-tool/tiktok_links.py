@@ -17,10 +17,12 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 
+from checkers.common import QuietYdlLogger
 from pools import force_remote_dns, mask_proxy
 
 FULL_MAX_ITEMS = 1500            # TikTok phân trang kiểu cursor: xin đủ MỘT lần, không escalate (mỗi lượt mới phải lấy lại từ trang 1)
 MAX_ATTEMPTS = 25
+PROBE_PROXIES = 3                # số proxy thử hỏi oEmbed khi xác nhận kênh có thật
 IMPERSONATE = ("chrome-136", "chrome-131", "chrome-124")
 _USER_RE = re.compile(r"tiktok\.com/@([\w.\-]+)", re.I)
 _HANDLE_RE = re.compile(r"^@?([\w.\-]{2,64})$")
@@ -86,10 +88,27 @@ def _extract_flat(url: str, proxy: str | None, impersonate: str, limit: int) -> 
     from yt_dlp.networking.impersonate import ImpersonateTarget
 
     opts = {"extract_flat": True, "quiet": True, "no_warnings": True, "skip_download": True, "proxy": force_remote_dns(proxy) or None,
-            "socket_timeout": 20.0, "playlistend": limit, "impersonate": ImpersonateTarget.from_str(impersonate)}
+            "socket_timeout": 20.0, "playlistend": limit, "impersonate": ImpersonateTarget.from_str(impersonate), "logger": QuietYdlLogger()}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return list((info or {}).get("entries") or [])
+
+
+def _profile_confirmed(user: str, proxies: list[str | None]) -> bool:
+    """Kênh CÓ tồn tại không — hỏi oEmbed công khai của TikTok (không đi qua cổng chống bot), lần lượt qua từng proxy (một proxy chập chờn
+    không được kết luận thay cả hệ thống). True chỉ khi chắc chắn; mọi trường hợp khác False."""
+    from curl_cffi import requests as cr
+
+    for proxy in proxies:
+        p = force_remote_dns(proxy)
+        try:
+            r = cr.get("https://www.tiktok.com/oembed", params={"url": f"https://www.tiktok.com/@{user}"},
+                       proxies={"http": p, "https": p} if p else None, impersonate="chrome136", timeout=15)
+            if r.status_code == 200 and f"@{user}".lower() in r.text.lower():
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
 
 
 def list_videos(entries: list[dict], username: str) -> list[dict]:
@@ -103,7 +122,8 @@ def list_videos(entries: list[dict], username: str) -> list[dict]:
 
 
 def fetch_links(ref: str, *, proxies: list[str], limit: int = FULL_MAX_ITEMS, extract: Extract | None = None,
-                max_attempts: int | None = None, pause_s: float = 0.3, start: int | None = None) -> dict:
+                max_attempts: int | None = None, pause_s: float = 0.3, start: int | None = None,
+                probe: Callable[[str, list[str | None]], bool] | None = None) -> dict:
     """Toàn bộ video của kênh: `{videos, via, attempts, kind}` (`kind`: "ok" | "empty") hoặc ném `TikTokError`.
 
     Lượt n dùng proxy `(start + n) % số proxy` và dấu vân tay `IMPERSONATE[n % 3]`; không có proxy thì đi bằng IP máy này. `start` ngẫu nhiên để
@@ -132,6 +152,13 @@ def fetch_links(ref: str, *, proxies: list[str], limit: int = FULL_MAX_ITEMS, ex
         if videos:
             return {"videos": videos, "via": mask_proxy(proxy) if proxy else "trực tiếp", "attempts": attempt + 1, "kind": "ok"}
         errors.append("TikTok trả danh sách rỗng")           # rỗng mà không có thông báo "chưa có video" = nghi bị chặn: thử lại
+    probe_proxies = [candidates[(offset + i) % len(candidates)] for i in range(min(PROBE_PROXIES, len(candidates)))]
+    if (probe or _profile_confirmed)(user, probe_proxies):
+        # Đo thật: kênh 0 người theo dõi / chưa đăng video có trang không chứa dữ liệu kênh nên yt-dlp luôn báo "Unable to extract secondary user ID",
+        # giống hệt khi bị chặn — không phân biệt được bằng yt-dlp. oEmbed xác nhận kênh có thật => nói rõ cả hai khả năng.
+        raise TikTokError(f"Kênh có tồn tại nhưng không đọc được video sau {max_attempts} lượt. Thường gặp: kênh chưa đăng video nào "
+                          "(0 người theo dõi) — hãy mở kênh trên TikTok kiểm tra; nếu chắc chắn có video thì TikTok đang chặn: thêm/đổi proxy "
+                          "dân cư ở Cấu hình.")
     hint = ("TikTok đang chặn IP này — thêm proxy dân cư ở Cấu hình rồi thử lại" if not proxies
             else "TikTok chặn mọi lượt — thêm/đổi proxy (nên dùng proxy dân cư) ở Cấu hình rồi thử lại")
     raise TikTokError(f"Không lấy được danh sách video sau {max_attempts} lượt ({hint}). Lỗi cuối: {errors[-1] if errors else '-'}")

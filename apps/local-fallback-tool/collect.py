@@ -217,8 +217,18 @@ async def process_job(job: dict, client: SystemApi, creds: Credentials, tracker:
         duration_ms = int((time.monotonic() - start_time) * 1000)
         tracker.job_done(job_id, platform, channel_id, channel_name, owner, len(items), duration_ms)
 
+    except channel_collect.EmptyChannel as exc:
+        # Kênh có thật nhưng chưa có video: hoàn tất job (không có gì để đẩy), KHÔNG báo lỗi và không để server thử lại liên tục.
+        log.info("Job %s: %s — hoàn tất, không có dữ liệu để đẩy", job_id, exc)
+        try:
+            await client.complete_job(job, {"items": 0, "note": str(exc)})
+        finally:
+            tracker.job_done(job_id, platform, channel_id, channel_name, owner, 0, int((time.monotonic() - start_time) * 1000))
     except Exception as exc:  # noqa: BLE001
-        log.exception("Job %s failed: %s", job_id, exc)
+        if isinstance(exc, JobAbort):   # lỗi nghiệp vụ đã dự kiến: một dòng gọn, không traceback
+            log.error("Job %s failed: %s", job_id, exc)
+        else:
+            log.exception("Job %s failed: %s", job_id, exc)
         duration_ms = int((time.monotonic() - start_time) * 1000)
         tracker.job_failed(job_id, platform, channel_id, channel_name, owner, str(exc)[:400], duration_ms)
         try:

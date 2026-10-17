@@ -36,6 +36,7 @@ class Gate:
 
 
 def fetch(gate: Gate, proxies: list[str], **kw) -> dict:
+    kw.setdefault("probe", lambda user, proxies: False)       # không gọi mạng thật (oEmbed) trong test
     return tl.fetch_links(CHANNEL, proxies=proxies, extract=gate, pause_s=0, start=0, **kw)
 
 
@@ -129,3 +130,36 @@ def test_proxy_password_is_never_in_the_result_or_error():
     with pytest.raises(tl.TikTokError) as exc:
         fetch(Gate(blocked_first=99), ["socks5://u:TOPSECRET@9.9.9.9:1080"], max_attempts=2)
     assert "TOPSECRET" not in str(exc.value)
+
+
+def test_existing_channel_that_never_yields_data_is_explained_as_probably_empty_not_just_blocked():
+    asked: list[tuple[str, list]] = []
+    gate = Gate(blocked_first=10_000)
+    proxies = ["http://a:1", "http://b:2", "http://c:3", "http://d:4"]
+    with pytest.raises(tl.TikTokError) as exc:
+        fetch(gate, proxies, max_attempts=3, probe=lambda user, ps: asked.append((user, ps)) or True)
+    assert asked == [("sk1kr", proxies[:3])]                       # hỏi qua tối đa 3 proxy, không dồn vào một proxy
+    assert "tồn tại" in str(exc.value) and "chưa đăng video" in str(exc.value) and "TikTok đang chặn" in str(exc.value)
+
+
+def test_profile_probe_does_not_let_one_flaky_proxy_decide(monkeypatch):
+    from curl_cffi import requests as cr
+    seen: list = []
+
+    class R:
+        status_code, text = 200, '{"author_url":"https://www.tiktok.com/@sk1kr"}'
+
+    def get(url, params=None, proxies=None, **kw):
+        seen.append(proxies and proxies["https"])
+        if len(seen) == 1:
+            raise TimeoutError("proxy chập chờn")
+        return R()
+    monkeypatch.setattr(cr, "get", get)
+    assert tl._profile_confirmed("sk1kr", ["http://a:1", "http://b:2"]) is True and len(seen) == 2
+    assert tl._profile_confirmed("khac", ["http://a:1"]) is False        # oEmbed trả kênh khác => không xác nhận
+
+
+def test_unconfirmed_channel_keeps_the_blocked_hint():
+    with pytest.raises(tl.TikTokError) as exc:
+        fetch(Gate(blocked_first=10_000), ["http://a:1"], max_attempts=3)
+    assert "chặn mọi lượt" in str(exc.value) and "tồn tại" not in str(exc.value)

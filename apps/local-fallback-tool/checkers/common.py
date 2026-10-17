@@ -33,3 +33,13 @@ def to_int(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
     return n if n > 0 else 0
+
+
+class QuietYdlLogger:
+    """Logger của yt-dlp không in gì: lỗi đã được bắt và phân loại ở nơi gọi. Không có nó, MỖI lượt thử bị chặn (đã dự kiến, ~75% lượt TikTok)
+    vẫn in một dòng `ERROR: ...` ra stderr và làm nhật ký đầy lỗi giả."""
+
+    def debug(self, msg: str) -> None: ...
+    def info(self, msg: str) -> None: ...
+    def warning(self, msg: str) -> None: ...
+    def error(self, msg: str) -> None: ...
