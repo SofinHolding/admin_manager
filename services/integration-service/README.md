@@ -36,7 +36,7 @@ Cổng duy nhất cho Tool/hệ thống ngoài: client, credential, resource, sn
 | Mặt phẳng | Credential | Endpoint |
 |---|---|---|
 | USER | access token RS256 (Identity ký, verify offline bằng JWKS) | `/v1/integrations/clients*`, `/me/*`, `/audit`, `/admin/*` |
-| MÁY | API key `mpk_<key_id>.<secret>` + scope + platform, bind 1 thiết bị (`X-Installation-Id` ngoài handshake) | `/v1/integrations/handshake`, `/projects/*`, `/resources/batch`, `/snapshots*`, `/jobs/*` |
+| MÁY | API key `mpk_<key_id>.<secret>` + scope + platform, bind 1 thiết bị (`X-Installation-Id` ngoài handshake) | `/v1/integrations/handshake`, `/platforms`, `/resources/batch`, `/snapshots*`, `/jobs/*` |
 | NỘI BỘ | `X-Service-Key` (mỗi bên đọc một khoá) | `/internal/v1/feed`, `/internal/v1/canonical/*` (không qua gateway, không nằm trong OpenAPI) |
 
 Token user không dùng được ở endpoint máy và ngược lại; service key không gọi được API công khai.

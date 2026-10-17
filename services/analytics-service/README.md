@@ -82,7 +82,6 @@ và `checksum[kind]` = sha256 (UTF-8) của các dòng đã **sort theo chuỗi*
 
 ```text
 <khoá tự nhiên>|<revision>|<0/1 removed>[|<số liệu hiển thị>]
-projects : owner|project_key
 resources: owner|platform|resource_type|external_id
 content  : owner|platform|resource_type|resource_external_id|external_id   + "|<views>,<reactions>,<comments>"   (null viết là n)
 metrics  : owner|platform|resource_type|resource_external_id|YYYY-MM-DD    + "|<views>"

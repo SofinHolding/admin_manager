@@ -1,3 +1,8 @@
+> **ĐÃ NGỪNG (2026-10-16):** Admin Manager legacy (`ufadmin`, `ufreward`, nginx site, `redis-6380`, `/srv/admin`, `/srv/reward`) đã được tắt và gỡ khỏi VPS `169.58.232.253`
+> (`ufsync` của Tool vẫn chạy). Production hiện chạy trên máy LAN theo `infra/deploy/lan/README.md`. Bản sao lưu trước khi gỡ:
+> `/root/backups/legacy-*-20261016-221737.*` trên VPS và `C:/Users/Admin/backups/contabo-legacy-20261016-221737/`. Workflow `deploy.yml` và `deploy-reward.yml`
+> nhắm vào máy đã gỡ — KHÔNG chạy. Tài liệu bên dưới chỉ để tra cứu lịch sử.
+
 # Triển khai Admin Manager lên VPS
 
 ## Tổng quan
