@@ -275,9 +275,6 @@ function runSystemApi(command) {
 /** Chạy thử từng endpoint an toàn. */
 ipcMain.handle("collector:probe", () => runSystemApi("probe"));
 
-/** Kéo từ website CHỈ user/kênh dùng tool dùng chung (execution_mode=fallback_tool); user có Tool riêng bị bỏ. */
-ipcMain.handle("collector:shared", () => runSystemApi("shared"));
-
 ipcMain.handle("collector:status:read", () => {
   try { return JSON.parse(fs.readFileSync(STATUS_PATH, "utf-8")); }
   catch { return null; }
@@ -331,23 +328,31 @@ function callChannelsDb(cmd) {
 ipcMain.handle("channels:init", () =>
   callChannelsDb({ action: "init" }));
 
-ipcMain.handle("channels:users:save", (_event, { users, prune }) =>
-  callChannelsDb({ action: "save_users", users, prune: !!prune }));
+/** Fetch: kéo từ website CHỈ user/kênh dùng tool dùng chung (user có Tool riêng bị bỏ) rồi đồng bộ vào DB cục bộ.
+ *  Kênh mới ở trạng thái CHƯA KÉO; trạng thái ĐÃ KÉO của kênh cũ được giữ nguyên. */
+ipcMain.handle("channels:sync", async () => {
+  const shared = await runSystemApi("shared");
+  if (shared.error) return { error: shared.error };
+  const res = await callChannelsDb({ action: "sync_shared", users: shared.owners, channels: shared.channels });
+  return { ...res, skipped: shared.skipped };
+});
 
 ipcMain.handle("channels:users:list", () =>
   callChannelsDb({ action: "list_users" }));
 
-ipcMain.handle("channels:pull", (_event, { owner_id, owner_username, channels, replace }) =>
-  callChannelsDb({ action: "save_channels", owner_id, owner_username, channels, replace: !!replace }));
+/** Kéo các kênh đã chọn về tool (kênh đã kéo rồi bị bỏ qua, không kéo lại). */
+ipcMain.handle("channels:pull", (_event, { ids }) =>
+  callChannelsDb({ action: "pull_channels", ids }));
+
+/** Gỡ kết nối kênh đã kéo (về lại CHƯA KÉO). */
+ipcMain.handle("channels:unpull", (_event, { ids }) =>
+  callChannelsDb({ action: "unpull_channels", ids }));
 
 ipcMain.handle("channels:list", (_event, filters) =>
   callChannelsDb({ action: "list_channels", ...(filters ?? {}) }));
 
 ipcMain.handle("channels:platform:counts", () =>
   callChannelsDb({ action: "platform_counts" }));
-
-ipcMain.handle("channels:delete", (_event, ids) =>
-  callChannelsDb({ action: "delete_channels", ids }));
 
 ipcMain.handle("channels:set-enabled", (_event, { ids, enabled }) =>
   callChannelsDb({ action: "set_enabled", ids, enabled }));

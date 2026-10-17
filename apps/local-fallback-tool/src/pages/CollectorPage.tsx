@@ -1147,7 +1147,6 @@ declare global {
       health:          () => Promise<{ ok: boolean; status?: number; reason?: string }>;
       endpoints:       () => Promise<{ default_gateway: string; gateway: string; endpoints: SystemEndpoint[] }>;
       probe:           () => Promise<{ gateway: string; results: SystemProbeResult[] } | { error: string }>;
-      shared:          () => Promise<SharedPull | { error: string }>;
       readStatus:      () => Promise<CollectorStatus | null>;
       onScheduleEvent: (cb: (ev: { type: string; platforms?: string[]; time?: string }) => void) => void;
     };

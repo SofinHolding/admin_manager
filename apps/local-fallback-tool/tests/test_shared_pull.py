@@ -10,7 +10,6 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import channels_db  # noqa: E402
 import system_api  # noqa: E402
 
 
@@ -74,51 +73,3 @@ def test_pull_reports_server_and_network_failures_as_error_not_exception(monkeyp
 
     monkeypatch.setattr(system_api.SystemApi, "handshake", down)
     assert "refused" in asyncio.run(system_api.pull_shared("http://gw", "mpk_x.y"))["error"]
-
-
-# ── DB cục bộ: dọn user/kênh không còn thuộc tool dùng chung ───────────────────────────────────────────
-
-def _db(tmp_path, monkeypatch):
-    monkeypatch.setattr(channels_db, "DB_PATH", str(tmp_path / "c.db"))
-    conn = channels_db._get_conn()
-
-    def run(action: str, **cmd):
-        return getattr(channels_db, f"act_{action}")(conn, cmd)
-    return run
-
-
-def _chan(cid: str) -> dict:
-    return {"id": cid, "platform": "youtube", "display_name": cid, "input_ref": cid}
-
-
-def test_prune_drops_users_who_left_the_shared_tool_together_with_their_channels(tmp_path, monkeypatch):
-    run = _db(tmp_path, monkeypatch)
-    run("save_users", users=[{"id": "u1", "username": "view"}, {"id": "u2", "username": "now_personal"}])
-    run("save_channels", owner_id="u1", owner_username="view", channels=[_chan("c1")])
-    run("save_channels", owner_id="u2", owner_username="now_personal", channels=[_chan("c2"), _chan("c3")])
-
-    out = run("save_users", users=[{"id": "u1", "username": "view"}], prune=True)
-    assert out["removed_users"] == 1
-    assert [u["id"] for u in run("list_users")["users"]] == ["u1"]
-    assert [c["id"] for c in run("list_channels")["channels"]] == ["c1"]           # kênh của u2 đi theo
-
-
-def test_without_prune_nothing_is_deleted(tmp_path, monkeypatch):
-    run = _db(tmp_path, monkeypatch)
-    run("save_users", users=[{"id": "u1", "username": "a"}, {"id": "u2", "username": "b"}])
-    run("save_channels", owner_id="u2", owner_username="b", channels=[_chan("c2")])
-    assert run("save_users", users=[{"id": "u1", "username": "a"}])["removed_users"] == 0
-    assert len(run("list_users")["users"]) == 2 and len(run("list_channels")["channels"]) == 1
-
-
-def test_replace_removes_only_this_owners_channels_missing_from_the_new_list(tmp_path, monkeypatch):
-    run = _db(tmp_path, monkeypatch)
-    run("save_channels", owner_id="u1", owner_username="a", channels=[_chan("c1"), _chan("c2")])
-    run("save_channels", owner_id="u2", owner_username="b", channels=[_chan("x1")])
-
-    out = run("save_channels", owner_id="u1", owner_username="a", channels=[_chan("c1")], replace=True)
-    assert (out["added"], out["updated"], out["removed"]) == (0, 1, 1)
-    assert sorted(c["id"] for c in run("list_channels")["channels"]) == ["c1", "x1"]   # x1 của u2 còn nguyên
-
-    assert run("save_channels", owner_id="u1", owner_username="a", channels=[], replace=True)["removed"] == 1
-    assert [c["id"] for c in run("list_channels")["channels"]] == ["x1"]               # danh sách rỗng = xoá hết của u1

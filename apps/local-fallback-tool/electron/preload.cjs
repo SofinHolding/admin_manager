@@ -14,8 +14,6 @@ contextBridge.exposeInMainWorld("collector", {
   endpoints:     ()         => ipcRenderer.invoke("collector:endpoints"),
   /** Chạy thử từng endpoint an toàn bằng cấu hình hiện tại (system_api.py probe). */
   probe:         ()         => ipcRenderer.invoke("collector:probe"),
-  /** Kéo CHỈ user/kênh dùng tool dùng chung từ website (bỏ user có Tool riêng): { owners, channels, skipped } hoặc { error }. */
-  shared:        ()         => ipcRenderer.invoke("collector:shared"),
   readStatus:    ()         => ipcRenderer.invoke("collector:status:read"),
   /** Lắng nghe sự kiện scheduler (auto_started / auto_stopped). */
   onScheduleEvent: (cb) => ipcRenderer.on("collector:schedule:event", (_ev, data) => cb(data)),
@@ -25,25 +23,24 @@ contextBridge.exposeInMainWorld("channels", {
   /** Khởi tạo schema DB — gọi khi app mount. */
   init:
     ()                            => ipcRenderer.invoke("channels:init"),
-  /** Lưu danh sách user fetch về từ API, trả về { added: [id], total: N, removed_users: N }. `prune`: bỏ user không còn trong danh sách. */
-  saveUsers:
-    (users, prune)                => ipcRenderer.invoke("channels:users:save", { users, prune }),
-  /** Đọc tất cả user kèm channel_count từ DB. */
+  /** Fetch: kéo user/kênh dùng tool dùng chung từ website vào DB cục bộ (kênh mới = chưa kéo). Trả thống kê + `skipped`, hoặc { error }. */
+  sync:
+    ()                            => ipcRenderer.invoke("channels:sync"),
+  /** Đọc tất cả user kèm channel_count / pulled_count từ DB. */
   listUsers:
     ()                            => ipcRenderer.invoke("channels:users:list"),
-  /** Upsert kênh cho một user; trả về { added, updated, removed }. `replace`: bỏ kênh của user không còn trong danh sách. */
+  /** Kéo các kênh đã chọn về tool; kênh đã kéo bị bỏ qua. Trả { pulled, already, unknown }. */
   pull:
-    (owner_id, owner_username, channels, replace) =>
-                                     ipcRenderer.invoke("channels:pull", { owner_id, owner_username, channels, replace }),
-  /** Trả về danh sách kênh; filters: { platform?, owner_id? }. */
+    (ids)                         => ipcRenderer.invoke("channels:pull", { ids }),
+  /** Gỡ kết nối kênh đã kéo (về lại chưa kéo). Trả { unpulled }. */
+  unpull:
+    (ids)                         => ipcRenderer.invoke("channels:unpull", { ids }),
+  /** Trả về danh sách kênh; filters: { platform?, owner_id?, mapping_status?, enabled_filter?, pulled_filter?, search? }. */
   listChannels:
     (filters)                     => ipcRenderer.invoke("channels:list", filters ?? {}),
   /** Trả về { total, youtube, tiktok, facebook, other } counts. */
   platformCounts:
     ()                                    => ipcRenderer.invoke("channels:platform:counts"),
-  /** Xóa kênh khỏi DB; ids: string[]. */
-  deleteChannels:
-    (ids)                                 => ipcRenderer.invoke("channels:delete", ids),
   /** Bật/tắt kênh; ids: string[], enabled: boolean. */
   setEnabled:
     (ids, enabled)                        => ipcRenderer.invoke("channels:set-enabled", { ids, enabled }),

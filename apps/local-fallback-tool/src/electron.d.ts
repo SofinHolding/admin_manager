@@ -3,6 +3,7 @@ interface DbUser {
   username: string;
   fetched_at: string;
   channel_count: number;
+  pulled_count: number;
 }
 
 interface LocalChannel {
@@ -17,22 +18,10 @@ interface LocalChannel {
   url: string;
   mapping_status: string;
   enabled: number;
+  pulled: number;
+  pulled_at: string;
   imported_at: string;
   updated_at: string;
-}
-
-interface ApiInventoryItem {
-  id: string;
-  owner_account_id: string;
-  owner_username: string;
-  platform: string;
-  resource_type: string;
-  canonical_external_id?: string;
-  input_ref?: string;
-  display_name?: string;
-  url?: string;
-  mapping_status?: string;
-  enabled?: boolean | number;
 }
 
 interface SystemEndpoint {
@@ -44,24 +33,24 @@ interface SystemProbeResult {
   status: "ok" | "fail" | "skipped"; http: number | null; ms: number | null; detail: string;
 }
 
-interface SharedPull {
-  owners: { id: string; username: string; resource_count: number }[];
-  channels: ApiInventoryItem[];
+interface SyncResult {
+  added_users: string[]; removed_users: number;
+  added_channels: number; updated_channels: number; removed_channels: number;
   skipped: { personal_tool_owners: number; personal_tool_channels: number; other_channels: number };
 }
 
 declare interface Window {
   channels?: {
     init:           () => Promise<{ ok: boolean; db_path: string; user_count: number; channel_count: number }>;
-    saveUsers:      (users: { id: string; username: string }[], prune?: boolean) => Promise<{ added: string[]; total: number; removed_users?: number }>;
+    sync:           () => Promise<SyncResult | { error: string }>;
     listUsers:      () => Promise<{ users: DbUser[] }>;
-    pull:           (owner_id: string, owner_username: string, channels: ApiInventoryItem[], replace?: boolean) => Promise<{ added: number; updated: number; removed?: number }>;
+    pull:           (ids: string[]) => Promise<{ pulled: number; already: number; unknown: number }>;
+    unpull:         (ids: string[]) => Promise<{ unpulled: number }>;
     listChannels:   (filters: {
       platform?: string; owner_id?: string;
-      mapping_status?: string; enabled_filter?: string; search?: string;
+      mapping_status?: string; enabled_filter?: string; pulled_filter?: string; search?: string;
     }) => Promise<{ channels: LocalChannel[] }>;
     platformCounts: () => Promise<{ total: number; youtube: number; tiktok: number; facebook: number; other: number }>;
-    deleteChannels: (ids: string[]) => Promise<{ deleted: number }>;
     setEnabled:     (ids: string[], enabled: boolean) => Promise<{ updated: number }>;
     login:          (url: string, username: string, password: string) => Promise<{ ok: boolean; access_token?: string; user?: { username: string }; error?: string }>;
     apiCall:        (path: string, token: string) => Promise<unknown>;

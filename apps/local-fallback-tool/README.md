@@ -47,13 +47,19 @@ mà tool chưa theo kịp thì test đỏ.
 Tab **API hệ thống** (hoặc CLI `echo '{"api_key":"mpk_..."}' | python system_api.py probe`) chạy thử từng endpoint an toàn (đọc / idempotent)
 và báo OK/Lỗi/Bỏ qua từng cái; endpoint ghi hoặc đổi trạng thái job không bao giờ bị chạy thử.
 
-## Kéo dữ liệu từ website: chỉ user dùng tool dùng chung
+## Kéo kênh từ website: chọn từng kênh, kéo rồi giữ kết nối
 
-Tab **Người dùng & Kênh** (Fetch → Kéo kênh) chỉ lấy user/kênh có `execution_mode = fallback_tool` (khai báo trên web, chế độ "Máy tập trung").
-User có Tool riêng đẩy kênh bằng `primary_tool` nên KHÔNG kéo về; Fetch báo rõ số user/kênh bị bỏ qua. User còn vừa có Tool riêng vừa khai
-báo kênh trên web thì chỉ các kênh `fallback_tool` của họ được kéo. Mỗi lần Fetch/Kéo kênh thay thế dữ liệu cục bộ theo danh sách mới
-(`prune`/`replace` trong `channels_db.py`): user hoặc kênh đã chuyển sang Tool riêng/bị xoá trên web sẽ được dọn khỏi DB. Lọc nằm ở
-`system_api.shared_view` (một lần gọi `GET /resources`, không gọi theo từng owner).
+Tab **Người dùng & Kênh** chỉ làm việc với user/kênh có `execution_mode = fallback_tool` (khai báo trên web, chế độ "Máy tập trung"). User có
+Tool riêng đẩy kênh bằng `primary_tool` nên KHÔNG hiện ở đây; Fetch báo rõ số user/kênh bị bỏ qua. User vừa có Tool riêng vừa khai báo kênh
+trên web thì chỉ các kênh `fallback_tool` của họ xuất hiện. Lọc nằm ở `system_api.shared_view` (một lần gọi `GET /resources`).
+
+Mỗi kênh có hai trạng thái, lưu trong DB cục bộ (`channels_db.py`, cột `pulled`/`pulled_at`) nên đổi tab hay khởi động lại vẫn giữ:
+
+- **Chưa kéo** — kênh hiện có trên website. **Fetch** làm tươi danh sách (kênh mới vào ở trạng thái này; thông tin hiển thị được cập nhật;
+  user/kênh không còn thuộc tool dùng chung bị dọn).
+- **Đã kéo** — tích chọn một hoặc nhiều kênh (hoặc cả nhóm, hoặc "Chọn tất cả chưa kéo") rồi **Kéo N kênh đã chọn**. Kênh đã kéo KHÔNG
+  kéo lại được (nút chỉ sáng khi trong lựa chọn có kênh chưa kéo); tool giữ kết nối với kênh để đẩy dữ liệu lên. Với kênh đã kéo có thể
+  Bật/Tắt cục bộ hoặc **Gỡ kết nối** (về lại chưa kéo). Fetch không đè trạng thái đã kéo lẫn cờ Bật/Tắt cục bộ.
 
 ## Kết nối bằng file Admin cấp
 

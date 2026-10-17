@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Local SQLite database cho channel import (local-fallback-tool).
+Local SQLite database cho kênh của tool dùng chung (local-fallback-tool).
 
 Đọc JSON command từ stdin, ghi JSON result ra stdout.
 Dùng Python built-in sqlite3 — không cần cài thêm thư viện.
+
+Hai khái niệm tách biệt trên mỗi kênh:
+  - HIỆN CÓ trên website (kênh dùng tool dùng chung) — `sync_shared` làm tươi danh sách này, không đụng trạng thái kéo.
+  - ĐÃ KÉO (`pulled=1`) — kênh người vận hành chọn kéo về tool. Kênh đã kéo không kéo lại được (`pull_channels` bỏ qua);
+    tool giữ kết nối với kênh đó để đẩy dữ liệu lên.
 
 Usage (từ Electron main):
   echo '{"action":"init"}' | python channels_db.py
@@ -48,6 +53,8 @@ CREATE TABLE IF NOT EXISTS local_channels (
   url             TEXT NOT NULL DEFAULT '',
   mapping_status  TEXT NOT NULL DEFAULT '',
   enabled         INTEGER NOT NULL DEFAULT 1,
+  pulled          INTEGER NOT NULL DEFAULT 0,
+  pulled_at       TEXT NOT NULL DEFAULT '',
   imported_at     TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 );
@@ -56,7 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_lc_owner    ON local_channels (owner_id);
 CREATE INDEX IF NOT EXISTS idx_lc_platform ON local_channels (platform);
 """
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 KNOWN_PLATFORMS = frozenset({"youtube", "tiktok", "facebook"})
 
 
@@ -72,17 +79,37 @@ def _classify_platform(raw: str) -> str:
     return p if p in KNOWN_PLATFORMS else "other"
 
 
+def _ids(cmd: dict) -> list[str]:
+    return list(dict.fromkeys(str(i) for i in cmd.get("ids", []) if i))
+
+
+def _marks(items: list) -> str:
+    return ",".join("?" * len(items))
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """v1 → v2: thêm `pulled`/`pulled_at`. v1 chưa có khái niệm "đã kéo" (mọi kênh của user được nạp cùng lúc) nên kênh cũ vào v2 ở trạng
+    thái CHƯA KÉO — người vận hành tự chọn kênh nào kéo."""
+    version = (conn.execute("SELECT version FROM schema_version").fetchone() or [None])[0]
+    if version is None:
+        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (CURRENT_SCHEMA_VERSION,))
+    elif version < 2:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(local_channels)")}
+        if "pulled" not in cols:
+            conn.execute("ALTER TABLE local_channels ADD COLUMN pulled INTEGER NOT NULL DEFAULT 0")
+            conn.execute("ALTER TABLE local_channels ADD COLUMN pulled_at TEXT NOT NULL DEFAULT ''")
+        conn.execute("UPDATE schema_version SET version=?", (CURRENT_SCHEMA_VERSION,))
+    conn.commit()
+
+
 def _get_conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.executescript(SCHEMA)
-    # Seed schema version nếu chưa có
-    if not conn.execute("SELECT version FROM schema_version").fetchone():
-        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (CURRENT_SCHEMA_VERSION,))
-        conn.commit()
+    conn.executescript(SCHEMA)   # DB v1 đã có bảng: CREATE IF NOT EXISTS không thêm cột mới — _migrate lo
+    _migrate(conn)
     return conn
 
 
@@ -91,68 +118,113 @@ def _get_conn() -> sqlite3.Connection:
 def act_init(conn: sqlite3.Connection, _cmd: dict) -> dict:
     """Khởi tạo schema — idempotent."""
     version = (conn.execute("SELECT version FROM schema_version").fetchone() or [0])[0]
-    user_count = conn.execute("SELECT COUNT(*) FROM fetched_users").fetchone()[0]
-    channel_count = conn.execute("SELECT COUNT(*) FROM local_channels").fetchone()[0]
     return {
         "ok": True,
         "db_path": DB_PATH,
         "schema_version": version,
-        "user_count": user_count,
-        "channel_count": channel_count,
+        "user_count": conn.execute("SELECT COUNT(*) FROM fetched_users").fetchone()[0],
+        "channel_count": conn.execute("SELECT COUNT(*) FROM local_channels").fetchone()[0],
     }
 
 
-def act_save_users(conn: sqlite3.Connection, cmd: dict) -> dict:
-    """Lưu danh sách user từ API.
+def act_sync_shared(conn: sqlite3.Connection, cmd: dict) -> dict:
+    """Làm tươi danh sách user + kênh HIỆN CÓ của tool dùng chung theo website, trong một giao dịch.
 
-    So sánh với DB hiện tại → trả về id các user mới thêm.
+    - Kênh mới vào ở trạng thái CHƯA KÉO; kênh đã có giữ nguyên `pulled`/`pulled_at` và cờ bật/tắt cục bộ (chỉ cập nhật thông tin hiển thị).
+    - User/kênh không còn trong danh sách (đã xoá trên web, hoặc chuyển sang Tool riêng) bị dọn khỏi DB, kể cả kênh đã kéo.
     """
     users: list[dict] = cmd.get("users", [])
+    channels: list[dict] = cmd.get("channels", [])
     now = _now()
 
-    existing_ids: set[str] = {
-        r[0] for r in conn.execute("SELECT id FROM fetched_users").fetchall()
-    }
-    added: list[str] = []
+    existing_users = {r[0] for r in conn.execute("SELECT id FROM fetched_users")}
+    existing_channels = {r[0] for r in conn.execute("SELECT id FROM local_channels")}
 
+    added_users: list[str] = []
+    keep_users: set[str] = set()
     for u in users:
         uid = str(u.get("id") or "").strip()
-        uname = str(u.get("username") or "").strip()
         if not uid:
             continue
-        if uid in existing_ids:
-            conn.execute(
-                "UPDATE fetched_users SET username=?, fetched_at=? WHERE id=?",
-                (uname, now, uid),
-            )
+        keep_users.add(uid)
+        uname = str(u.get("username") or "").strip()
+        if uid in existing_users:
+            conn.execute("UPDATE fetched_users SET username=?, fetched_at=? WHERE id=?", (uname, now, uid))
         else:
-            conn.execute(
-                "INSERT INTO fetched_users (id, username, fetched_at) VALUES (?, ?, ?)",
-                (uid, uname, now),
-            )
-            added.append(uid)
+            conn.execute("INSERT INTO fetched_users (id, username, fetched_at) VALUES (?, ?, ?)", (uid, uname, now))
+            added_users.append(uid)
 
-    removed_users = 0
-    if cmd.get("prune"):
-        # Chỉ giữ user có trong danh sách mới (vd user chuyển sang dùng Tool riêng không còn thuộc tool dùng chung) + kênh của họ.
-        keep = sorted({str(u.get("id") or "").strip() for u in users} - {""})
-        marks = ",".join("?" * len(keep))
-        conn.execute(f"DELETE FROM local_channels WHERE owner_id NOT IN ({marks})", keep)
-        conn.execute(f"DELETE FROM fetched_users WHERE id NOT IN ({marks})", keep)
-        removed_users = len(existing_ids - set(keep))
+    added = updated = 0
+    keep_channels: set[str] = set()
+    for ch in channels:
+        cid = str(ch.get("id") or "").strip()
+        # Safety net: group không phải kênh
+        if not cid or str(ch.get("resource_type") or "").lower() == "group":
+            continue
+        keep_channels.add(cid)
+        row = (
+            str(ch.get("owner_account_id") or ""), str(ch.get("owner_username") or ""),
+            _classify_platform(ch.get("platform", "")), str(ch.get("resource_type") or "channel"),
+            str(ch.get("display_name") or ""), str(ch.get("input_ref") or ""),
+            str(ch.get("canonical_external_id") or ""), str(ch.get("url") or ""),
+            str(ch.get("mapping_status") or ""),
+        )
+        if cid in existing_channels:
+            conn.execute("""
+                UPDATE local_channels SET owner_id=?, owner_username=?, platform=?, resource_type=?,
+                  display_name=?, input_ref=?, canonical_id=?, url=?, mapping_status=?, updated_at=?
+                WHERE id=?
+            """, (*row, now, cid))
+            updated += 1
+        else:
+            conn.execute("""
+                INSERT INTO local_channels (
+                  id, owner_id, owner_username, platform, resource_type, display_name, input_ref, canonical_id,
+                  url, mapping_status, enabled, pulled, pulled_at, imported_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?, ?)
+            """, (cid, *row, 1 if ch.get("enabled", True) else 0, now, now))
+            added += 1
 
+    keep_c, keep_u = sorted(keep_channels), sorted(keep_users)
+    removed_channels = conn.execute(f"DELETE FROM local_channels WHERE id NOT IN ({_marks(keep_c)})", keep_c).rowcount
+    conn.execute(f"DELETE FROM local_channels WHERE owner_id NOT IN ({_marks(keep_u)})", keep_u)
+    conn.execute(f"DELETE FROM fetched_users WHERE id NOT IN ({_marks(keep_u)})", keep_u)
     conn.commit()
-    return {"added": added, "total": len(users), "removed_users": removed_users}
+    return {"added_users": added_users, "removed_users": len(existing_users - keep_users),
+            "added_channels": added, "updated_channels": updated, "removed_channels": removed_channels}
+
+
+def act_pull_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
+    """Kéo các kênh đã chọn về tool (đánh dấu ĐÃ KÉO). Kênh đã kéo trước đó bị bỏ qua — không kéo lại, trạng thái giữ nguyên."""
+    ids = _ids(cmd)
+    if not ids:
+        return {"pulled": 0, "already": 0, "unknown": 0}
+    known = {r[0]: r[1] for r in conn.execute(f"SELECT id, pulled FROM local_channels WHERE id IN ({_marks(ids)})", ids)}
+    todo = [i for i in ids if known.get(i) == 0]
+    now = _now()
+    if todo:
+        conn.execute(f"UPDATE local_channels SET pulled=1, pulled_at=?, updated_at=? WHERE id IN ({_marks(todo)})", [now, now, *todo])
+    conn.commit()
+    return {"pulled": len(todo), "already": sum(1 for i in ids if known.get(i) == 1), "unknown": sum(1 for i in ids if i not in known)}
+
+
+def act_unpull_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
+    """Gỡ kết nối: đưa kênh đã kéo về CHƯA KÉO (kênh vẫn nằm trong danh sách hiện có, có thể kéo lại)."""
+    ids = _ids(cmd)
+    if not ids:
+        return {"unpulled": 0}
+    n = conn.execute(f"UPDATE local_channels SET pulled=0, pulled_at='', updated_at=? WHERE pulled=1 AND id IN ({_marks(ids)})",
+                     [_now(), *ids]).rowcount
+    conn.commit()
+    return {"unpulled": n}
 
 
 def act_list_users(conn: sqlite3.Connection, _cmd: dict) -> dict:
-    """Trả về danh sách user kèm số kênh đã nhập."""
+    """Trả về danh sách user kèm số kênh hiện có và số kênh đã kéo."""
     rows = conn.execute("""
-        SELECT
-          u.id,
-          u.username,
-          u.fetched_at,
-          COUNT(c.id) AS channel_count
+        SELECT u.id, u.username, u.fetched_at,
+               COUNT(c.id) AS channel_count,
+               COALESCE(SUM(c.pulled), 0) AS pulled_count
         FROM fetched_users u
         LEFT JOIN local_channels c ON c.owner_id = u.id
         GROUP BY u.id
@@ -161,108 +233,13 @@ def act_list_users(conn: sqlite3.Connection, _cmd: dict) -> dict:
     return {"users": [dict(r) for r in rows]}
 
 
-def act_get_user_channel_ids(conn: sqlite3.Connection, cmd: dict) -> dict:
-    """Trả về tập id kênh đã lưu của một user — dùng để detect kênh mới sau pull."""
-    owner_id = str(cmd.get("owner_id") or "")
-    rows = conn.execute(
-        "SELECT id FROM local_channels WHERE owner_id=?", (owner_id,)
-    ).fetchall()
-    return {"ids": [r[0] for r in rows]}
-
-
-def act_save_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
-    """Upsert kênh của một user vào DB, phân loại platform tự động.
-
-    Nhận các item từ /v1/ops/inventory (đã lọc bỏ group ở renderer).
-    Trả về số kênh mới thêm và số kênh cập nhật.
-    """
-    owner_id = str(cmd.get("owner_id") or "")
-    owner_username = str(cmd.get("owner_username") or "")
-    channels: list[dict] = cmd.get("channels", [])
-    now = _now()
-
-    existing_ids: set[str] = {
-        r[0] for r in conn.execute(
-            "SELECT id FROM local_channels WHERE owner_id=?", (owner_id,)
-        ).fetchall()
-    }
-
-    added = 0
-    updated = 0
-
-    for ch in channels:
-        cid = str(ch.get("id") or "").strip()
-        if not cid:
-            continue
-        # Safety net: group luôn bị loại — renderer đã lọc rồi, nhưng bảo vệ thêm ở đây
-        if str(ch.get("resource_type") or "").lower() == "group":
-            continue
-
-        platform = _classify_platform(ch.get("platform", ""))
-        resource_type = str(ch.get("resource_type") or "channel")
-        display_name = str(ch.get("display_name") or "")
-        input_ref = str(ch.get("input_ref") or "")
-        canonical_id = str(ch.get("canonical_external_id") or "")
-        url = str(ch.get("url") or "")
-        mapping_status = str(ch.get("mapping_status") or "")
-        enabled = 1 if ch.get("enabled", True) else 0
-
-        if cid in existing_ids:
-            conn.execute("""
-                UPDATE local_channels SET
-                  owner_id=?, owner_username=?,
-                  platform=?, resource_type=?,
-                  display_name=?, input_ref=?, canonical_id=?,
-                  url=?, mapping_status=?, enabled=?,
-                  updated_at=?
-                WHERE id=?
-            """, (
-                owner_id, owner_username,
-                platform, resource_type,
-                display_name, input_ref, canonical_id,
-                url, mapping_status, enabled,
-                now,
-                cid,
-            ))
-            updated += 1
-        else:
-            conn.execute("""
-                INSERT INTO local_channels (
-                  id, owner_id, owner_username,
-                  platform, resource_type,
-                  display_name, input_ref, canonical_id,
-                  url, mapping_status, enabled,
-                  imported_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                cid, owner_id, owner_username,
-                platform, resource_type,
-                display_name, input_ref, canonical_id,
-                url, mapping_status, enabled,
-                now, now,
-            ))
-            added += 1
-
-    removed = 0
-    if cmd.get("replace"):
-        # Danh sách từ server là đủ: kênh của user này không còn trong đó (đã xoá / chuyển sang Tool riêng) thì bỏ khỏi DB cục bộ.
-        keep = sorted({str(c.get("id") or "").strip() for c in channels} - {""})
-        marks = ",".join("?" * len(keep))
-        removed = conn.execute(f"DELETE FROM local_channels WHERE owner_id=? AND id NOT IN ({marks})",
-                               [owner_id, *keep]).rowcount
-
-    conn.commit()
-    return {"added": added, "updated": updated, "removed": removed, "owner_id": owner_id}
-
-
 def act_list_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
-    """Trả về kênh từ DB, lọc theo platform / owner_id / mapping_status / enabled / search.
-    Group luôn bị loại.
-    """
+    """Trả về kênh từ DB, lọc theo platform / owner_id / mapping_status / enabled / pulled / search. Group luôn bị loại."""
     platform       = cmd.get("platform")
     owner_id       = cmd.get("owner_id")
     mapping_status = cmd.get("mapping_status")   # "mapped" | "unmapped" | falsy = all
     enabled_filter = cmd.get("enabled_filter")   # "on" | "off" | falsy = all
+    pulled_filter  = cmd.get("pulled_filter")    # "pulled" | "unpulled" | falsy = all
     search         = (cmd.get("search") or "").strip()
 
     where: list[str] = ["resource_type != 'group'"]
@@ -282,6 +259,10 @@ def act_list_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
         where.append("enabled=1")
     elif enabled_filter == "off":
         where.append("enabled=0")
+    if pulled_filter == "pulled":
+        where.append("pulled=1")
+    elif pulled_filter == "unpulled":
+        where.append("pulled=0")
     if search:
         where.append("(display_name LIKE ? OR input_ref LIKE ? OR canonical_id LIKE ?)")
         like = f"%{search}%"
@@ -289,9 +270,7 @@ def act_list_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
 
     sql = "SELECT * FROM local_channels WHERE " + " AND ".join(where)
     sql += " ORDER BY owner_username COLLATE NOCASE, platform, display_name COLLATE NOCASE"
-    rows = conn.execute(sql, params).fetchall()
-    return {"channels": [dict(r) for r in rows]}
-
+    return {"channels": [dict(r) for r in conn.execute(sql, params).fetchall()]}
 
 
 def act_platform_counts(conn: sqlite3.Connection, _cmd: dict) -> dict:
@@ -312,43 +291,28 @@ def act_platform_counts(conn: sqlite3.Connection, _cmd: dict) -> dict:
     }
 
 
-def act_delete_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
-    """Xóa các kênh khỏi DB theo id."""
-    ids: list[str] = [str(i) for i in cmd.get("ids", []) if i]
-    if not ids:
-        return {"deleted": 0}
-    conn.execute(f"DELETE FROM local_channels WHERE id IN ({','.join('?'*len(ids))})", ids)
-    conn.commit()
-    return {"deleted": len(ids)}
-
-
 def act_set_enabled(conn: sqlite3.Connection, cmd: dict) -> dict:
     """Bật/tắt kênh (enabled=1/0) theo danh sách id."""
-    ids: list[str] = [str(i) for i in cmd.get("ids", []) if i]
-    enabled = 1 if cmd.get("enabled", True) else 0
+    ids = _ids(cmd)
     if not ids:
         return {"updated": 0}
-    now = _now()
-    conn.execute(
-        f"UPDATE local_channels SET enabled=?, updated_at=? WHERE id IN ({','.join('?'*len(ids))})",
-        [enabled, now, *ids],
-    )
+    n = conn.execute(f"UPDATE local_channels SET enabled=?, updated_at=? WHERE id IN ({_marks(ids)})",
+                     [1 if cmd.get("enabled", True) else 0, _now(), *ids]).rowcount
     conn.commit()
-    return {"updated": len(ids)}
+    return {"updated": n}
 
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
 _ACTIONS: dict[str, Any] = {
-    "init":                 act_init,
-    "save_users":           act_save_users,
-    "list_users":           act_list_users,
-    "get_user_channel_ids": act_get_user_channel_ids,
-    "save_channels":        act_save_channels,
-    "list_channels":        act_list_channels,
-    "platform_counts":      act_platform_counts,
-    "delete_channels":      act_delete_channels,
-    "set_enabled":          act_set_enabled,
+    "init":            act_init,
+    "sync_shared":     act_sync_shared,
+    "pull_channels":   act_pull_channels,
+    "unpull_channels": act_unpull_channels,
+    "list_users":      act_list_users,
+    "list_channels":   act_list_channels,
+    "platform_counts": act_platform_counts,
+    "set_enabled":     act_set_enabled,
 }
 
 

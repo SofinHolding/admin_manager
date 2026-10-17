@@ -38,8 +38,9 @@ def _run(monkeypatch, fn, cmd: dict | None = None) -> bytes:
 def test_channels_db_returns_vietnamese_as_utf8_even_when_stdout_is_cp1252(monkeypatch, tmp_path):
     monkeypatch.setattr(channels_db, "DB_PATH", str(tmp_path / "channels.db"))
     name = "Kênh Nguyễn Thị Tèo — Hà Nội ẻ"
-    _run(monkeypatch, channels_db.main, {"action": "save_channels", "owner_id": "u1", "owner_username": "tèo", "channels": [
-        {"id": "c1", "platform": "facebook", "display_name": name, "input_ref": "profile:1"}]})
+    _run(monkeypatch, channels_db.main, {"action": "sync_shared", "users": [{"id": "u1", "username": "tèo"}], "channels": [
+        {"id": "c1", "owner_account_id": "u1", "owner_username": "tèo", "platform": "facebook", "display_name": name,
+         "input_ref": "profile:1"}]})
     out = _run(monkeypatch, channels_db.main, {"action": "list_channels"})
     rows = json.loads(out.decode("utf-8"))["channels"]
     assert rows[0]["display_name"] == name and rows[0]["owner_username"] == "tèo"
