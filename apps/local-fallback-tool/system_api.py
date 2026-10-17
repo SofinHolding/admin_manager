@@ -31,6 +31,10 @@ ENDPOINTS_FILE = Path(__file__).with_name("system-endpoints.json")
 BATCH_KINDS = ("resources", "content", "events", "metrics")
 BATCH_SIZE = 500
 
+# Kênh do collector dùng chung thu hộ. `primary_tool` = kênh do Tool CÁ NHÂN của chủ kênh đẩy lên (user có tính năng tool riêng):
+# tool dùng chung KHÔNG kéo về, không thu hộ.
+SHARED_MODE = "fallback_tool"
+
 
 class PushError(Exception):
     """Đẩy số liệu lên thất bại: job phải fail kèm lý do, không được coi là hoàn tất."""
@@ -116,6 +120,40 @@ def device_id() -> str:
     return f"shared-collector-{socket.gethostname()}"
 
 
+def shared_view(items: list[dict]) -> dict:
+    """Từ danh sách kênh của MỌI owner (`GET /resources`), chỉ giữ kênh của user dùng tool dùng chung.
+
+    Một kênh thuộc tool dùng chung khi `execution_mode == fallback_tool`. User có Tool riêng đẩy kênh qua `primary_tool` nên không
+    xuất hiện. Trả `owners` (chỉ owner còn ≥1 kênh dùng chung), `channels` (đã ánh xạ sang hình dạng DB cục bộ) và `skipped`
+    (số owner / kênh bị bỏ + lý do) để giao diện báo rõ, không im lặng."""
+    owners: dict[str, dict] = {}
+    channels: list[dict] = []
+    skipped_personal: dict[str, int] = {}
+    skipped_other = 0
+    for r in items:
+        if r.get("resource_type") == "group":
+            continue
+        mode, oid = r.get("execution_mode"), r.get("owner_account_id") or ""
+        if mode != SHARED_MODE:
+            if mode == "primary_tool":
+                skipped_personal[oid] = skipped_personal.get(oid, 0) + 1
+            else:
+                skipped_other += 1
+            continue
+        o = owners.setdefault(oid, {"id": oid, "username": r.get("owner_username") or oid, "resource_count": 0})
+        o["resource_count"] += 1
+        channels.append({
+            "id": r["id"], "owner_account_id": oid, "owner_username": o["username"], "platform": r.get("platform", ""),
+            "resource_type": r.get("resource_type", ""), "canonical_external_id": r.get("external_id", ""),
+            "input_ref": r.get("username") or r.get("external_id", ""), "display_name": r.get("display_name", ""),
+            "url": r.get("url", ""), "mapping_status": r.get("mapping_status", ""),
+            "execution_mode": mode, "enabled": r.get("enabled", True)})
+    personal_only = [oid for oid in skipped_personal if oid not in owners]
+    return {"owners": sorted(owners.values(), key=lambda o: o["username"].lower()), "channels": channels,
+            "skipped": {"personal_tool_owners": len(personal_only), "personal_tool_channels": sum(skipped_personal.values()),
+                        "other_channels": skipped_other}}
+
+
 class SystemApi:
     """HTTP client tới integration-service qua gateway bằng machine credential (mọi endpoint trong system-endpoints.json)."""
 
@@ -180,6 +218,10 @@ class SystemApi:
         r = await self._call("resources_list", params=q)
         r.raise_for_status()
         return r.json().get("data", {})
+
+    async def pull_shared(self) -> dict:
+        """Kéo từ website CHỈ user/kênh dùng tool dùng chung (xem `shared_view`) bằng MỘT lần gọi `GET /resources`."""
+        return shared_view((await self.list_resources()).get("items", []))
 
     # ── Worker ───────────────────────────────────────────────────────────────
 
@@ -355,10 +397,29 @@ async def probe_all(gateway: str, api_key: str, *, transport: httpx.AsyncBaseTra
 
 
 def use_utf8_stdio() -> None:
-    """stdout/stderr mặc định là codepage hệ thống (Windows: cp1252) khi bị chuyển hướng: tiếng Việt làm UnicodeEncodeError
-    (JSON kết quả, log). Mọi điểm vào của tool gọi hàm này trước khi in."""
-    for stream in (sys.stdout, sys.stderr):
-        stream.reconfigure(encoding="utf-8")
+    """stdin/stdout/stderr mặc định là codepage hệ thống (Windows: cp1252) khi bị chuyển hướng: tiếng Việt làm
+    UnicodeEncodeError (JSON kết quả, log). Mọi điểm vào của tool gọi hàm này trước khi đọc/in."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):   # stdin có thể vắng/đóng khi chạy không cửa sổ
+            stream.reconfigure(encoding="utf-8")
+
+
+async def pull_shared(gateway: str, api_key: str) -> dict:
+    """Handshake rồi kéo user/kênh dùng tool dùng chung. Lỗi hệ thống trả `{"error": ...}` (không ném) cho giao diện hiển thị."""
+    api = SystemApi(gateway, api_key, timeout=15.0)
+    try:
+        await api.handshake([])
+        return await api.pull_shared()
+    except httpx.HTTPStatusError as exc:
+        try:
+            msg = exc.response.json().get("error", {}).get("message", "")
+        except ValueError:
+            msg = ""
+        return {"error": f"HTTP {exc.response.status_code} {msg}".strip()}
+    except httpx.HTTPError as exc:
+        return {"error": f"không kết nối được {gateway}: {exc}"[:300]}
+    finally:
+        await api.aclose()
 
 
 def main() -> None:
@@ -366,13 +427,17 @@ def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "catalog":
         print(json.dumps(CATALOG, ensure_ascii=False))
-    elif cmd == "probe":
+    elif cmd in ("probe", "shared"):
         cfg = json.loads(sys.stdin.read() or "{}")
         gateway = (cfg.get("gateway") or DEFAULT_GATEWAY).rstrip("/")
-        results = asyncio.run(probe_all(gateway, cfg.get("api_key") or ""))
-        print(json.dumps({"gateway": gateway, "results": results}, ensure_ascii=False))
+        key = cfg.get("api_key") or ""
+        if cmd == "probe":
+            print(json.dumps({"gateway": gateway, "results": asyncio.run(probe_all(gateway, key))}, ensure_ascii=False))
+        else:
+            print(json.dumps(asyncio.run(pull_shared(gateway, key)) if key else {"error": "Chưa cấu hình API key"},
+                             ensure_ascii=False))
     else:
-        print("usage: system_api.py catalog | probe (stdin JSON {gateway, api_key})", file=sys.stderr)
+        print("usage: system_api.py catalog | probe | shared (stdin JSON {gateway, api_key})", file=sys.stderr)
         sys.exit(2)
 
 

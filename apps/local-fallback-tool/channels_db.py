@@ -132,8 +132,17 @@ def act_save_users(conn: sqlite3.Connection, cmd: dict) -> dict:
             )
             added.append(uid)
 
+    removed_users = 0
+    if cmd.get("prune"):
+        # Chỉ giữ user có trong danh sách mới (vd user chuyển sang dùng Tool riêng không còn thuộc tool dùng chung) + kênh của họ.
+        keep = sorted({str(u.get("id") or "").strip() for u in users} - {""})
+        marks = ",".join("?" * len(keep))
+        conn.execute(f"DELETE FROM local_channels WHERE owner_id NOT IN ({marks})", keep)
+        conn.execute(f"DELETE FROM fetched_users WHERE id NOT IN ({marks})", keep)
+        removed_users = len(existing_ids - set(keep))
+
     conn.commit()
-    return {"added": added, "total": len(users)}
+    return {"added": added, "total": len(users), "removed_users": removed_users}
 
 
 def act_list_users(conn: sqlite3.Connection, _cmd: dict) -> dict:
@@ -234,8 +243,16 @@ def act_save_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
             ))
             added += 1
 
+    removed = 0
+    if cmd.get("replace"):
+        # Danh sách từ server là đủ: kênh của user này không còn trong đó (đã xoá / chuyển sang Tool riêng) thì bỏ khỏi DB cục bộ.
+        keep = sorted({str(c.get("id") or "").strip() for c in channels} - {""})
+        marks = ",".join("?" * len(keep))
+        removed = conn.execute(f"DELETE FROM local_channels WHERE owner_id=? AND id NOT IN ({marks})",
+                               [owner_id, *keep]).rowcount
+
     conn.commit()
-    return {"added": added, "updated": updated, "owner_id": owner_id}
+    return {"added": added, "updated": updated, "removed": removed, "owner_id": owner_id}
 
 
 def act_list_channels(conn: sqlite3.Connection, cmd: dict) -> dict:

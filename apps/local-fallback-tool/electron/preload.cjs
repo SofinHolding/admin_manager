@@ -14,7 +14,8 @@ contextBridge.exposeInMainWorld("collector", {
   endpoints:     ()         => ipcRenderer.invoke("collector:endpoints"),
   /** Chạy thử từng endpoint an toàn bằng cấu hình hiện tại (system_api.py probe). */
   probe:         ()         => ipcRenderer.invoke("collector:probe"),
-  apiGet:        (apiPath)  => ipcRenderer.invoke("collector:api:get", apiPath),
+  /** Kéo CHỈ user/kênh dùng tool dùng chung từ website (bỏ user có Tool riêng): { owners, channels, skipped } hoặc { error }. */
+  shared:        ()         => ipcRenderer.invoke("collector:shared"),
   readStatus:    ()         => ipcRenderer.invoke("collector:status:read"),
   /** Lắng nghe sự kiện scheduler (auto_started / auto_stopped). */
   onScheduleEvent: (cb) => ipcRenderer.on("collector:schedule:event", (_ev, data) => cb(data)),
@@ -24,16 +25,16 @@ contextBridge.exposeInMainWorld("channels", {
   /** Khởi tạo schema DB — gọi khi app mount. */
   init:
     ()                            => ipcRenderer.invoke("channels:init"),
-  /** Lưu danh sách user fetch về từ API, trả về { added: [id], total: N }. */
+  /** Lưu danh sách user fetch về từ API, trả về { added: [id], total: N, removed_users: N }. `prune`: bỏ user không còn trong danh sách. */
   saveUsers:
-    (users)                       => ipcRenderer.invoke("channels:users:save", users),
+    (users, prune)                => ipcRenderer.invoke("channels:users:save", { users, prune }),
   /** Đọc tất cả user kèm channel_count từ DB. */
   listUsers:
     ()                            => ipcRenderer.invoke("channels:users:list"),
-  /** Upsert kênh cho một user; trả về { added: N, updated: N }. */
+  /** Upsert kênh cho một user; trả về { added, updated, removed }. `replace`: bỏ kênh của user không còn trong danh sách. */
   pull:
-    (owner_id, owner_username, channels) =>
-                                     ipcRenderer.invoke("channels:pull", { owner_id, owner_username, channels }),
+    (owner_id, owner_username, channels, replace) =>
+                                     ipcRenderer.invoke("channels:pull", { owner_id, owner_username, channels, replace }),
   /** Trả về danh sách kênh; filters: { platform?, owner_id? }. */
   listChannels:
     (filters)                     => ipcRenderer.invoke("channels:list", filters ?? {}),

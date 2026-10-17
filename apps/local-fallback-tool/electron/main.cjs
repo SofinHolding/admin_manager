@@ -234,7 +234,6 @@ ipcMain.handle("collector:import-connection", async () => {
   const merged = { ...readConfigFile(), gateway: parsed.gateway, api_key: parsed.api_key };
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
-  machineInstallation = null;   // key mới => bind/installation mới
   return { ok: true, gateway: parsed.gateway };
 });
 
@@ -254,62 +253,30 @@ ipcMain.handle("collector:health", async () => {
 ipcMain.handle("collector:endpoints", () => ({ default_gateway: SYSTEM.default_gateway, gateway: gatewayOf(readConfigFile()),
                                                 endpoints: SYSTEM.endpoints }));
 
-/** Chạy thử từng endpoint an toàn qua system_api.py (key đi qua stdin, không lên dòng lệnh). */
-ipcMain.handle("collector:probe", () => new Promise((resolve) => {
-  const cfg = readConfigFile();
-  const pythonBin = process.platform === "win32" ? "python" : "python3";
-  const child = spawn(pythonBin, [SYSTEM_API_PY, "probe"], { windowsHide: true, stdio: "pipe", env: PY_ENV });
-  const out = [], err = [];
-  child.stdout.on("data", (d) => out.push(d));
-  child.stderr.on("data", (d) => err.push(d));
-  child.on("error", (e) => resolve({ error: `Không chạy được Python: ${e.message}` }));
-  child.on("close", () => {
-    const text = Buffer.concat(out).toString("utf-8").trim();
-    try { resolve(JSON.parse(text)); }
-    catch { resolve({ error: Buffer.concat(err).toString("utf-8").trim().slice(-300) || "system_api.py không trả kết quả" }); }
+/** Chạy một lệnh của system_api.py (key đi qua stdin, không lên dòng lệnh); trả JSON của lệnh hoặc `{ error }`. */
+function runSystemApi(command) {
+  return new Promise((resolve) => {
+    const cfg = readConfigFile();
+    const pythonBin = process.platform === "win32" ? "python" : "python3";
+    const child = spawn(pythonBin, [SYSTEM_API_PY, command], { windowsHide: true, stdio: "pipe", env: PY_ENV });
+    const out = [], err = [];
+    child.stdout.on("data", (d) => out.push(d));
+    child.stderr.on("data", (d) => err.push(d));
+    child.on("error", (e) => resolve({ error: `Không chạy được Python: ${e.message}` }));
+    child.on("close", () => {
+      const text = Buffer.concat(out).toString("utf-8").trim();
+      try { resolve(JSON.parse(text)); }
+      catch { resolve({ error: Buffer.concat(err).toString("utf-8").trim().slice(-300) || "system_api.py không trả kết quả" }); }
+    });
+    child.stdin.end(JSON.stringify({ gateway: gatewayOf(cfg), api_key: cfg.api_key || "" }), "utf-8");
   });
-  child.stdin.end(JSON.stringify({ gateway: gatewayOf(cfg), api_key: cfg.api_key || "" }), "utf-8");
-}));
-
-/** installation_id đã bind cho api_key hiện tại (device binding: mọi request máy ngoài /handshake phải gửi X-Installation-Id). */
-let machineInstallation = null; // { apiKey: string, installationId: string }
-
-/**
- * Handshake CÙNG thiết bị với collect.py (device_id `shared-collector-<hostname>`, cùng capabilities) để lấy lại
- * installation_id đã bind — 1 credential chỉ kích hoạt cho 1 thiết bị, handshake lặp lại trên cùng thiết bị là idempotent.
- */
-async function machineInstallationId(cfg, base) {
-  if (machineInstallation && machineInstallation.apiKey === cfg.api_key) return machineInstallation.installationId;
-  const host = require("os").hostname();
-  const res = await fetch(`${base}/v1/integrations/handshake`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${cfg.api_key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      installation: { device_id: `shared-collector-${host}`, hostname: host, os: "windows", app_version: "collect.py/1.0" },
-      platforms: [],
-      capabilities: ["data.collect"],
-    }),
-    signal: AbortSignal.timeout(6000),
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body?.error?.message ?? `Handshake lỗi HTTP ${res.status}`);
-  machineInstallation = { apiKey: cfg.api_key, installationId: body.data.installation_id };
-  return machineInstallation.installationId;
 }
 
-ipcMain.handle("collector:api:get", async (_event, apiPath) => {
-  const cfg = readConfigFile();
-  if (!cfg.api_key) return { error: "Chưa cấu hình api_key" };
-  const base = gatewayOf(cfg);
-  try {
-    const installationId = await machineInstallationId(cfg, base);
-    const res = await fetch(`${base}${apiPath}`, {
-      headers: { Authorization: `Bearer ${cfg.api_key}`, "X-Installation-Id": installationId },
-      signal: AbortSignal.timeout(6000),
-    });
-    return await res.json();
-  } catch (e) { return { error: e.message }; }
-});
+/** Chạy thử từng endpoint an toàn. */
+ipcMain.handle("collector:probe", () => runSystemApi("probe"));
+
+/** Kéo từ website CHỈ user/kênh dùng tool dùng chung (execution_mode=fallback_tool); user có Tool riêng bị bỏ. */
+ipcMain.handle("collector:shared", () => runSystemApi("shared"));
 
 ipcMain.handle("collector:status:read", () => {
   try { return JSON.parse(fs.readFileSync(STATUS_PATH, "utf-8")); }
@@ -364,14 +331,14 @@ function callChannelsDb(cmd) {
 ipcMain.handle("channels:init", () =>
   callChannelsDb({ action: "init" }));
 
-ipcMain.handle("channels:users:save", (_event, users) =>
-  callChannelsDb({ action: "save_users", users }));
+ipcMain.handle("channels:users:save", (_event, { users, prune }) =>
+  callChannelsDb({ action: "save_users", users, prune: !!prune }));
 
 ipcMain.handle("channels:users:list", () =>
   callChannelsDb({ action: "list_users" }));
 
-ipcMain.handle("channels:pull", (_event, { owner_id, owner_username, channels }) =>
-  callChannelsDb({ action: "save_channels", owner_id, owner_username, channels }));
+ipcMain.handle("channels:pull", (_event, { owner_id, owner_username, channels, replace }) =>
+  callChannelsDb({ action: "save_channels", owner_id, owner_username, channels, replace: !!replace }));
 
 ipcMain.handle("channels:list", (_event, filters) =>
   callChannelsDb({ action: "list_channels", ...(filters ?? {}) }));
@@ -407,7 +374,7 @@ ipcMain.handle("channels:login", async (_event, { url, username, password }) => 
 });
 
 /**
- * Gọi /v1/ops/* bằng user JWT (khác với collector:api:get dùng machine api_key).
+ * Gọi /v1/ops/* bằng user JWT admin (KHÔNG dùng machine api_key).
  */
 ipcMain.handle("channels:api-call", async (_event, { path, token }) => {
   const base = gatewayOf(readConfigFile());

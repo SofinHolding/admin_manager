@@ -1,13 +1,13 @@
 /**
  * Trang Kênh — local-fallback-tool.
  *
- * Dùng api_key máy (scope `jobs:claim`, cấu hình ở tab Thu thập) để lấy resource —
- * không cần đăng nhập admin riêng.
+ * Dùng api_key máy (cấu hình ở tab Thu thập) để kéo kênh từ website — không cần đăng nhập admin riêng.
+ * CHỈ kéo user/kênh dùng tool dùng chung (execution_mode=fallback_tool). User có Tool riêng (kênh qua primary_tool) tự đẩy
+ * dữ liệu bằng Tool của họ nên KHÔNG kéo về đây; user/kênh đã kéo trước đó mà nay không còn dùng tool dùng chung bị dọn khỏi DB.
  *
  * Luồng:
- *  1. [Fetch] → GET /v1/integrations/resources (machine api_key) → trả resource
- *     của chủ sở hữu duy nhất của máy này.
- *  2. Lọc bỏ group, upsert vào DB cục bộ, phân loại platform tự động.
+ *  1. [Fetch] → window.collector.shared() (system_api.py shared) → danh sách user dùng tool dùng chung, lưu DB cục bộ.
+ *  2. [Kéo kênh] → kênh của các user đã chọn, thay thế bộ kênh cũ của user đó trong DB (phân loại platform tự động).
  *  3. Kênh trong DB: tìm kiếm, lọc, tích chọn, xóa hoặc bật/tắt hàng loạt.
  */
 
@@ -24,48 +24,6 @@ const PLATFORM_META: Record<string, { label: string; icon: string; color: string
 const PLATFORM_ORDER = ["youtube", "tiktok", "facebook", "other"] as const;
 type PlatformKey = (typeof PLATFORM_ORDER)[number] | "all";
 
-// ── Resource trả về từ GET /v1/integrations/resources ──────────────────────────
-
-interface ApiResourceItem {
-  id: string;
-  platform: string;
-  resource_type: string;
-  external_id: string;
-  display_name: string;
-  username: string;
-  url: string;
-  state: string;
-  mapping_status: string;
-  execution_mode: string;
-  enabled: boolean;
-}
-
-// ── Gateway response type guards (envelope {ok,data,meta} hoặc lỗi IPC {error}) ─
-
-/** Type guard: lỗi cấp IPC (gateway chưa cấu hình, network lỗi) — không có `ok`. */
-function isIpcError(v: unknown): v is { error: string } {
-  return !!v && typeof v === "object" && !("ok" in v) && "error" in v
-    && typeof (v as Record<string, unknown>).error === "string";
-}
-/** Type guard: envelope lỗi từ API (`ok: false`). */
-function isApiError(v: unknown): v is { ok: false; error: { message?: string; code?: string } } {
-  return !!v && typeof v === "object" && (v as Record<string, unknown>).ok === false;
-}
-/** Type guard: envelope thành công chứa `data.items` (resources). */
-function isResourcesOk(v: unknown): v is { ok: true; data: { items: ApiResourceItem[]; owner_account_id: string; is_shared: boolean } } {
-  if (!v || typeof v !== "object") return false;
-  const obj = v as Record<string, unknown>;
-  if (obj.ok !== true || !obj.data || typeof obj.data !== "object") return false;
-  return Array.isArray((obj.data as Record<string, unknown>).items);
-}
-/** Type guard: envelope thành công chứa `data.users` (resource-owners). */
-function isOwnersOk(v: unknown): v is { ok: true; data: { users: { id: string; username: string; resource_count: number }[] } } {
-  if (!v || typeof v !== "object") return false;
-  const obj = v as Record<string, unknown>;
-  if (obj.ok !== true || !obj.data || typeof obj.data !== "object") return false;
-  return Array.isArray((obj.data as Record<string, unknown>).users);
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ChannelImportPage() {
@@ -78,6 +36,7 @@ export default function ChannelImportPage() {
   const [selected,    setSelected]    = useState<Set<string>>(new Set());
   const [fetching,    setFetching]    = useState(false);
   const [fetchError,  setFetchError]  = useState("");
+  const [fetchNote,   setFetchNote]   = useState("");
   const [pulling,     setPulling]     = useState(false);
   const [pullingId,   setPullingId]   = useState("");
   const [pullError,   setPullError]   = useState("");
@@ -126,20 +85,28 @@ export default function ChannelImportPage() {
 
   useEffect(() => { refreshChannels(); }, [refreshChannels]);
 
-  // ── Fetch users via machine api_key (không cần login) ────────────────────
+  // ── Fetch: chỉ user dùng tool dùng chung ─────────────────────────────────
+
+  /** Một lần gọi `GET /resources` (mọi owner) rồi lọc ở system_api.shared_view; lỗi hệ thống ném ra để hiển thị. */
+  const loadShared = async (): Promise<SharedPull> => {
+    const res = await window.collector!.shared();
+    if ("error" in res) throw new Error(res.error);
+    return res;
+  };
 
   const handleFetch = async () => {
     if (!isElectron || fetching || !dbReady) return;
-    setFetching(true); setFetchError(""); setNewUserIds(new Set());
+    setFetching(true); setFetchError(""); setNewUserIds(new Set()); setFetchNote("");
     try {
-      const raw = await window.collector!.apiGet("/v1/integrations/resource-owners");
-      if (isIpcError(raw)) throw new Error(raw.error);
-      if (isApiError(raw)) throw new Error(raw.error.message ?? "Lỗi từ API");
-      if (!isOwnersOk(raw)) throw new Error("Phản hồi không hợp lệ từ /resource-owners");
-      const users = raw.data.users.map((u) => ({ id: u.id, username: u.username || u.id }));
-      const saveRes = await window.channels!.saveUsers(users);
+      const shared = await loadShared();
+      const saveRes = await window.channels!.saveUsers(shared.owners.map((u) => ({ id: u.id, username: u.username })), true);
       setNewUserIds(new Set(saveRes.added ?? []));
-      await refreshUsers();
+      const { personal_tool_owners: po, personal_tool_channels: pc } = shared.skipped;
+      setFetchNote([
+        po > 0 ? `Bỏ qua ${po} user dùng Tool riêng (${pc} kênh).` : "",
+        (saveRes.removed_users ?? 0) > 0 ? `Đã dọn ${saveRes.removed_users} user không còn dùng tool dùng chung.` : "",
+      ].filter(Boolean).join(" "));
+      await Promise.all([refreshUsers(), refreshChannels()]);
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -147,36 +114,20 @@ export default function ChannelImportPage() {
     }
   };
 
-  // ── Pull channels cho user đã chọn (machine api_key) ─────────────────────
+  // ── Pull kênh cho user đã chọn ────────────────────────────────────────────
 
   const handlePull = async () => {
     if (!isElectron || selected.size === 0 || pulling) return;
     setPulling(true); setPullError(""); setPullResults({});
     const results: Record<string, { added: number; updated: number }> = {};
     try {
+      const shared = await loadShared();   // luôn lấy mới: kênh vừa đổi sang Tool riêng/bị xoá phải biến mất
       for (const uid of selected) {
         const user = dbUsers.find((u) => u.id === uid);
         if (!user) continue;
         setPullingId(uid);
-        const raw = await window.collector!.apiGet(
-          `/v1/integrations/resources?owner_account_id=${encodeURIComponent(uid)}`,
-        );
-        if (isIpcError(raw) || isApiError(raw) || !isResourcesOk(raw)) {
-          results[uid] = { added: -1, updated: -1 };
-          continue;
-        }
-        // Chỉ kênh — bỏ group
-        const channelItems: ApiInventoryItem[] = raw.data.items
-          .filter((r) => r.resource_type !== "group")
-          .map((r) => ({
-            id: r.id, owner_account_id: uid, owner_username: user.username,
-            platform: r.platform, resource_type: r.resource_type,
-            canonical_external_id: r.external_id,
-            input_ref: r.username || r.external_id,
-            display_name: r.display_name, url: r.url, mapping_status: r.mapping_status,
-            enabled: r.enabled,
-          }));
-        const pullRes = await window.channels!.pull(uid, user.username, channelItems);
+        const pullRes = await window.channels!.pull(
+          uid, user.username, shared.channels.filter((c) => c.owner_account_id === uid), true);
         results[uid] = { added: pullRes.added ?? 0, updated: pullRes.updated ?? 0 };
       }
     } catch (e) {
@@ -227,7 +178,7 @@ export default function ChannelImportPage() {
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", letterSpacing: ".04em" }}>
-              NGƯỜI DÙNG
+              NGƯỜI DÙNG TOOL DÙNG CHUNG
             </span>
             <button onClick={handleFetch} disabled={!isElectron || fetching || !dbReady} style={btnCss("ghost", !isElectron || fetching || !dbReady)}>
               {fetching ? "Đang tải…" : "⟳ Fetch"}
@@ -240,9 +191,15 @@ export default function ChannelImportPage() {
             </div>
           )}
 
+          {fetchNote && (
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8, padding: "7px 9px", background: "var(--surface)", borderRadius: 5, border: "1px solid var(--border)" }}>
+              {fetchNote}
+            </div>
+          )}
+
           {!fetching && dbUsers.length === 0 && (
             <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: "24px 8px", lineHeight: 1.7 }}>
-              Bấm <strong>Fetch</strong> để lấy danh sách người dùng.
+              Bấm <strong>Fetch</strong> để lấy người dùng đang dùng tool dùng chung (người dùng có Tool riêng không hiện ở đây).
             </div>
           )}
 

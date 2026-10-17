@@ -44,12 +44,18 @@ interface SystemProbeResult {
   status: "ok" | "fail" | "skipped"; http: number | null; ms: number | null; detail: string;
 }
 
+interface SharedPull {
+  owners: { id: string; username: string; resource_count: number }[];
+  channels: ApiInventoryItem[];
+  skipped: { personal_tool_owners: number; personal_tool_channels: number; other_channels: number };
+}
+
 declare interface Window {
   channels?: {
     init:           () => Promise<{ ok: boolean; db_path: string; user_count: number; channel_count: number }>;
-    saveUsers:      (users: { id: string; username: string }[]) => Promise<{ added: string[]; total: number }>;
+    saveUsers:      (users: { id: string; username: string }[], prune?: boolean) => Promise<{ added: string[]; total: number; removed_users?: number }>;
     listUsers:      () => Promise<{ users: DbUser[] }>;
-    pull:           (owner_id: string, owner_username: string, channels: ApiInventoryItem[]) => Promise<{ added: number; updated: number }>;
+    pull:           (owner_id: string, owner_username: string, channels: ApiInventoryItem[], replace?: boolean) => Promise<{ added: number; updated: number; removed?: number }>;
     listChannels:   (filters: {
       platform?: string; owner_id?: string;
       mapping_status?: string; enabled_filter?: string; search?: string;

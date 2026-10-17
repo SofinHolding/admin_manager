@@ -47,6 +47,14 @@ mà tool chưa theo kịp thì test đỏ.
 Tab **API hệ thống** (hoặc CLI `echo '{"api_key":"mpk_..."}' | python system_api.py probe`) chạy thử từng endpoint an toàn (đọc / idempotent)
 và báo OK/Lỗi/Bỏ qua từng cái; endpoint ghi hoặc đổi trạng thái job không bao giờ bị chạy thử.
 
+## Kéo dữ liệu từ website: chỉ user dùng tool dùng chung
+
+Tab **Người dùng & Kênh** (Fetch → Kéo kênh) chỉ lấy user/kênh có `execution_mode = fallback_tool` (khai báo trên web, chế độ "Máy tập trung").
+User có Tool riêng đẩy kênh bằng `primary_tool` nên KHÔNG kéo về; Fetch báo rõ số user/kênh bị bỏ qua. User còn vừa có Tool riêng vừa khai
+báo kênh trên web thì chỉ các kênh `fallback_tool` của họ được kéo. Mỗi lần Fetch/Kéo kênh thay thế dữ liệu cục bộ theo danh sách mới
+(`prune`/`replace` trong `channels_db.py`): user hoặc kênh đã chuyển sang Tool riêng/bị xoá trên web sẽ được dọn khỏi DB. Lọc nằm ở
+`system_api.shared_view` (một lần gọi `GET /resources`, không gọi theo từng owner).
+
 ## Kết nối bằng file Admin cấp
 
 Khi Admin cấp key cho công cụ dùng chung (trang Admin → Công cụ dùng chung), giao diện cho tải
