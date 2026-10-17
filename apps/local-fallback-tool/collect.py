@@ -47,7 +47,7 @@ from typing import Any
 
 import httpx
 
-from system_api import DEFAULT_GATEWAY, SystemApi
+from system_api import DEFAULT_GATEWAY, SystemApi, use_utf8_stdio
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -512,6 +512,7 @@ async def run_loop(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    use_utf8_stdio()   # log/ERROR tiếng Việt không được làm sập tiến trình khi stdout/stderr bị chuyển hướng (Windows cp1252)
     ap = argparse.ArgumentParser(description="Channel data collector (fallback_tool)")
     ap.add_argument("--connection-file", default=os.environ.get("COLLECTOR_CONNECTION_FILE", ""),
                     help="File kết nối do Admin cấp cùng key dùng chung (JSON: gateway + api_key + nền tảng). "

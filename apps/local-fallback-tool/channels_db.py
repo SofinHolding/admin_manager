@@ -336,6 +336,9 @@ _ACTIONS: dict[str, Any] = {
 
 
 def main() -> None:
+    # stdout/stderr của tiến trình con trên Windows mặc định là cp1252 — tiếng Việt làm UnicodeEncodeError. Luôn UTF-8.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
     try:
         cmd: dict = json.loads(raw) if raw.strip() else {}

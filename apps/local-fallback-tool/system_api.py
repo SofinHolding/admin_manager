@@ -354,7 +354,15 @@ async def probe_all(gateway: str, api_key: str, *, transport: httpx.AsyncBaseTra
     return out
 
 
+def use_utf8_stdio() -> None:
+    """stdout/stderr mặc định là codepage hệ thống (Windows: cp1252) khi bị chuyển hướng: tiếng Việt làm UnicodeEncodeError
+    (JSON kết quả, log). Mọi điểm vào của tool gọi hàm này trước khi in."""
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8")
+
+
 def main() -> None:
+    use_utf8_stdio()
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "catalog":
         print(json.dumps(CATALOG, ensure_ascii=False))

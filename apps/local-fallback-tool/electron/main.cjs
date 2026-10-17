@@ -12,6 +12,9 @@ const CONFIG_PATH   = path.join(ROOT_DIR, ".dev", "collector-config.json");
 const LOG_PATH      = path.join(ROOT_DIR, ".dev", "collector.log");
 const STATUS_PATH   = path.join(ROOT_DIR, ".dev", "collector-status.json");
 const LOG_TAIL_LINES = 200;
+/** Python con trên Windows mặc định ghi stdout/stderr bằng codepage hệ thống (cp1252): tiếng Việt làm UnicodeEncodeError.
+ *  Mọi giao tiếp với Python đều là UTF-8 (JSON qua stdin/stdout, log). */
+const PY_ENV = { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" };
 
 // Địa chỉ máy chủ nhúng sẵn + danh sách endpoint hệ thống: nguồn sự thật duy nhất, dùng chung với system_api.py.
 const SYSTEM = require("../system-endpoints.json");
@@ -64,7 +67,7 @@ function spawnCollector(cfg, platformsOverride) {
   const logStream = fs.createWriteStream(LOG_PATH, { flags: "a" });
   const pythonBin = process.platform === "win32" ? "python" : "python3";
   const child = spawn(pythonBin, buildCollectorArgs(cfg, platformsOverride), {
-    cwd: path.dirname(COLLECT_PY), windowsHide: true,
+    cwd: path.dirname(COLLECT_PY), windowsHide: true, env: PY_ENV,
   });
   child.stdout.pipe(logStream);
   child.stderr.pipe(logStream);
@@ -255,7 +258,7 @@ ipcMain.handle("collector:endpoints", () => ({ default_gateway: SYSTEM.default_g
 ipcMain.handle("collector:probe", () => new Promise((resolve) => {
   const cfg = readConfigFile();
   const pythonBin = process.platform === "win32" ? "python" : "python3";
-  const child = spawn(pythonBin, [SYSTEM_API_PY, "probe"], { windowsHide: true, stdio: "pipe" });
+  const child = spawn(pythonBin, [SYSTEM_API_PY, "probe"], { windowsHide: true, stdio: "pipe", env: PY_ENV });
   const out = [], err = [];
   child.stdout.on("data", (d) => out.push(d));
   child.stderr.on("data", (d) => err.push(d));
@@ -327,6 +330,7 @@ function callChannelsDb(cmd) {
     const child = spawn(pythonBin, [CHANNELS_DB_PY], {
       windowsHide: true,
       stdio: "pipe",
+      env: PY_ENV,
     });
     const stdout = [];
     const stderr = [];
