@@ -30,6 +30,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -225,6 +226,31 @@ async def process_job(job: dict, client: SystemApi, creds: Credentials, tracker:
         except Exception:  # noqa: BLE001
             pass
 
+
+async def run_once(client: SystemApi, platforms: list[str], wanted: set[str] | None, limit: int,
+                   process: Callable[[dict], Awaitable[None]]) -> int:
+    """Chạy ngay: xin job cho kênh đã kéo + đang bật (chỉ các kênh trong `wanted` nếu có), xử lý hết rồi dừng — không chờ lịch, không chờ vòng lặp.
+    Trả số job đã xử lý. Mỗi kênh bị chặn tối đa 3 lần nhận job trong một lượt (job lỗi tự thử lại sau thời gian chờ của server, không quay vòng ở đây)."""
+    ids = [t["id"] for t in channels_db.pulled_targets(platforms) if wanted is None or t["id"] in wanted]
+    if not ids:
+        log.warning("Chạy ngay: không có kênh nào (đã kéo + đang bật%s) — dừng", " + nằm trong lựa chọn" if wanted is not None else "")
+        return 0
+    res = await client.enqueue_jobs(ids)
+    log.info("Chạy ngay: xin job cho %d kênh (mới %d, đang có sẵn %d, bỏ qua %d)", len(ids), res["created"], res["already_active"], len(res["skipped"]))
+    if res["skipped"]:
+        log.warning("Kênh bị bỏ qua: %s", ", ".join(f"{s['resource_id']}={s['reason']}" for s in res["skipped"][:10]))
+    handled, budget = 0, 3 * len(ids)
+    while handled < budget:
+        jobs = await client.claim_jobs(platforms, limit=limit, resource_ids=ids)
+        if not jobs:
+            break
+        log.info("Claimed %d jobs", len(jobs))
+        await asyncio.gather(*[process(j) for j in jobs], return_exceptions=True)
+        handled += len(jobs)
+    log.info("Chạy ngay xong: %d job đã xử lý", handled)
+    return handled
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 async def run_loop(args: argparse.Namespace) -> None:
@@ -262,6 +288,19 @@ async def run_loop(args: argparse.Namespace) -> None:
     async def _process(job: dict) -> None:
         async with sem:
             await process_job(job, client, creds, tracker)
+
+    if getattr(args, "once", False):
+        wanted = set(args.resource_ids) if getattr(args, "resource_ids", None) else None
+        try:
+            await run_once(client, active_platforms, wanted, args.max_concurrent * 2, _process)
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            hint = " — máy chủ chưa có endpoint xin job (cần deploy integration-service bản mới)" if code in (404, 405) else ""
+            log.error("Chạy ngay thất bại: HTTP %s %s%s", code, exc.request.url.path, hint)
+            sys.exit(1)
+        finally:
+            await client.aclose()
+        return
 
     plan = EnqueuePlan()
     warned_empty = False
@@ -312,7 +351,7 @@ def main() -> None:
     ap.add_argument("--api-key", default=os.environ.get("MACHINE_API_KEY", ""),
                     help="Machine API key (mpk_<key_id>.<secret>)")
     ap.add_argument("--settings-file", default=os.environ.get("COLLECTOR_SETTINGS_FILE", str(channel_collect.DEFAULT_SETTINGS)),
-                    help="File cấu hình của tool: youtube_api_keys[], proxies[], fb_cookie, chrome_path")
+                    help="File cấu hình của tool: youtube_api_keys[], proxies[], fb_cookie")
     ap.add_argument("--poll-interval", type=int, default=30, help="Giây chờ khi không có job")
     ap.add_argument("--max-concurrent", type=int, default=3, help="Số job chạy song song")
     ap.add_argument("--platforms", type=lambda s: [p.strip() for p in s.split(",") if p.strip()],
@@ -320,6 +359,9 @@ def main() -> None:
                                        "(mặc định: mọi nền tảng key được phép VÀ collector có adapter)")
     ap.add_argument("--status-file", default=os.environ.get("COLLECTOR_STATUS_FILE", ""),
                     help="Đường dẫn file JSON ghi trạng thái collector (owner, channel, errors)")
+    ap.add_argument("--once", action="store_true", help="Chạy ngay MỘT lượt (xin job + xử lý hết) rồi thoát, không chờ lịch/vòng lặp")
+    ap.add_argument("--resource-ids", type=lambda s: [p.strip() for p in s.split(",") if p.strip()], default=None,
+                    help="Với --once: chỉ chạy các kênh (resource_id) này, cách nhau bằng dấu phẩy")
     args = ap.parse_args()
 
     if args.connection_file:

@@ -232,6 +232,13 @@ export default function CollectorPage() {
     return () => clearInterval(id);
   }, [isElectron, running, refreshStatus, refreshLog, refreshCStatus]);
 
+  // Collector vừa dừng (hết lượt "Chạy ngay" hoặc bị dừng): đọc lần cuối để số OK/lỗi và log mới nhất hiện ra.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !running) { refreshLog(); refreshCStatus(); }
+    wasRunning.current = running;
+  }, [running, refreshLog, refreshCStatus]);
+
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 1000);
     return () => clearInterval(id);
@@ -255,6 +262,19 @@ export default function CollectorPage() {
       const res = await bridge().start(config);
       if (res.ok) { setRunning(true); setPid(res.pid ?? null); setStartedAt(Date.now()); }
       else setStartError(res.reason || "Không thể khởi động");
+    } catch (e) {
+      setStartError(e instanceof Error ? e.message : String(e));
+    } finally { setStarting(false); }
+  };
+
+  /** "Chạy ngay": MỘT lượt (xin job + xử lý hết) rồi collector tự dừng, không chờ lịch. Không truyền `resourceIds` = mọi kênh đã kéo + đang bật. */
+  const handleRunNow = async (resourceIds?: string[]) => {
+    if (!isElectron || running) return;
+    setStartError(""); setStarting(true);
+    try {
+      const res = await bridge().runNow({ resource_ids: resourceIds });
+      if (res.ok) { setRunning(true); setPid(res.pid ?? null); setStartedAt(Date.now()); }
+      else setStartError(res.reason === "already_running" ? "Collector đang chạy — dừng trước khi chạy ngay" : res.reason || "Không thể chạy");
     } catch (e) {
       setStartError(e instanceof Error ? e.message : String(e));
     } finally { setStarting(false); }
@@ -392,7 +412,7 @@ export default function CollectorPage() {
   const stats = cStatus?.channels ?? {};
   const shortId = (id: string) => (id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-8)}` : id || "unknown");
   const allChannels: ChannelRowData[] = pulled.map((c) => ({
-    key: `${c.platform}/${c.id}`, name: c.display_name || c.input_ref || c.id, platform: c.platform,
+    key: `${c.platform}/${c.id}`, id: c.id, name: c.display_name || c.input_ref || c.id, platform: c.platform,
     owner: c.owner_username || shortId(c.owner_id), stat: stats[`${c.platform}/${c.id}`], outside: false,
   }));
   const pulledKeys = new Set(allChannels.map((c) => c.key));
@@ -461,9 +481,18 @@ export default function CollectorPage() {
           {running ? (
             <button onClick={handleStop} style={btnCss("danger")}>Dừng</button>
           ) : (
-            <button onClick={handleStart} disabled={!isElectron || starting} style={btnCss("primary", !isElectron || starting)}>
-              {starting ? "Đang khởi động…" : "Bắt đầu"}
-            </button>
+            <>
+              <button onClick={() => handleRunNow()} disabled={!isElectron || starting}
+                      title="Chạy MỘT lượt cho mọi kênh đã kéo + đang bật rồi tự dừng — không chờ lịch"
+                      style={btnCss("ghost", !isElectron || starting)}>
+                ▶ Chạy ngay
+              </button>
+              <button onClick={handleStart} disabled={!isElectron || starting}
+                      title="Chạy liên tục: thu theo lịch, mỗi ngày xin job lại cho kênh đã kéo"
+                      style={btnCss("primary", !isElectron || starting)}>
+                {starting ? "Đang khởi động…" : "Bắt đầu"}
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -779,6 +808,12 @@ export default function CollectorPage() {
                 <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>
                   {filteredChannels.length} kênh
                 </span>
+                <button onClick={() => handleRunNow(filteredChannels.filter(c => c.id).map(c => c.id as string))}
+                        disabled={!isElectron || running || starting || !filteredChannels.some(c => c.id)}
+                        title="Chạy ngay các kênh đang hiển thị theo bộ lọc nền tảng bên cạnh"
+                        style={{ ...btnCss("ghost", !isElectron || running || starting || !filteredChannels.some(c => c.id)), height: 24, fontSize: 11 }}>
+                  ▶ Chạy ngay {filteredChannels.filter(c => c.id).length} kênh
+                </button>
               </div>
 
               <div style={{ flex: 1, overflowY: "auto", padding: "0 14px 12px" }}>
@@ -802,7 +837,7 @@ export default function CollectorPage() {
                 ) : (
                   <>
                     {Object.entries(byOwner).map(([owner, chs]) => (
-                      <ChannelOwnerBlock key={owner} owner={owner} chs={chs} />
+                      <ChannelOwnerBlock key={owner} owner={owner} chs={chs} onRun={(id) => handleRunNow([id])} runDisabled={!isElectron || running || starting} />
                     ))}
                     {outsideChannels.length > 0 && (
                       <ChannelOwnerBlock owner="Ngoài danh sách đã kéo" chs={outsideChannels}
@@ -1108,10 +1143,13 @@ function CfgField({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-interface ChannelRowData { key: string; name: string; platform: string; owner: string; stat?: ChannelStat; outside: boolean }
+interface ChannelRowData { key: string; id?: string; name: string; platform: string; owner: string; stat?: ChannelStat; outside: boolean }
 
-/** Một nhóm kênh theo chủ sở hữu: tên kênh, số lần OK/lỗi, lần gần nhất, lỗi cuối. Kênh chưa có job chạy xong hiện "Chờ thu thập". */
-function ChannelOwnerBlock({ owner, chs, note }: { owner: string; chs: ChannelRowData[]; note?: string }) {
+/** Một nhóm kênh theo chủ sở hữu: tên kênh, số lần OK/lỗi, lần gần nhất, lỗi cuối. Kênh chưa có job chạy xong trong phiên này hiện "Chưa thu (phiên này)" —
+ *  số liệu này đọc từ file trạng thái của collector, KHÁC danh sách kênh (đọc từ DB cục bộ). */
+function ChannelOwnerBlock({ owner, chs, note, onRun, runDisabled }: {
+  owner: string; chs: ChannelRowData[]; note?: string; onRun?: (id: string) => void; runDisabled?: boolean;
+}) {
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid var(--border)" }}>
@@ -1145,7 +1183,11 @@ function ChannelOwnerBlock({ owner, chs, note }: { owner: string; chs: ChannelRo
                 )}
               </>
             ) : (
-              <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>Chờ thu thập</span>
+              <span title="Collector chưa xử lý job nào của kênh này trong phiên hiện tại" style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>Chưa thu (phiên này)</span>
+            )}
+            {ch.id && onRun && (
+              <button type="button" onClick={() => onRun(ch.id as string)} disabled={runDisabled} title="Chạy ngay riêng kênh này"
+                      style={{ ...btnCss("ghost", runDisabled), height: 22, fontSize: 10, padding: "0 7px", flexShrink: 0 }}>▶ Chạy ngay</button>
             )}
           </div>
         );
@@ -1168,6 +1210,7 @@ declare global {
       start:           (cfg: CollectorConfig) => Promise<{ ok: boolean; pid?: number; reason?: string }>;
       stop:            () => Promise<{ ok: boolean }>;
       status:          () => Promise<{ running: boolean; pid: number | null; autoState: AutoState | null }>;
+      runNow:          (opts?: { platforms?: string[]; resource_ids?: string[] }) => Promise<{ ok: boolean; pid?: number; reason?: string }>;
       readLog:         () => Promise<string>;
       readConfig:      () => Promise<CollectorConfig>;
       writeConfig:     (cfg: CollectorConfig) => Promise<{ ok: boolean }>;

@@ -9,7 +9,7 @@ const ROOT_DIR    = path.join(__dirname, "../../..");
 const COLLECT_PY    = path.join(__dirname, "..", "collect.py");
 const CHANNELS_DB_PY = path.join(__dirname, "..", "channels_db.py");
 const HEALTH_PY      = path.join(__dirname, "..", "health.py");
-const TIKTOK_LINKS_PY = path.join(__dirname, "..", "tiktok_links.py");
+const VIDEO_LINKS_PY = path.join(__dirname, "..", "video_links.py");
 const CONFIG_PATH   = path.join(ROOT_DIR, ".dev", "collector-config.json");
 const VIDEO_LINKS_DIR = path.join(ROOT_DIR, ".dev", "video-links");
 const LOG_PATH      = path.join(ROOT_DIR, ".dev", "collector.log");
@@ -43,7 +43,7 @@ function killCollector() {
   collectorProcess = null;
 }
 
-function buildCollectorArgs(cfg, platformsOverride) {
+function buildCollectorArgs(cfg, platformsOverride, extra = []) {
   const args = [COLLECT_PY];
   args.push("--gateway", gatewayOf(cfg));
   if (cfg.api_key)         args.push("--api-key",         cfg.api_key);
@@ -59,15 +59,15 @@ function buildCollectorArgs(cfg, platformsOverride) {
   });
   if (platforms.length > 0 && platforms.length < 3)
     args.push("--platforms", platforms.join(","));
-  return args;
+  return [...args, ...extra];
 }
 
-function spawnCollector(cfg, platformsOverride) {
+function spawnCollector(cfg, platformsOverride, extra = []) {
   if (collectorProcess) return { ok: false, reason: "already_running" };
   fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
   const logStream = fs.createWriteStream(LOG_PATH, { flags: "a" });
   const pythonBin = process.platform === "win32" ? "python" : "python3";
-  const child = spawn(pythonBin, buildCollectorArgs(cfg, platformsOverride), {
+  const child = spawn(pythonBin, buildCollectorArgs(cfg, platformsOverride, extra), {
     cwd: path.dirname(COLLECT_PY), windowsHide: true, env: PY_ENV,
   });
   child.stdout.pipe(logStream);
@@ -160,6 +160,14 @@ app.on("activate", () => {
 ipcMain.handle("collector:start", (_event, cfg) => {
   schedAutoState = null; // Manual start clears auto state
   return spawnCollector(cfg || readConfigFile());
+});
+
+/** "Chạy ngay": một lượt (xin job + xử lý hết) rồi collector tự thoát, không chờ lịch. `resource_ids` rỗng = mọi kênh đã kéo + đang bật. */
+ipcMain.handle("collector:run-now", (_event, { platforms, resource_ids } = {}) => {
+  schedAutoState = null;
+  const extra = ["--once"];
+  if (Array.isArray(resource_ids) && resource_ids.length) extra.push("--resource-ids", resource_ids.join(","));
+  return spawnCollector(readConfigFile(), Array.isArray(platforms) && platforms.length ? platforms : undefined, extra);
 });
 
 ipcMain.handle("collector:stop", () => {
@@ -315,9 +323,9 @@ ipcMain.handle("pool:merge", (_event, { kind, existing, text }) => {
   return runPyJson(HEALTH_PY, ["merge", kind], { existing: Array.isArray(existing) ? existing : [], text: String(text || "") }, 20_000);
 });
 
-/** Lấy TẤT CẢ link video của một kênh TikTok về máy (lưu DB cục bộ + file .txt). Có thể mất vài phút với kênh lớn. */
-ipcMain.handle("tiktok:fetch-links", (_event, { channel_id, url }) =>
-  runPyJson(TIKTOK_LINKS_PY, ["fetch"], { channel_id, url }, 40 * 60_000));
+/** Lấy TẤT CẢ link video của một kênh (YouTube/TikTok) về máy (lưu DB cục bộ + file .txt). Có thể mất vài phút với kênh lớn. */
+ipcMain.handle("links:fetch", (_event, { platform, channel_id, url }) =>
+  runPyJson(VIDEO_LINKS_PY, ["fetch"], { platform, channel_id, url }, 40 * 60_000));
 
 /** Mở thư mục chứa file link đã xuất (chỉ trong thư mục video-links của tool). */
 ipcMain.handle("links:reveal", (_event, { path: file }) => {

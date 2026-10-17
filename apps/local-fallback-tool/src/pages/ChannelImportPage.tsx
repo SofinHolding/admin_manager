@@ -103,7 +103,7 @@ export default function ChannelImportPage() {
   const byId = new Map(all.map((c) => [c.id, c]));
   const selUnpulled = [...selected].filter((id) => byId.get(id)?.pulled === 0);
   const selPulled   = [...selected].filter((id) => byId.get(id)?.pulled === 1);
-  const selTikTok   = selPulled.filter((id) => byId.get(id)?.platform === "tiktok");
+  const selLinkable = selPulled.filter((id) => ["youtube", "tiktok"].includes(byId.get(id)?.platform ?? ""));   // nền tảng đã hỗ trợ lấy toàn bộ link
 
   /** Kéo CHỈ các kênh chưa kéo trong lựa chọn; kênh đã kéo không bao giờ được gửi đi kéo lại. */
   const handlePull = async () => {
@@ -133,19 +133,19 @@ export default function ChannelImportPage() {
     }
   };
 
-  /** Lấy TẤT CẢ link video của các kênh TikTok đã kéo trong lựa chọn (lần lượt từng kênh; kênh lớn có thể mất vài phút). */
+  /** Lấy TẤT CẢ link video của các kênh YouTube/TikTok đã kéo trong lựa chọn (lần lượt từng kênh; kênh lớn có thể mất vài phút). */
   const handleFetchLinks = async () => {
-    if (!window.channels || busy || linksBusy || selTikTok.length === 0) return;
+    if (!window.channels || busy || linksBusy || selLinkable.length === 0) return;
     setPullMsg(null);
     const lines: string[] = [];
     let failed = 0;
     try {
-      for (const id of selTikTok) {
+      for (const id of selLinkable) {
         const ch = byId.get(id);
         if (!ch) continue;
         const label = ch.display_name || ch.input_ref || ch.id;
         setLinksBusy(label);
-        const res = await window.channels.fetchTikTokLinks(ch.id, ch.input_ref || ch.url);
+        const res = await window.channels.fetchLinks(ch.platform, ch.id, ch.input_ref || ch.url);
         if ("error" in res) { failed++; lines.push(`${label}: ${res.error}`); continue; }
         lines.push(res.kind === "empty" ? `${label}: kênh chưa có video` : `${label}: ${res.found} link (mới ${res.added}, tổng ${res.total}) → ${res.export}`);
       }
@@ -321,10 +321,10 @@ export default function ChannelImportPage() {
             <button onClick={() => pulledAction("disable")} disabled={busy || selPulled.length === 0} style={{ ...btnCss("ghost", busy || selPulled.length === 0), fontSize: 11, height: 26 }}>○ Tắt</button>
             <button onClick={() => pulledAction("unpull")}  disabled={busy || selPulled.length === 0} style={{ ...btnCss("ghost", busy || selPulled.length === 0), fontSize: 11, height: 26, color: "var(--red)" }}>Gỡ kết nối</button>
             <div style={{ width: 1, height: 16, background: "var(--border)" }} />
-            <button onClick={handleFetchLinks} disabled={busy || !!linksBusy || selTikTok.length === 0}
-                    title="Mở Chrome/Edge chạy ẩn lấy cookie rồi liệt kê toàn bộ video của kênh TikTok (lưu trên máy + file .txt)"
-                    style={{ ...btnCss("ghost", busy || !!linksBusy || selTikTok.length === 0), fontSize: 11, height: 26, color: "var(--accent)" }}>
-              {linksBusy ? `Đang lấy: ${linksBusy}…` : `🔗 Lấy toàn bộ link video (${selTikTok.length} kênh TikTok)`}
+            <button onClick={handleFetchLinks} disabled={busy || !!linksBusy || selLinkable.length === 0}
+                    title="Lấy toàn bộ video của kênh YouTube (Data API) / TikTok (yt-dlp qua proxy), lưu trên máy + file .txt"
+                    style={{ ...btnCss("ghost", busy || !!linksBusy || selLinkable.length === 0), fontSize: 11, height: 26, color: "var(--accent)" }}>
+              {linksBusy ? `Đang lấy: ${linksBusy}…` : `🔗 Lấy toàn bộ link video (${selLinkable.length} kênh YouTube/TikTok)`}
             </button>
           </div>
         )}
@@ -471,7 +471,7 @@ function ChannelRow({ ch, selected, onToggle, onShowLinks }: { ch: LocalChannel;
       }}>
         {ch.mapping_status === "mapped" ? "mapped" : "chưa map"}
       </span>
-      {ch.platform === "tiktok" && (ch.video_count ?? 0) > 0 && (
+      {["youtube", "tiktok"].includes(ch.platform) && (ch.video_count ?? 0) > 0 && (
         <button type="button" title="Xem link video đã lấy về máy" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onShowLinks(); }}
                 style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, flexShrink: 0, cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
                          background: "var(--bg)", color: "var(--accent)", border: "1px solid var(--border)" }}>

@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("collector", {
   start:         (cfg)      => ipcRenderer.invoke("collector:start", cfg),
+  /** "Chạy ngay": một lượt rồi tự thoát. opts: { platforms?: string[], resource_ids?: string[] } — rỗng = mọi kênh đã kéo + đang bật. */
+  runNow:        (opts)     => ipcRenderer.invoke("collector:run-now", opts ?? {}),
   stop:          ()         => ipcRenderer.invoke("collector:stop"),
   status:        ()         => ipcRenderer.invoke("collector:status"),
   readLog:       ()         => ipcRenderer.invoke("collector:log"),
@@ -57,9 +59,9 @@ contextBridge.exposeInMainWorld("channels", {
   /** Gọi /v1/ops/* với JWT admin (KHÔNG dùng machine api_key). */
   apiCall:
     (path, token)                         => ipcRenderer.invoke("channels:api-call", { path, token }),
-  /** Lấy TẤT CẢ link video của một kênh TikTok về máy. Trả { ok, found, added, total, kind, via, export } hoặc { error }. */
-  fetchTikTokLinks:
-    (channel_id, url)                     => ipcRenderer.invoke("tiktok:fetch-links", { channel_id, url }),
+  /** Lấy TẤT CẢ link video của một kênh (platform: "youtube" | "tiktok") về máy. Trả { ok, found, added, total, kind, via, attempts, export } hoặc { error }. */
+  fetchLinks:
+    (platform, channel_id, url)           => ipcRenderer.invoke("links:fetch", { platform, channel_id, url }),
   /** Link video đã lưu của một kênh. */
   listVideos:
     (channel_id)                          => ipcRenderer.invoke("channels:videos:list", { channel_id }),

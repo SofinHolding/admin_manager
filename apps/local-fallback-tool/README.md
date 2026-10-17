@@ -111,10 +111,16 @@ dòng không hợp lệ ở lại ô nhập để sửa. Mỗi dòng trong danh 
 Danh sách chỉ đổi trong cấu hình đang soạn đến khi bấm **Lưu cấu hình**. Key hiển thị đã che (`AIzaAB…WXYZ`), mật khẩu proxy hiển thị `***`; lỗi không bao giờ chứa key/mật khẩu.
 Cấu hình cũ một giá trị (`youtube_api_key`, `proxy`) được gộp vào danh sách khi đọc và bị bỏ khi lưu.
 
-## Lấy toàn bộ link video của kênh TikTok
+## Lấy toàn bộ link video của kênh YouTube / TikTok
 
-Tab Người dùng & Kênh: chọn kênh TikTok **đã kéo** → **🔗 Lấy toàn bộ link video**. Link lưu trong DB cục bộ (`channel_videos`), xuất file `.dev/video-links/<kênh>.txt`
-(mới nhất trước), xem/sao chép/lưu `.txt` ở nút `🔗 N link` trên dòng kênh.
+Tab Người dùng & Kênh: chọn kênh YouTube hoặc TikTok **đã kéo** → **🔗 Lấy toàn bộ link video** (`video_links.py`). Link lưu trong DB cục bộ (`channel_videos`: link, tiêu đề, ngày đăng,
+lượt xem nếu nguồn có), xuất file `.dev/video-links/<kênh>.txt` (mới nhất trước), xem/sao chép/lưu `.txt` ở nút `🔗 N link` trên dòng kênh. Đây là danh sách link; lượt xem trong đó là
+số lúc liệt kê. Việc **đo view/like/comment/share** (và đẩy lên website) do collector làm theo job — 30 video mới nhất/kênh YouTube, 15 video/kênh TikTok.
+
+YouTube: Data API (playlist uploads + thống kê, xoay nhiều key, tới 5000 video, ~1 đơn vị quota/50 video); không có key thì yt-dlp (chỉ link). Đã đo: 2 kênh thật ra đủ 242 và 236 video trong 4 giây.
+
+### TikTok
+
 
 Cách làm (`tiktok_links.py`): yt-dlp `extract_flat` **không cookie, không trình duyệt**, lặp tối đa 25 lượt, mỗi lượt đổi proxy kế tiếp và đổi dấu vân tay TLS
 (chrome-136/131/124) cho tới khi qua cổng chống bot của TikTok. Lý do — số đo thật (9 proxy dân cư VN, kênh 393 video):
@@ -131,6 +137,15 @@ Cổng chặn **ngẫu nhiên ~75% lượt gọi** (yt-dlp báo `Unable to extra
 nên lặp là cách ít lỗi nhất. Kênh trống / riêng tư được nhận ra ngay (không lặp). Hết 25 lượt thì báo rõ và gợi ý thêm/đổi proxy (nên dùng proxy dân cư).
 Không có proxy thì đi bằng IP máy này (IP không tốt có thể trượt cả 25 lượt). Mỗi lần gọi bắt đầu từ một proxy ngẫu nhiên để job song song không dồn vào một proxy.
 
+
+## "Chạy ngay" (không chờ lịch)
+
+Tab Thu thập có nút **▶ Chạy ngay** ở đầu trang (mọi kênh đã kéo + đang bật), ở thanh lọc của tab Kênh & người dùng (các kênh đang hiện theo bộ lọc nền tảng) và trên từng dòng kênh.
+Nó chạy `collect.py --once [--resource-ids …]`: xin job cho kênh được chọn, xử lý hết rồi **tự thoát** (khác **Bắt đầu** = chạy liên tục theo lịch). Cần máy chủ có
+`POST /v1/integrations/jobs/enqueue` (commit `daff94a`); máy chủ cũ trả 405 và log báo "cần deploy integration-service bản mới".
+
+Cột trạng thái "Chưa thu (phiên này)" của tab Kênh & người dùng đọc từ file trạng thái của collector (`.dev/collector-status.json`, số OK/lỗi của các job collector đã xử lý), còn
+danh sách kênh đọc từ DB cục bộ như tab Người dùng & Kênh — hai nguồn khác nhau nên kênh đã kéo vẫn hiện "Chưa thu" cho tới khi collector xử lý job của kênh đó.
 ## Test
 
 ```powershell

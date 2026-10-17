@@ -239,6 +239,71 @@ def test_a_channel_pulled_during_the_session_is_enqueued_on_its_own(monkeypatch)
     assert api.enqueued == [["a"], ["c"]]
 
 
+# ── "Chạy ngay": một lượt rồi thoát ───────────────────────────────────────────────────────────
+
+class _OnceApi(_Api):
+    def __init__(self, batches: list[list[dict]]) -> None:
+        super().__init__()
+        self._batches = list(batches)
+
+    async def claim_jobs(self, _platforms, limit=10, resource_ids=None):
+        self.claims.append(list(resource_ids) if resource_ids else None)
+        return self._batches.pop(0) if self._batches else []
+
+
+def _once(monkeypatch, api: _OnceApi, pulled: list[str], wanted: set[str] | None):
+    monkeypatch.setattr(collect.channels_db, "pulled_targets", lambda _p: [{"id": i, "platform": "youtube"} for i in pulled])
+    done: list[str] = []
+
+    async def process(job):
+        done.append(job["job_id"])
+    n = asyncio.run(collect.run_once(api, ["youtube"], wanted, 4, process))
+    return n, done
+
+
+def test_run_now_enqueues_claims_everything_then_stops_without_waiting(monkeypatch):
+    api = _OnceApi([[{"job_id": "j1"}, {"job_id": "j2"}], [{"job_id": "j3"}]])
+    n, done = _once(monkeypatch, api, ["a", "b"], None)
+    assert api.enqueued == [["a", "b"]] and api.claims == [["a", "b"]] * 3     # lần claim thứ 3 rỗng => dừng
+    assert n == 3 and done == ["j1", "j2", "j3"]
+
+
+def test_run_now_limited_to_chosen_channels_ignores_the_others(monkeypatch):
+    api = _OnceApi([[{"job_id": "j1"}]])
+    _once(monkeypatch, api, ["a", "b", "c"], {"b"})
+    assert api.enqueued == [["b"]] and api.claims[0] == ["b"]
+
+
+def test_run_now_with_a_chosen_channel_that_is_not_pulled_does_nothing(monkeypatch):
+    api = _OnceApi([[{"job_id": "j1"}]])
+    n, _ = _once(monkeypatch, api, ["a"], {"zzz"})
+    assert n == 0 and api.enqueued == [] and api.claims == []
+
+
+def test_run_now_does_not_spin_forever_on_jobs_the_server_keeps_handing_back(monkeypatch):
+    api = _OnceApi([[{"job_id": f"j{i}"}] for i in range(100)])
+    n, _ = _once(monkeypatch, api, ["a", "b"], None)
+    assert n == 6                                                              # trần 3 lần nhận / kênh
+
+
+def test_run_loop_in_once_mode_exits_after_one_pass(monkeypatch):
+    _Api.instances = []
+    monkeypatch.setattr(collect, "SystemApi", _OnceApiFactory)
+    monkeypatch.setattr(collect.channels_db, "pulled_targets", lambda _p: [{"id": "a", "platform": "youtube"}])
+    args = _args()
+    args.once, args.resource_ids = True, ["a"]
+    asyncio.run(collect.run_loop(args))                                        # không CancelledError, không vòng lặp vô hạn
+    assert _OnceApiFactory.last.enqueued == [["a"]]
+
+
+class _OnceApiFactory(_OnceApi):
+    last: "_OnceApiFactory"
+
+    def __init__(self, *_a, **_k) -> None:
+        super().__init__([])
+        _OnceApiFactory.last = self
+
+
 # ── DB: kênh nào được phép thu ─────────────────────────────────────────────────────────────
 
 def test_pulled_targets_are_pulled_enabled_channels_of_the_requested_platforms_only(tmp_path, monkeypatch):

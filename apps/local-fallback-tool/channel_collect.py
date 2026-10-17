@@ -115,14 +115,20 @@ def collect_youtube(input_ref: str, creds: Credentials) -> tuple[list[dict], dic
     return items, channel_stats
 
 
+def youtube_channel_url(ref: str) -> str:
+    """URL kênh chuẩn cho yt-dlp từ link / `@handle` / `UC…`; `ValueError` nếu không đọc được."""
+    query = yt_checker.channel_query(ref)
+    if "id" in query:
+        return f"https://www.youtube.com/channel/{query['id']}"
+    return f"https://www.youtube.com/@{query.get('forHandle', '').lstrip('@') or query.get('forUsername', '')}"
+
+
 def _collect_youtube_ytdlp(input_ref: str, creds: Credentials) -> tuple[list[dict], dict]:
     """Không có API key: yt-dlp liệt kê + lấy từng video (không có chỉ số kênh)."""
     try:
-        query = yt_checker.channel_query(input_ref)
+        channel_url = youtube_channel_url(input_ref)
     except ValueError as exc:
         raise JobAbort(str(exc), retryable=False) from exc
-    channel_url = f"https://www.youtube.com/channel/{query['id']}" if "id" in query else \
-        f"https://www.youtube.com/@{query.get('forHandle', '').lstrip('@') or query.get('forUsername', '')}"
     try:
         ids = list(_with_listing(creds, lambda p: yt_checker.list_channel_ytdlp(channel_url, YTDLP_RECENT, p)))
     except Exception as exc:  # noqa: BLE001

@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
 """
-tiktok_links.py — lấy TẤT CẢ link video của một kênh TikTok về máy (lưu DB cục bộ + file .txt).
+tiktok_links.py — liệt kê TẤT CẢ video của một kênh TikTok.
 
 Cách làm (đã đo thật, số liệu ở README của tool): yt-dlp `extract_flat` KHÔNG cookie, KHÔNG trình duyệt, lặp lại
 đến khi qua cổng chống bot của TikTok. Cổng này chặn NGẪU NHIÊN ~75% lượt gọi (yt-dlp báo `Unable to extract secondary user ID`) bất kể proxy, cookie
@@ -8,25 +7,18 @@ hay dấu vân tay TLS — tỉ lệ qua mỗi lượt ~25% — nhưng lượt t
 `MAX_ATTEMPTS` lượt, mỗi lượt đổi proxy kế tiếp và đổi dấu vân tay TLS (chrome-136/131/124): xác suất trượt cả 25 lượt ≈ 0,1%.
 Mẫu đo (kênh 393 video, 9 proxy dân cư): 7/7 lần ra đủ 393 link, 5–60 giây; mở trình duyệt lấy cookie không làm tăng tỉ lệ qua.
 
-CLI (Electron gọi, dữ liệu qua stdin):
-  echo '{"channel_id":"<id kênh trong DB>","url":"https://www.tiktok.com/@abc","limit":1500}' | python tiktok_links.py fetch
+Lưu DB + xuất file + CLI cho Electron nằm ở `video_links.py` (dùng chung cho YouTube và TikTok).
 """
 from __future__ import annotations
 
-import json
 import random
 import re
-import sys
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
-from pathlib import Path
 
-import channels_db
-from pools import force_remote_dns, load_pools, mask_proxy
+from pools import force_remote_dns, mask_proxy
 
-SETTINGS_FILE = Path(channels_db.ROOT_DIR) / ".dev" / "collector-config.json"
-EXPORT_DIR = Path(channels_db.ROOT_DIR) / ".dev" / "video-links"
 FULL_MAX_ITEMS = 1500            # TikTok phân trang kiểu cursor: xin đủ MỘT lần, không escalate (mỗi lượt mới phải lấy lại từ trang 1)
 MAX_ATTEMPTS = 25
 IMPERSONATE = ("chrome-136", "chrome-131", "chrome-124")
@@ -143,48 +135,3 @@ def fetch_links(ref: str, *, proxies: list[str], limit: int = FULL_MAX_ITEMS, ex
     hint = ("TikTok đang chặn IP này — thêm proxy dân cư ở Cấu hình rồi thử lại" if not proxies
             else "TikTok chặn mọi lượt — thêm/đổi proxy (nên dùng proxy dân cư) ở Cấu hình rồi thử lại")
     raise TikTokError(f"Không lấy được danh sách video sau {max_attempts} lượt ({hint}). Lỗi cuối: {errors[-1] if errors else '-'}")
-
-
-def export_links(channel_label: str, videos: list[dict], export_dir: Path | None = None) -> str:
-    """Ghi mỗi link một dòng ra file .txt (mới nhất trước); trả đường dẫn."""
-    export_dir = export_dir or EXPORT_DIR
-    export_dir.mkdir(parents=True, exist_ok=True)
-    safe = re.sub(r"[^\w.\-@]+", "_", channel_label)[:80] or "tiktok"
-    path = export_dir / f"{safe}.txt"
-    path.write_text("\n".join(v["url"] for v in videos) + ("\n" if videos else ""), encoding="utf-8")
-    return str(path)
-
-
-def run_fetch(cmd: dict, *, settings_path: Path | None = None, **kw) -> dict:
-    """Việc của nút "Lấy link video": lấy link -> lưu DB cục bộ -> xuất .txt. Lỗi trả `{"error": ...}` (không ném)."""
-    channel_id = str(cmd.get("channel_id") or "")
-    _, proxies = load_pools(str(settings_path or SETTINGS_FILE))
-    try:
-        result = fetch_links(str(cmd.get("url") or ""), proxies=proxies, limit=int(cmd.get("limit") or FULL_MAX_ITEMS), **kw)
-    except TikTokError as exc:
-        return {"error": str(exc)}
-    conn = channels_db._get_conn()
-    try:
-        saved = channels_db.act_save_channel_videos(conn, {"channel_id": channel_id, "videos": result["videos"]})
-        videos = channels_db.act_list_channel_videos(conn, {"channel_id": channel_id})["videos"]
-    except ValueError as exc:
-        return {"error": str(exc)}
-    finally:
-        conn.close()
-    export = export_links(username_of(str(cmd.get("url") or "")) or channel_id, videos)
-    return {"ok": True, "found": len(result["videos"]), "added": saved["added"], "total": saved["total"], "kind": result["kind"],
-            "via": result["via"], "attempts": result["attempts"], "export": export}
-
-
-def main() -> None:
-    from system_api import use_utf8_stdio
-
-    use_utf8_stdio()
-    if len(sys.argv) < 2 or sys.argv[1] != "fetch":
-        print("usage: tiktok_links.py fetch  (stdin JSON {channel_id, url, limit?})", file=sys.stderr)
-        sys.exit(2)
-    print(json.dumps(run_fetch(json.loads(sys.stdin.read() or "{}")), ensure_ascii=False))
-
-
-if __name__ == "__main__":
-    main()

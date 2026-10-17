@@ -52,6 +52,7 @@
       "pools.py",
       "health.py",
       "tiktok_links.py",
+      "video_links.py",
       "checkers/**",
       "requirements.txt",
       "system-endpoints.json"

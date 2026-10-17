@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import channels_db  # noqa: E402
 import tiktok_links as tl  # noqa: E402
 
 CHANNEL = "https://www.tiktok.com/@sk1kr"
@@ -130,75 +129,3 @@ def test_proxy_password_is_never_in_the_result_or_error():
     with pytest.raises(tl.TikTokError) as exc:
         fetch(Gate(blocked_first=99), ["socks5://u:TOPSECRET@9.9.9.9:1080"], max_attempts=2)
     assert "TOPSECRET" not in str(exc.value)
-
-
-# ── Lưu DB cục bộ + xuất .txt ────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def db(tmp_path, monkeypatch):
-    path = tmp_path / "channels.db"
-    monkeypatch.setattr(channels_db, "DB_PATH", str(path))
-    conn = channels_db._get_conn()
-    channels_db.act_init(conn, {})
-    channels_db.act_sync_shared(conn, {"users": [{"id": "u1", "username": "hieu"}], "channels": [
-        {"id": "c1", "owner_account_id": "u1", "owner_username": "hieu", "platform": "tiktok", "resource_type": "channel",
-         "canonical_external_id": "sk1kr", "input_ref": CHANNEL, "display_name": "sk1kr", "url": CHANNEL, "mapping_status": "mapped",
-         "execution_mode": "shared", "enabled": True}]})
-    conn.close()
-    return path
-
-
-def test_run_fetch_saves_links_exports_txt_and_is_idempotent(db, tmp_path, monkeypatch):
-    monkeypatch.setattr(tl, "EXPORT_DIR", tmp_path / "out")
-    cfg = tmp_path / "cfg.json"
-    cfg.write_text(json.dumps({"proxies": []}), encoding="utf-8")
-    monkeypatch.setattr(tl, "_extract_flat", lambda url, proxy, imp, limit: _entries(4))
-    monkeypatch.setattr(tl.time, "sleep", lambda s: None)
-    r1 = tl.run_fetch({"channel_id": "c1", "url": CHANNEL}, settings_path=cfg)
-    r2 = tl.run_fetch({"channel_id": "c1", "url": CHANNEL}, settings_path=cfg)
-    assert (r1["found"], r1["added"], r1["total"]) == (4, 4, 4) and (r2["added"], r2["total"]) == (0, 4)
-    lines = Path(r1["export"]).read_text(encoding="utf-8").splitlines()
-    assert lines[0].endswith("/video/8997") and len(lines) == 4       # mới đăng nhất (timestamp lớn nhất) ở đầu
-    conn = channels_db._get_conn()
-    try:
-        ch = channels_db.act_list_channels(conn, {})["channels"][0]
-    finally:
-        conn.close()
-    assert ch["video_count"] == 4
-
-
-def test_run_fetch_returns_error_for_unknown_channel_instead_of_raising(db, tmp_path, monkeypatch):
-    monkeypatch.setattr(tl, "EXPORT_DIR", tmp_path / "out")
-    monkeypatch.setattr(tl, "_extract_flat", lambda url, proxy, imp, limit: _entries(1))
-    assert "error" in tl.run_fetch({"channel_id": "nope", "url": CHANNEL}, settings_path=tmp_path / "none.json")
-
-
-def test_run_fetch_reports_blocking_as_error_not_exception(db, tmp_path, monkeypatch):
-    def blocked(*a):
-        raise BLOCKED
-    monkeypatch.setattr(tl, "_extract_flat", blocked)
-    monkeypatch.setattr(tl, "MAX_ATTEMPTS", 3)
-    monkeypatch.setattr(tl.time, "sleep", lambda s: None)
-    r = tl.run_fetch({"channel_id": "c1", "url": CHANNEL}, settings_path=tmp_path / "none.json")
-    assert "3 lượt" in r["error"]
-
-
-def test_later_fetch_does_not_wipe_known_title_with_blank(db):
-    conn = channels_db._get_conn()
-    try:
-        channels_db.act_save_channel_videos(conn, {"channel_id": "c1", "videos": [{"video_id": "1", "url": "u", "title": "Tiêu đề", "views": 10}]})
-        channels_db.act_save_channel_videos(conn, {"channel_id": "c1", "videos": [{"video_id": "1", "url": "u", "title": "", "views": None}]})
-        row = channels_db.act_list_channel_videos(conn, {"channel_id": "c1"})["videos"][0]
-    finally:
-        conn.close()
-    assert row["title"] == "Tiêu đề" and row["views"] == 10
-
-
-def test_videos_disappear_when_their_channel_leaves_the_shared_list(db):
-    conn = channels_db._get_conn()
-    try:
-        channels_db.act_save_channel_videos(conn, {"channel_id": "c1", "videos": [{"video_id": "1", "url": "u"}]})
-        channels_db.act_sync_shared(conn, {"users": [{"id": "u1", "username": "hieu"}], "channels": []})
-        assert channels_db.act_list_channel_videos(conn, {"channel_id": "c1"})["videos"] == []
-    finally:
-        conn.close()
