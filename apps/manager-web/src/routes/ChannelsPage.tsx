@@ -3,7 +3,7 @@
  *
  * Layout:
  *  - Tạo nhóm quốc gia mới (form inline)
- *  - Accordion per group: tên nước + mã ISO + danh sách kênh + form thêm kênh
+ *  - Accordion per group: tên nước (người dùng tự gõ, không có danh sách dựng sẵn) + danh sách kênh + form thêm kênh
  *  - Kênh: nền tảng + username/link + tên hiển thị + badge trạng thái + nút xóa
  *
  * Backend:
@@ -44,13 +44,6 @@ const MODE_BADGE: Record<string, { text: string; hint: string; variant: "seconda
   primary_tool:   { text: "Tool riêng",    hint: "Dữ liệu do Tool cá nhân của bạn đẩy lên",          variant: "success"   },
   disabled:       { text: "Tắt",           hint: "Kênh này tạm thời không thu thập dữ liệu nào",     variant: "destructive" },
 };
-
-/** Danh sách quốc gia phổ biến cho datalist gợi ý. */
-const COMMON_COUNTRIES: [string, string][] = [
-  ["VN", "Việt Nam"], ["NG", "Nigeria"], ["US", "United States"],
-  ["PH", "Philippines"], ["ID", "Indonesia"], ["IN", "India"],
-  ["BR", "Brazil"], ["MX", "Mexico"], ["EG", "Egypt"], ["KE", "Kenya"],
-];
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -97,7 +90,6 @@ function AddChannelsForm({
   const [platform, setPlatform] = useState("");
   const [countryId, setCountryId] = useState("");
   const [newName, setNewName] = useState("");
-  const [newCode, setNewCode] = useState("");
   const [links, setLinks] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -116,7 +108,7 @@ function AddChannelsForm({
       if (creatingCountry) {
         const name = newName.trim();
         group = groups.find((g) => g.name.toLowerCase() === name.toLowerCase())
-          ?? await channelGroupsApi.create(name, newCode.trim().toUpperCase());
+          ?? await channelGroupsApi.create(name);
         onGroupCreated(group);
       }
       if (!group) return;
@@ -159,7 +151,6 @@ function AddChannelsForm({
       setLinks(failed.join("\n"));          // chỉ giữ lại các dòng lỗi để thử lại
       setCountryId(group.id);
       setNewName("");
-      setNewCode("");
       const extra = [
         skipped.length ? `bỏ qua ${skipped.length} link đã có/trùng` : "",
         failed.length ? `${failed.length} link lỗi (giữ lại trong ô để thử lại)` : "",
@@ -219,27 +210,15 @@ function AddChannelsForm({
       </div>
 
       {creatingCountry && (
-        <div className="grid gap-4 rounded-lg border border-dashed border-border p-4 sm:grid-cols-[1fr_8rem]">
-          <Field label="Tên quốc gia mới">
+        <div className="rounded-lg border border-dashed border-border p-4">
+          <Field label="Tên quốc gia mới" hint="Gõ tên theo cách bạn muốn. Quản trị viên sẽ chuẩn hóa cách viết sau.">
             {(p) => (
               <Input
                 {...p}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="Nigeria"
-                list="country-suggestions"
-              />
-            )}
-          </Field>
-          <Field label="Mã ISO" optional>
-            {(p) => (
-              <Input
-                {...p}
-                value={newCode}
-                onChange={(e) => setNewCode(e.target.value.toUpperCase().slice(0, 10))}
-                placeholder="NG"
-                maxLength={10}
-                className="font-mono"
+                maxLength={100}
               />
             )}
           </Field>
@@ -288,21 +267,20 @@ function GroupSection({
   const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(group.name);
-  const [editCode, setEditCode] = useState(group.country_code);
   const [renaming, setRenaming] = useState(false);
   const [deletingChannelId, setDeletingChannelId] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const channels = resources.filter((r) => r.country === group.name);
 
   const handleRename = async () => {
-    if (!editName.trim() || (editName === group.name && editCode === group.country_code)) {
+    if (!editName.trim() || editName.trim() === group.name) {
       setEditing(false);
       return;
     }
     setRenaming(true);
     try {
-      await channelGroupsApi.update(group.id, { name: editName.trim(), country_code: editCode.trim() });
-      onRename(group.id, editName.trim(), editCode.trim());
+      await channelGroupsApi.update(group.id, { name: editName.trim() });
+      onRename(group.id, editName.trim(), group.country_code);
       setEditing(false);
       toast.success("Đã cập nhật tên nhóm");
     } catch (e) {
@@ -370,14 +348,6 @@ function GroupSection({
                 placeholder="Tên nhóm"
                 onKeyDown={(e) => { if (e.key === "Enter") void handleRename(); if (e.key === "Escape") setEditing(false); }}
               />
-              <Input
-                value={editCode}
-                onChange={(e) => setEditCode(e.target.value.toUpperCase().slice(0, 10))}
-                className="h-7 w-16 px-2 py-0 font-mono text-sm"
-                placeholder="VN"
-                maxLength={10}
-                onKeyDown={(e) => { if (e.key === "Enter") void handleRename(); }}
-              />
             </span>
           ) : (
             <span className="flex items-center gap-2">
@@ -401,7 +371,7 @@ function GroupSection({
             <Button variant="outline" size="sm" onClick={handleRename} disabled={renaming}>
               <Save aria-hidden className="size-4" /> {renaming ? "Đang lưu…" : "Lưu"}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => { setEditing(false); setEditName(group.name); setEditCode(group.country_code); }}>
+            <Button variant="outline" size="sm" onClick={() => { setEditing(false); setEditName(group.name); }}>
               <X aria-hidden className="size-4" />
             </Button>
           </span>
@@ -477,7 +447,6 @@ export default function ChannelsPage() {
 
   // Tạo nhóm mới
   const [newName, setNewName] = useState("");
-  const [newCode, setNewCode] = useState("");
   const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
@@ -508,10 +477,9 @@ export default function ChannelsPage() {
     if (!newName.trim()) return;
     setCreating(true);
     try {
-      const group = await channelGroupsApi.create(newName.trim(), newCode.trim().toUpperCase());
+      const group = await channelGroupsApi.create(newName.trim());
       setGroups((prev) => [...prev, group]);
       setNewName("");
-      setNewCode("");
       toast.success(`Đã tạo nhóm "${group.name}"`);
     } catch (e) {
       toast.error(errorMessage(e, "Không tạo được nhóm. Tên có thể đã tồn tại."));
@@ -564,38 +532,21 @@ export default function ChannelsPage() {
       {/* Tạo nhóm mới */}
       <Section
         title="Tạo nhóm quốc gia"
-        description="Ví dụ: Nigeria (NG), Việt Nam (VN), Philippines (PH)."
+        description="Gõ tên quốc gia theo cách bạn muốn, ví dụ: Nigeria, Việt Nam. Quản trị viên sẽ chuẩn hóa cách viết sau."
       >
         <form
           className="flex max-w-xl flex-wrap items-end gap-3"
           onSubmit={(e) => { e.preventDefault(); void handleCreateGroup(); }}
         >
-          <Field label="Tên quốc gia" hint="Dùng để nhóm kênh. Ví dụ: Nigeria.">
+          <Field label="Tên quốc gia" hint="Dùng để nhóm kênh. Tự do nhập, không cần chọn từ danh sách.">
             {(p) => (
               <Input
                 {...p}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="Nigeria"
-                list="country-suggestions"
-                className="w-44"
-              />
-            )}
-          </Field>
-          <datalist id="country-suggestions">
-            {COMMON_COUNTRIES.map(([code, name]) => (
-              <option key={code} value={name} />
-            ))}
-          </datalist>
-          <Field label="Mã ISO" optional hint="2 ký tự. Ví dụ: NG">
-            {(p) => (
-              <Input
-                {...p}
-                value={newCode}
-                onChange={(e) => setNewCode(e.target.value.toUpperCase().slice(0, 10))}
-                placeholder="NG"
-                maxLength={10}
-                className="w-20 font-mono"
+                maxLength={100}
+                className="w-64"
               />
             )}
           </Field>

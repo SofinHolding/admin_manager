@@ -99,16 +99,17 @@ describe("ChannelsPage — Nhóm quốc gia + kênh (capability:manual_channel_m
     const user = userEvent.setup();
     await screen.findByText("Chưa có nhóm quốc gia nào");
 
-    await user.type(screen.getByPlaceholderText("Nigeria"), "Nigeria");
-    await user.type(screen.getByPlaceholderText("NG"), "NG");
+    expect(document.querySelector("datalist")).toBeNull();            // không còn danh sách quốc gia dựng sẵn
+    expect(screen.queryByPlaceholderText("NG")).not.toBeInTheDocument();   // không bắt nhập mã ISO
+    await user.type(screen.getByPlaceholderText("Nigeria"), "Xứ Sở Tự Đặt");
     await user.click(screen.getByRole("button", { name: /Tạo nhóm/ }));
 
     await waitFor(() =>
       expect(f.byPath("/v1/user/channel-groups").some((c) => c.method === "POST")).toBe(true),
     );
     expect(JSON.parse(f.byPath("/v1/user/channel-groups").find((c) => c.method === "POST")!.body!))
-      .toEqual({ name: "Nigeria", country_code: "NG" });
-    expect(await screen.findByText("Nigeria")).toBeInTheDocument();  // tên nhóm từ body gửi lên
+      .toEqual({ name: "Xứ Sở Tự Đặt", country_code: "" });
+    expect(await screen.findByRole("button", { name: /Xóa nhóm Xứ Sở Tự Đặt/ })).toBeInTheDocument();  // nhóm mới hiện trong danh sách
     expect(okSpy).toHaveBeenCalledWith(expect.stringContaining("nhóm"));
   });
 
