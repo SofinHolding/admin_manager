@@ -51,7 +51,7 @@ _JOB = {"job_id": "job_e", "owner_account_id": "acc_1", "platform": "tiktok", "a
 
 
 def test_channel_without_videos_completes_the_job_instead_of_failing_it(tmp_path, monkeypatch):
-    def empty(platform, ref, creds):
+    def empty(platform, ref, creds, channel_id=None):
         raise collect.channel_collect.EmptyChannel("Kênh TikTok chưa có video")
     monkeypatch.setattr(collect.channel_collect, "collect_channel", empty)
     client = _FakeClient()
@@ -62,7 +62,7 @@ def test_channel_without_videos_completes_the_job_instead_of_failing_it(tmp_path
 
 
 def test_expected_business_aborts_are_one_log_line_without_traceback(tmp_path, monkeypatch, caplog):
-    def blocked(platform, ref, creds):
+    def blocked(platform, ref, creds, channel_id=None):
         raise collect.JobAbort("TikTok chặn mọi lượt")
     monkeypatch.setattr(collect.channel_collect, "collect_channel", blocked)
     client = _FakeClient()
@@ -74,7 +74,7 @@ def test_expected_business_aborts_are_one_log_line_without_traceback(tmp_path, m
 
 
 def test_unexpected_errors_still_log_the_traceback(tmp_path, monkeypatch, caplog):
-    def bug(platform, ref, creds):
+    def bug(platform, ref, creds, channel_id=None):
         raise RuntimeError("lỗi lập trình")
     monkeypatch.setattr(collect.channel_collect, "collect_channel", bug)
     with caplog.at_level("ERROR", logger="collect"):

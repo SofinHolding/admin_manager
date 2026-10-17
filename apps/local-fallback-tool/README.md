@@ -102,6 +102,25 @@ Khoá YouTube, proxy, cookie Facebook được collector đọc từ file cấu 
 
 Proxy: danh sách nhiều proxy xoay vòng (`channel_collect._with_proxy`); lỗi do proxy/mạng thì proxy đó nghỉ 5 phút và dùng proxy kế, lỗi của riêng video thì giữ nguyên proxy.
 
+### Danh sách video lưu theo kênh (YouTube + TikTok)
+
+Mỗi kênh đã kéo có một danh sách video trong DB cục bộ (`channel_videos`); `local_channels.links_listed_at` ghi kênh đã được lấy ĐỦ danh sách chưa.
+
+| Lần chạy | Liệt kê | Đo số liệu |
+|---|---|---|
+| Lần đầu của kênh (hoặc chưa lấy đủ) | **Cả kênh** (TikTok tối đa 1500, YouTube tối đa 5000) rồi lưu | Mọi video trong danh sách |
+| Các lần sau (tới giờ cập nhật view) | Chỉ **30 video mới nhất** (`channel_listing.PAGE`), gộp video mới vào danh sách | Mọi video trong danh sách (cũ + mới) |
+
+- Trang 30 video "nối liền" với danh sách đã lưu khi video cũ nhất của trang đã có trong kho (hoặc trang chưa đầy). Nếu không (kênh đăng hơn 30 video giữa hai lần chạy) thì lấy đủ lại để không sót — `channel_listing.refresh`.
+- Lấy phần mới lỗi (bị chặn…) mà kho đã có video: **không fail job**, đo tiếp trên danh sách đã lưu, video mới được lấy ở lần sau. Lần đầu lỗi thì job fail và kênh vẫn "chưa lấy đủ".
+- Kênh trống: tính là đã lấy đủ (các lần sau chỉ hỏi 1 trang). Link lấy bằng nút "🔗 Lấy toàn bộ link video" cũng tính là đã lấy đủ (DB cũ được nâng cấp v4 theo quy tắc này).
+- Kênh không nằm trong DB cục bộ (chưa kéo): không lưu gì, chỉ đo `TIKTOK_RECENT`/`YOUTUBE_RECENT` video mới nhất như trước.
+- TikTok đo song song: tối đa 2 luồng/proxy (`WORKERS_PER_PROXY`), tikwm giữ khoảng cách 1,1 giây **theo từng proxy** (không còn khoá chung cả tiến trình). Không có proxy thì đo tuần tự.
+  Không dùng proxy: kênh 400 video ≈ 7 phút.
+- YouTube không có API key (yt-dlp, từng video một, chậm) chỉ đo `YTDLP_CHECK_MAX` = 100 video mới nhất mỗi lần dù danh sách dài hơn. Có API key thì đo tất cả (1 đơn vị quota / 50 video).
+- Job chạy lâu nên collector gia hạn lease job mỗi 60 giây (`collect._keep_lease`).
+- Video đã bị xoá/riêng tư vẫn nằm trong danh sách và bị bỏ qua khi không đo được (không đẩy 0 giả).
+
 ## Cấu hình nhiều YouTube key / nhiều proxy
 
 Tab Thu thập → Cấu hình: mỗi ô nhận **nhiều dòng, mỗi dòng một mục** (key `AIza…`; proxy dạng `scheme://user:pass@host:port`, `user:pass@host:port`,

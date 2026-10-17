@@ -194,3 +194,15 @@ def test_facebook_subtype_and_share_links():
 def test_facebook_without_cookie_fails_fast_with_a_reason():
     r = fb.check_url("https://www.facebook.com/reel/1", "")
     assert r["ok"] is False and "cookie" in r["error"].lower()
+
+
+def test_tikwm_throttle_is_per_proxy_so_different_proxies_do_not_wait_for_each_other(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(tt.time, "sleep", sleeps.append)
+    monkeypatch.setattr(tt, "_next_slot", {})
+    tt._throttle("http://p1:80")
+    tt._throttle("http://p2:80")
+    tt._throttle(None)
+    assert sleeps == []                                      # ba lối ra khác nhau: không ai phải chờ
+    tt._throttle("http://p1:80")
+    assert len(sleeps) == 1 and 0.5 < sleeps[0] <= tt.MIN_INTERVAL_S + 0.01   # cùng proxy gọi lại ngay thì phải chờ đủ khoảng cách

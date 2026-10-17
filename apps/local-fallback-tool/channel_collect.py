@@ -2,10 +2,11 @@
 channel_collect.py — thu thập số liệu MỘT kênh theo nền tảng (đồng bộ, chạy trong luồng riêng; `collect.process_job` gọi qua `asyncio.to_thread`).
 
   youtube  : YouTube Data API (xoay nhiều key; hết quota => key kế) — không có key thì yt-dlp (qua proxy nếu có).
-  tiktok   : liệt kê video mới nhất bằng cookie phiên của Chrome/Edge cục bộ (`tiktok_links`) + số liệu từng video qua tikwm.
+  tiktok   : liệt kê video bằng yt-dlp (`tiktok_links`, thử lại qua proxy) + số liệu từng video qua tikwm.
   facebook : chỉ link bài/reel (cookie Facebook) — trang/profile không liệt kê được.
 
-Kết quả: `(items, channel_stats)` đúng hình dạng `SystemApi.push_snapshot` nhận. Không có số liệu hợp lệ => `JobAbort` kèm lý do thật.
+Danh sách video (YouTube/TikTok) lưu ở DB cục bộ: LẦN ĐẦU của một kênh lấy ĐỦ danh sách; các lần sau chỉ lấy video MỚI rồi đo số liệu
+trên toàn bộ danh sách đã lưu (`_sync_list`, `channel_listing.refresh`). Kênh không nằm trong DB cục bộ thì chỉ đo N video mới nhất.
 """
 from __future__ import annotations
 
@@ -13,10 +14,12 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+import channel_listing
 import channels_db
 import tiktok_links
 from checkers import facebook as fb_checker
@@ -26,9 +29,13 @@ from pools import Pool, load_pools
 
 log = logging.getLogger("collect")
 DEFAULT_SETTINGS = Path(channels_db.ROOT_DIR) / ".dev" / "collector-config.json"
-YOUTUBE_RECENT = 30       # video mới nhất mỗi lần (YouTube Data API trả thống kê theo lô 50 => rẻ)
-TIKTOK_RECENT = 15        # tikwm ~1 req/s/IP => 15 video ~ 17 giây/kênh
-YTDLP_RECENT = 10         # yt-dlp lấy từng video một (chậm, dễ bị chặn) => ít hơn
+YOUTUBE_RECENT = 30       # video mới nhất mỗi lần khi KHÔNG có kho danh sách (YouTube Data API trả thống kê theo lô 50 => rẻ)
+TIKTOK_RECENT = 15        # như trên (tikwm ~1 req/s/IP)
+YTDLP_RECENT = 10         # như trên, yt-dlp (từng video một, chậm, dễ bị chặn) => ít hơn
+YTDLP_CHECK_MAX = 100     # yt-dlp (không API key) chỉ đo tối đa ngần này video mới nhất mỗi lần dù danh sách đã lưu dài hơn
+TIKTOK_WORKERS = 12       # luồng đo song song tối đa một kênh (còn bị giới hạn bởi số proxy)
+YTDLP_WORKERS = 4
+WORKERS_PER_PROXY = 2     # mỗi lần gọi qua proxy mất vài giây còn tikwm chỉ giới hạn ~1 req/s/IP => 2 luồng/proxy vẫn chưa chạm giới hạn
 PROXY_ATTEMPTS = 3        # số proxy khác nhau thử cho một lần gọi trước khi báo lỗi
 # 403/429 từ tikwm/Facebook = IP của proxy đó bị chặn (đo thật: cùng video qua 8 proxy khác đều đo được) => đổi proxy
 _PROXY_FAULT = re.compile(r"proxy|timeout|network|connect|ssl|tunnel|socks|HTTP 403|HTTP 429", re.I)
@@ -95,19 +102,65 @@ def _with_proxy(creds: Credentials, call: Callable[[str | None], dict]) -> dict:
     return result
 
 
+# ── Danh sách video đã lưu (YouTube / TikTok) + đo song song ──────────────────────────────
+
+def _sync_list(channel_id: str | None, fetch: Callable[[int], list[dict]], *, full_max: int, recent: int) -> list[dict]:
+    """Danh sách video cần đo của một kênh (mới nhất trước).
+
+    - `channel_id` không có / kênh không nằm trong DB cục bộ: không lưu gì, chỉ lấy `recent` video mới nhất (cách cũ).
+    - Có kho: lần đầu lấy ĐỦ danh sách rồi lưu; các lần sau chỉ lấy phần MỚI (`channel_listing.refresh`) rồi gộp. Trả TOÀN BỘ kho,
+      nên lần cập nhật view sau đo thẳng trên danh sách có sẵn, không phải liệt kê lại cả kênh.
+    - Lấy phần mới lỗi mà kho đã có video: đo tiếp trên kho, video mới được bắt kịp ở lần sau (số liệu quan trọng hơn danh sách).
+    """
+    state = channels_db.video_state(channel_id or "")
+    if state is None:
+        return fetch(recent)[:recent]
+    known = {v["video_id"] for v in state["videos"]}
+    try:
+        fresh, mode = channel_listing.refresh(known, state["listed"], fetch, full_max=full_max)
+    except Exception as exc:  # noqa: BLE001
+        if not (state["listed"] and known):
+            raise
+        log.warning("Không cập nhật được danh sách video (%s) — đo tiếp trên %d video đã lưu, video mới sẽ lấy ở lần sau", str(exc)[:150], len(known))
+        return state["videos"]
+    saved = channels_db.store_videos(channel_id or "", fresh, complete=mode == "full")
+    log.info("Danh sách video: %s — %d video mới, tổng %d", "lấy đủ" if mode == "full" else "chỉ lấy phần mới", saved["added"], saved["total"])
+    in_fresh = {v["video_id"] for v in fresh}
+    return fresh + [v for v in state["videos"] if v["video_id"] not in in_fresh]
+
+
+def _measure(creds: Credentials, videos: list[dict], check: Callable[[dict, str | None], dict], *, workers: int) -> list[dict]:
+    """Đo từng video qua proxy xoay vòng. Nhiều proxy => chạy song song (tikwm giới hạn ~1 req/s MỖI IP nên mỗi luồng một proxy); không có
+    proxy => tuần tự. Kết quả giữ thứ tự `videos`."""
+    def one(v: dict) -> dict:
+        return to_item(_with_proxy(creds, lambda p: check(v, p)), v["video_id"])
+
+    n = max(1, min(workers, WORKERS_PER_PROXY * len(creds.proxies) or 1, len(videos)))
+    if n == 1:
+        items = [one(v) for v in videos]
+    else:
+        with ThreadPoolExecutor(max_workers=n) as pool:
+            items = list(pool.map(one, videos))
+    log.info("Đã đo %d/%d video (%d luồng)", sum(1 for i in items if i["check_status"] == "ok"), len(items), n)
+    return items
+
+
 # ── YouTube ──────────────────────────────────────────────────────────────────────────────
 
-def collect_youtube(input_ref: str, creds: Credentials) -> tuple[list[dict], dict]:
+def collect_youtube(input_ref: str, creds: Credentials, channel_id: str | None = None) -> tuple[list[dict], dict]:
     if not creds.youtube_keys:
-        return _collect_youtube_ytdlp(input_ref, creds)
+        return _collect_youtube_ytdlp(input_ref, creds, channel_id)
     api = yt_checker.YouTubeApi(creds.key_pool)
     try:
         try:
             channel = api.resolve_channel(input_ref)
         except ValueError as exc:
             raise JobAbort(str(exc), retryable=False) from exc
-        ids = api.recent_video_ids(channel["uploads"], YOUTUBE_RECENT) if channel["uploads"] else []
-        stats = api.video_stats(ids) if ids else {}
+        uploads = channel["uploads"]
+        videos = _sync_list(channel_id, lambda n: [channel_listing.youtube_video(i) for i in api.recent_video_ids(uploads, n)] if uploads else [],
+                            full_max=channel_listing.YOUTUBE_MAX, recent=YOUTUBE_RECENT)
+        ids = [v["video_id"] for v in videos]
+        stats = api.video_stats(ids) if ids else {}   # theo lô 50 => 1 đơn vị quota / 50 video
     except yt_checker.NoKeyAvailable as exc:
         raise JobAbort(str(exc)) from exc
     except yt_checker.YouTubeApiError as exc:
@@ -119,30 +172,23 @@ def collect_youtube(input_ref: str, creds: Credentials) -> tuple[list[dict], dic
     return items, channel_stats
 
 
-def youtube_channel_url(ref: str) -> str:
-    """URL kênh chuẩn cho yt-dlp từ link / `@handle` / `UC…`; `ValueError` nếu không đọc được."""
-    query = yt_checker.channel_query(ref)
-    if "id" in query:
-        return f"https://www.youtube.com/channel/{query['id']}"
-    return f"https://www.youtube.com/@{query.get('forHandle', '').lstrip('@') or query.get('forUsername', '')}"
-
-
-def _collect_youtube_ytdlp(input_ref: str, creds: Credentials) -> tuple[list[dict], dict]:
-    """Không có API key: yt-dlp liệt kê + lấy từng video (không có chỉ số kênh)."""
+def _collect_youtube_ytdlp(input_ref: str, creds: Credentials, channel_id: str | None) -> tuple[list[dict], dict]:
+    """Không có API key: yt-dlp liệt kê + đo từng video (không có chỉ số kênh). Chậm nên chỉ đo `YTDLP_CHECK_MAX` video mới nhất."""
     try:
-        channel_url = youtube_channel_url(input_ref)
+        channel_url = channel_listing.youtube_channel_url(input_ref)
     except ValueError as exc:
         raise JobAbort(str(exc), retryable=False) from exc
+
+    def fetch(n: int) -> list[dict]:
+        return [channel_listing.youtube_video(i) for i in _with_listing(creds, lambda p: yt_checker.list_channel_ytdlp(channel_url, n, p))]
+
     try:
-        ids = list(_with_listing(creds, lambda p: yt_checker.list_channel_ytdlp(channel_url, YTDLP_RECENT, p)))
+        videos = _sync_list(channel_id, fetch, full_max=channel_listing.YOUTUBE_MAX, recent=YTDLP_RECENT)
     except Exception as exc:  # noqa: BLE001
         if "does not have a videos tab" in str(exc):
             raise EmptyChannel("Kênh YouTube chưa có video công khai (không có tab Videos)") from exc
         raise JobAbort(f"yt-dlp không liệt kê được video: {str(exc)[:200]} (thêm YouTube API key ở Cấu hình để ổn định hơn)") from exc
-    items = []
-    for vid in ids:
-        url = f"https://www.youtube.com/watch?v={vid}"
-        items.append(to_item(_with_proxy(creds, lambda p, u=url: yt_checker.check_video_ytdlp(u, p)), vid))
+    items = _measure(creds, videos[:YTDLP_CHECK_MAX], lambda v, p: yt_checker.check_video_ytdlp(v["url"], p), workers=YTDLP_WORKERS)
     return items, {}
 
 
@@ -158,24 +204,20 @@ def _with_listing(creds: Credentials, call: Callable[[str | None], list[str]]) -
 
 # ── TikTok ───────────────────────────────────────────────────────────────────────────────
 
-def collect_tiktok(input_ref: str, creds: Credentials) -> tuple[list[dict], dict]:
+def collect_tiktok(input_ref: str, creds: Credentials, channel_id: str | None = None) -> tuple[list[dict], dict]:
     try:
-        listing = tiktok_links.fetch_links(input_ref, proxies=creds.proxies, limit=TIKTOK_RECENT)
-    except tiktok_links.TikTokError as exc:
-        raise JobAbort(str(exc)) from exc
-    videos = listing["videos"][:TIKTOK_RECENT]
+        videos = _sync_list(channel_id, lambda n: channel_listing.list_tiktok(input_ref, creds, n)["videos"],
+                            full_max=tiktok_links.FULL_MAX_ITEMS, recent=TIKTOK_RECENT)
+    except channel_listing.ListingError as exc:
+        raise JobAbort(str(exc), retryable=exc.retryable) from exc
     if not videos:
-        raise EmptyChannel("Kênh TikTok chưa có video") if listing["kind"] == "empty" else JobAbort("TikTok không trả video nào cho kênh này")
-    items = []
-    for v in videos:
-        result = _with_proxy(creds, lambda p, u=v["url"]: tt_checker.check_video(u, p))
-        items.append(to_item(result, v["video_id"]))
-    return items, {}
+        raise EmptyChannel("Kênh TikTok chưa có video")   # fetch_links chỉ trả rỗng khi TikTok xác nhận kênh chưa có video; còn lại nó ném lỗi
+    return _measure(creds, videos, lambda v, p: tt_checker.check_video(v["url"], p), workers=TIKTOK_WORKERS), {}
 
 
 # ── Facebook ─────────────────────────────────────────────────────────────────────────────
 
-def collect_facebook(input_ref: str, creds: Credentials) -> tuple[list[dict], dict]:
+def collect_facebook(input_ref: str, creds: Credentials, channel_id: str | None = None) -> tuple[list[dict], dict]:
     if not fb_checker.is_content_url(input_ref):
         raise JobAbort("Facebook: chỉ kiểm được link MỘT bài/reel/video (trang hoặc profile không liệt kê được)", retryable=False)
     if not creds.fb_cookie.strip():
@@ -184,13 +226,14 @@ def collect_facebook(input_ref: str, creds: Credentials) -> tuple[list[dict], di
     return [to_item(result, str(result.get("url") or input_ref))], {}
 
 
-COLLECTORS: dict[str, Callable[[str, Credentials], tuple[list[dict], dict]]] = {
+COLLECTORS: dict[str, Callable[[str, Credentials, str | None], tuple[list[dict], dict]]] = {
     "youtube": collect_youtube, "tiktok": collect_tiktok, "facebook": collect_facebook,
 }
 
 
-def collect_channel(platform: str, input_ref: str, creds: Credentials) -> tuple[list[dict], dict]:
+def collect_channel(platform: str, input_ref: str, creds: Credentials, channel_id: str | None = None) -> tuple[list[dict], dict]:
+    """`channel_id` = id kênh trong DB cục bộ (resource_id của job): có thì dùng/lưu danh sách video của kênh (YouTube/TikTok)."""
     fn = COLLECTORS.get(platform)
     if fn is None:
         raise JobAbort(f"Unsupported platform: {platform}", retryable=False)
-    return fn(input_ref, creds)
+    return fn(input_ref, creds, channel_id)

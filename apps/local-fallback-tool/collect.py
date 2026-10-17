@@ -3,11 +3,11 @@
 collect.py — Thu thập dữ liệu kênh cho Shared Collector (fallback_tool).
 
 Chạy liên tục: claim collect-job từ integration-service → thu số liệu kênh theo nền tảng (`channel_collect.py`) → push snapshot.
-
 Phương pháp (chi tiết ở channel_collect.py):
   - YouTube : YouTube Data API v3, xoay NHIỀU API key (không có key thì yt-dlp)
-  - TikTok  : liệt kê video bằng cookie phiên lấy từ Chrome/Edge cục bộ (không cần AdsPower) + số liệu từng video qua tikwm
+  - TikTok  : liệt kê video bằng yt-dlp (thử lại qua proxy) + số liệu từng video qua tikwm
   - Facebook: link bài/reel + cookie Facebook
+  Danh sách video YouTube/TikTok lưu cục bộ: lần đầu của kênh lấy đủ, các lần sau chỉ lấy video mới rồi đo trên cả danh sách.
   Proxy: danh sách nhiều proxy, xoay vòng; proxy lỗi nghỉ ít phút rồi được thử lại.
 
 Khoá API / proxy / cookie đọc từ file cấu hình của tool (`--settings-file`, mặc định .dev/collector-config.json), KHÔNG truyền qua dòng lệnh.
@@ -194,6 +194,17 @@ class StatusTracker:
 
 # ── Job processor ─────────────────────────────────────────────────────────────
 
+async def _keep_lease(client: SystemApi, job: dict, every_s: float = 60.0) -> None:
+    """Gia hạn lease của job trong lúc đang xử lý. Lần đầu của một kênh lấy cả danh sách video rồi đo hàng trăm video nên có thể lâu hơn lease mặc định (300s);
+    hết lease mà job vẫn chạy thì server cho máy khác nhận trùng và lệnh đẩy dữ liệu bị từ chối. Lỗi gia hạn không làm hỏng job."""
+    while True:
+        await asyncio.sleep(every_s)
+        try:
+            await client.heartbeat(job)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Gia hạn lease job=%s lỗi: %s", job.get("job_id"), exc)
+
+
 async def process_job(job: dict, client: SystemApi, creds: Credentials, tracker: StatusTracker) -> None:
     # ClaimedJob schema: job_id, platform, payload, resource (ResourceRef)
     job_id = job.get("job_id") or job.get("id", "")
@@ -211,10 +222,11 @@ async def process_job(job: dict, client: SystemApi, creds: Credentials, tracker:
 
     log.info("Processing job=%s platform=%s input_ref=%s", job_id, platform, input_ref[:60])
     tracker.job_started(job_id, platform, channel_id, channel_name, owner)
+    lease = asyncio.create_task(_keep_lease(client, job))
 
     try:
         # items: số liệu từng video; channel_stats: chỉ số của chính kênh (followers/videos_posted/...) nếu nền tảng cho lấy.
-        items, channel_stats = await asyncio.to_thread(channel_collect.collect_channel, platform, input_ref, creds)
+        items, channel_stats = await asyncio.to_thread(channel_collect.collect_channel, platform, input_ref, creds, resource_id or None)
 
         # ── 3. Push snapshot (delegated ingestion) ───────────────────────────
         # Chỉ đẩy số liệu ĐO ĐƯỢC. Kênh không có số liệu hợp lệ nào => job FAIL có lý do (không im lặng, không đẩy 0 giả).
@@ -247,6 +259,8 @@ async def process_job(job: dict, client: SystemApi, creds: Credentials, tracker:
             await client.fail_job(job, str(exc)[:400], retryable=getattr(exc, "retryable", True))
         except Exception:  # noqa: BLE001
             pass
+    finally:
+        lease.cancel()
 
 
 async def run_once(client: SystemApi, platforms: list[str], wanted: set[str] | None, limit: int,

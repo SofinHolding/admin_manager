@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS local_channels (
   mapping_status  TEXT NOT NULL DEFAULT '',
   server_video_count INTEGER NOT NULL DEFAULT 0,
   last_collected_at  TEXT NOT NULL DEFAULT '',
+  links_listed_at    TEXT NOT NULL DEFAULT '',
   enabled         INTEGER NOT NULL DEFAULT 1,
   pulled          INTEGER NOT NULL DEFAULT 0,
   pulled_at       TEXT NOT NULL DEFAULT '',
@@ -77,7 +78,7 @@ CREATE TABLE IF NOT EXISTS channel_videos (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 KNOWN_PLATFORMS = frozenset({"youtube", "tiktok", "facebook"})
 
 
@@ -103,7 +104,8 @@ def _marks(items: list) -> str:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """v1 → v2: thêm `pulled`/`pulled_at` (kênh cũ vào ở trạng thái CHƯA KÉO — người vận hành tự chọn kênh nào kéo).
-    v2 → v3: thêm `server_video_count`/`last_collected_at` (số liệu server đã có cho kênh; làm tươi khi Fetch/đồng bộ)."""
+    v2 → v3: thêm `server_video_count`/`last_collected_at` (số liệu server đã có cho kênh; làm tươi khi Fetch/đồng bộ).
+    v3 → v4: thêm `links_listed_at` (đã lấy ĐỦ danh sách video của kênh) — kênh đã có link từ nút "Lấy toàn bộ link video" coi như đã lấy đủ."""
     version = (conn.execute("SELECT version FROM schema_version").fetchone() or [None])[0]
     if version is None:
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (CURRENT_SCHEMA_VERSION,))
@@ -115,6 +117,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if "server_video_count" not in cols:
             conn.execute("ALTER TABLE local_channels ADD COLUMN server_video_count INTEGER NOT NULL DEFAULT 0")
             conn.execute("ALTER TABLE local_channels ADD COLUMN last_collected_at TEXT NOT NULL DEFAULT ''")
+        if "links_listed_at" not in cols:
+            conn.execute("ALTER TABLE local_channels ADD COLUMN links_listed_at TEXT NOT NULL DEFAULT ''")
+            conn.execute("UPDATE local_channels SET links_listed_at = (SELECT MAX(fetched_at) FROM channel_videos v WHERE v.channel_id = local_channels.id) "
+                         "WHERE EXISTS (SELECT 1 FROM channel_videos v WHERE v.channel_id = local_channels.id)")
         conn.execute("UPDATE schema_version SET version=?", (CURRENT_SCHEMA_VERSION,))
     conn.commit()
 
@@ -337,7 +343,7 @@ def act_set_enabled(conn: sqlite3.Connection, cmd: dict) -> dict:
 
 def act_save_channel_videos(conn: sqlite3.Connection, cmd: dict) -> dict:
     """Lưu link video của MỘT kênh (upsert theo `(channel_id, video_id)`): `videos=[{video_id, url, title?, published_at?, views?}]`.
-    Thông tin đã có không bị xoá bằng giá trị rỗng của lần lấy sau."""
+    Thông tin đã có không bị xoá bằng giá trị rỗng của lần lấy sau. `complete=true`: danh sách này là ĐẦY ĐỦ ⇒ ghi `links_listed_at`."""
     channel_id = str(cmd.get("channel_id") or "")
     if not conn.execute("SELECT 1 FROM local_channels WHERE id=?", (channel_id,)).fetchone():
         raise ValueError("Không tìm thấy kênh trong DB cục bộ")
@@ -363,6 +369,8 @@ def act_save_channel_videos(conn: sqlite3.Connection, cmd: dict) -> dict:
             updated += 1
         else:
             added += 1
+    if cmd.get("complete"):
+        conn.execute("UPDATE local_channels SET links_listed_at=? WHERE id=?", (now, channel_id))
     conn.commit()
     total = conn.execute("SELECT COUNT(*) FROM channel_videos WHERE channel_id=?", (channel_id,)).fetchone()[0]
     return {"added": added, "updated": updated, "total": total}
@@ -375,6 +383,31 @@ def act_list_channel_videos(conn: sqlite3.Connection, cmd: dict) -> dict:
         ORDER BY published_at DESC, fetched_at DESC, video_id
     """, (str(cmd.get("channel_id") or ""),)).fetchall()
     return {"videos": [dict(r) for r in rows]}
+
+
+def video_state(channel_id: str) -> dict | None:
+    """Danh sách video đã lưu của kênh cho collector: `{listed, videos:[{video_id, url, title, published_at}]}`, hoặc None nếu kênh không có trong
+    DB cục bộ (chưa kéo / đã bị xoá). `listed` = đã lấy ĐỦ danh sách ít nhất một lần (các lần sau chỉ cần lấy phần mới)."""
+    if not channel_id or not os.path.exists(DB_PATH):
+        return None
+    conn = _get_conn()
+    try:
+        row = conn.execute("SELECT links_listed_at FROM local_channels WHERE id=?", (channel_id,)).fetchone()
+        if row is None:
+            return None
+        videos = act_list_channel_videos(conn, {"channel_id": channel_id})["videos"]
+        return {"listed": bool(row[0]), "videos": videos}
+    finally:
+        conn.close()
+
+
+def store_videos(channel_id: str, videos: list[dict], *, complete: bool) -> dict:
+    """Lưu video vào kênh; `complete=True` khi `videos` là danh sách ĐẦY ĐỦ (đánh dấu đã lấy đủ). `ValueError` nếu kênh không có trong DB."""
+    conn = _get_conn()
+    try:
+        return act_save_channel_videos(conn, {"channel_id": channel_id, "videos": videos, "complete": complete})
+    finally:
+        conn.close()
 
 
 # ── Dùng bởi collect.py (không phải action của Electron) ──────────────────────────────────────────────────────

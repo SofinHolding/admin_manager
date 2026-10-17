@@ -10,6 +10,7 @@ import re
 import time
 from collections.abc import Callable
 from pathlib import Path
+import threading
 from urllib.parse import quote, unquote, urlsplit
 
 # Khoá API YouTube (Google): "AIza" + 35 ký tự [A-Za-z0-9_-]
@@ -132,7 +133,7 @@ class Pool:
     """Xoay vòng các mục khoẻ; mục bị báo lỗi nghỉ `cooldown_s` giây rồi được thử lại.
 
     `pick()` trả mục kế tiếp đang khoẻ (None nếu mọi mục đang nghỉ hoặc danh sách rỗng). Dùng chung cho YouTube key (hết quota) và
-    proxy (lỗi kết nối)."""
+    proxy (lỗi kết nối). An toàn khi nhiều luồng cùng dùng."""
 
     def __init__(self, items: list[str], *, cooldown_s: float = 600.0, clock: Callable[[], float] = time.monotonic) -> None:
         self._items = list(dict.fromkeys(items))
@@ -140,6 +141,7 @@ class Pool:
         self._clock = clock
         self._until: dict[str, float] = {}
         self._next = 0
+        self._lock = threading.Lock()   # collector đo nhiều video song song trên cùng một Pool
 
     def __len__(self) -> int:
         return len(self._items)
@@ -149,22 +151,25 @@ class Pool:
         return [i for i in self._items if self._until.get(i, 0.0) <= now]
 
     def pick(self) -> str | None:
-        now = self._clock()
-        n = len(self._items)
-        for step in range(n):
-            idx = (self._next + step) % n
-            item = self._items[idx]
-            if self._until.get(item, 0.0) <= now:
-                self._next = (idx + 1) % n
-                return item
-        return None
+        with self._lock:
+            now = self._clock()
+            n = len(self._items)
+            for step in range(n):
+                idx = (self._next + step) % n
+                item = self._items[idx]
+                if self._until.get(item, 0.0) <= now:
+                    self._next = (idx + 1) % n
+                    return item
+            return None
 
     def bad(self, item: str, cooldown_s: float | None = None) -> None:
-        if item in self._items:
-            self._until[item] = self._clock() + (self._cooldown_s if cooldown_s is None else cooldown_s)
+        with self._lock:
+            if item in self._items:
+                self._until[item] = self._clock() + (self._cooldown_s if cooldown_s is None else cooldown_s)
 
     def ok(self, item: str) -> None:
-        self._until.pop(item, None)
+        with self._lock:
+            self._until.pop(item, None)
 
 
 def _env_list(*names: str) -> list[str]:

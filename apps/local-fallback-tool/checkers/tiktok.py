@@ -1,7 +1,7 @@
 """Kiểm tra MỘT video TikTok qua tikwm.com (REST công khai, không cần cookie) — port từ CheckviewV2 `check_tiktok.py`.
 
 Lấy: lượt xem / thích / bình luận / chia sẻ, ngày đăng (`create_time`, epoch giây — mốc tuyệt đối), quốc gia (`region`), thời lượng, tiêu đề.
-Giới hạn của tikwm bản miễn phí ~1 request/giây: `_throttle()` giữ khoảng cách tối thiểu giữa hai lần gọi trong cùng tiến trình.
+Giới hạn của tikwm bản miễn phí ~1 request/giây MỖI IP: `_throttle(proxy)` giữ khoảng cách tối thiểu giữa hai lần gọi qua cùng một proxy.
 """
 from __future__ import annotations
 
@@ -29,16 +29,18 @@ _VIDEO_ID_RE = re.compile(r"/video/(\d+)")
 _USER_RE = re.compile(r"tiktok\.com/@([^/?#]+)", re.I)
 
 _lock = threading.Lock()
-_last_call = 0.0
+_next_slot: dict[str | None, float] = {}   # proxy (None = đi thẳng) -> thời điểm sớm nhất được gọi tiếp
 
 
-def _throttle() -> None:
-    global _last_call
+def _throttle(proxy: str | None = None) -> None:
+    """Giữ khoảng cách `MIN_INTERVAL_S` giữa hai lần gọi qua CÙNG một lối ra (proxy). tikwm giới hạn theo IP nên các proxy khác nhau chạy song
+    song được; nhiều luồng dùng chung một proxy thì xếp hàng (mỗi luồng giữ một khung giờ riêng)."""
     with _lock:
-        wait = MIN_INTERVAL_S - (time.monotonic() - _last_call)
-        if wait > 0:
-            time.sleep(wait)
-        _last_call = time.monotonic()
+        now = time.monotonic()
+        slot = max(now, _next_slot.get(proxy, 0.0))
+        _next_slot[proxy] = slot + MIN_INTERVAL_S
+    if slot > now:
+        time.sleep(slot - now)
 
 
 def username_from_url(url: str) -> str:
@@ -67,7 +69,7 @@ def _check_once(url: str, proxy: str | None = None, *, client: httpx.Client | No
     own = client is None
     http = client or httpx.Client(timeout=TIMEOUT_S, headers=_HEADERS, follow_redirects=True, proxy=force_remote_dns(proxy))
     try:
-        _throttle()
+        _throttle(proxy)
         r = http.post(TIKWM_ENDPOINT, data={"url": url, "hd": "0"})
         r.raise_for_status()
         return parse_tikwm(r.json(), url)
