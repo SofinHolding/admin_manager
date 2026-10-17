@@ -9,7 +9,7 @@ from integration_service.api_models import Envelope, ResourceStateOut, ResourceS
 from integration_service.api_models import ResourceBatchOut
 from integration_service.credentials.service import MachineContext
 from integration_service.delegation import delegated
-from integration_service.deps import get_container, machine, require_super_admin, user_bearer
+from integration_service.deps import get_container, machine, require_admin, require_super_admin, user_bearer
 from integration_service import examples as ex
 from integration_service.http_utils import error_responses, ok, ok_response, parse_json_object, raw_body_doc
 from integration_service.ingest import validate
@@ -53,6 +53,30 @@ async def admin_patch_resource(request: Request, resource_id: str, body: Resourc
     async with c.audit.scope(request, "resource.set_state", actor_account_id=principal.sub, resource_id=resource_id):
         result = await c.resources.admin_set_state(resource_id, body.state)
     return ok(result)
+
+
+_USER_CHANNELS_EXAMPLE = {"users": [{
+    "owner_account_id": "acc_example", "username": "alice", "visible_in_shared_tool": True,
+    "totals": {"active": 2, "removed": 1, "shared_tool": 2, "personal_tool": 0},
+    "channels": [{"id": "res_example", "platform": "youtube", "resource_type": "channel", "external_id": "UC_example",
+                  "display_name": "Example", "url": "", "origin": "web_manual", "execution_mode": "fallback_tool",
+                  "enabled": True, "removed": False, "shared_tool_visible": True, "created_at": "2026-10-17T02:02:29+00:00",
+                  "updated_at": "2026-10-17T02:02:29+00:00", "last_job_status": "succeeded", "last_job_at": "2026-10-17T07:16:00+00:00",
+                  "content_count": 30, "last_collected_at": "2026-10-17T07:16:00+00:00"}]}],
+    "summary": {"users": 1, "visible_in_shared_tool": 1, "active_channels": 2, "shared_tool_channels": 2, "removed_channels": 1}}
+
+
+@admin_router.get("/admin/user-channels", summary="Kênh theo từng user (admin)",
+                  description=("Role `admin` hoặc `dash_admin`, chỉ đọc. Mọi kênh của mọi user (nhập từ website lẫn do Tool đẩy), gom theo user, kèm "
+                               "job gần nhất và số video đã có số liệu. `shared_tool_visible` cho biết Tool dùng chung có thấy kênh đó không "
+                               "(`execution_mode=fallback_tool`, chưa xoá). `include_removed` (mặc định true) kèm cả kênh đã xoá để giải thích "
+                               "vì sao một kênh/user không còn ở Tool. Không gồm nhóm (`resource_type=group`)."),
+                  responses={200: ok_response(Envelope[dict], "Kênh theo user", _USER_CHANNELS_EXAMPLE),
+                             **error_responses(401, 403, 503)})
+async def admin_user_channels(request: Request, owner_account_id: str = Query("", description="Chỉ một user"),
+                              include_removed: bool = Query(True), _: Principal = Depends(require_admin)):
+    c = get_container(request)
+    return ok(await c.resources.list_user_channels(owner_account_id=owner_account_id, include_removed=include_removed))
 
 
 @router.get("/resources", summary="Danh sách resource (machine)",

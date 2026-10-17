@@ -19,6 +19,21 @@ from integration_service.feed import events
 from integration_service.feed import repository as outbox
 from integration_service.ingest import merge, schemas, validate
 from integration_service.platforms import repository as registry
+from integration_service.resources.user_channels import build_user_channels
+
+_USER_CHANNELS = (
+    "SELECT r.id, r.owner_account_id, COALESCE(p.username, '') AS owner_username, r.platform, r.resource_type, r.external_id, "
+    "COALESCE(r.data ->> 'display_name', '') AS display_name, COALESCE(r.data ->> 'url', '') AS url, "
+    "r.origin, r.execution_mode, r.state, r.removed, r.created_at, r.updated_at, "
+    "lj.status AS last_job_status, lj.updated_at AS last_job_at, "
+    "COALESCE(ci.n, 0) AS content_count, ci.last_observed_at "
+    "FROM resources r LEFT JOIN account_projection p ON p.account_id = r.owner_account_id "
+    "LEFT JOIN LATERAL (SELECT j.status, j.updated_at FROM jobs j WHERE j.resource_id = r.id "
+    "ORDER BY j.created_at DESC, j.id DESC LIMIT 1) lj ON true "
+    "LEFT JOIN LATERAL (SELECT count(*) AS n, max(c.observed_at) AS last_observed_at FROM content_items c "
+    "WHERE c.resource_id = r.id AND NOT c.removed) ci ON true "
+    "WHERE r.resource_type <> 'group' AND ($1::text IS NULL OR r.owner_account_id = $1) AND ($2::boolean OR NOT r.removed) "
+    "ORDER BY COALESCE(p.username, ''), r.owner_account_id, r.removed, r.platform, r.created_at, r.id")
 
 
 class ResourceService:
@@ -148,6 +163,14 @@ class ResourceService:
                 "ORDER BY COALESCE(p.username,''), r.owner_account_id",
             )
         return {"users": [dict(r) for r in rows]}
+
+    async def list_user_channels(self, *, owner_account_id: str = "", include_removed: bool = True) -> dict:
+        """Trang quản trị "Kênh theo người dùng": MỌI kênh của mọi user (nhập từ website lẫn do Tool đẩy), kèm job gần nhất và số video
+        đã có số liệu, gom theo user. `shared_tool_visible` = Tool dùng chung có thấy kênh đó không (cùng quy tắc `system_api.shared_view`).
+        `include_removed`: kèm cả kênh đã xoá (mềm) để giải thích vì sao một kênh/user không còn xuất hiện ở Tool."""
+        async with self._db.connection() as conn:
+            rows = await conn.fetch(_USER_CHANNELS, owner_account_id or None, include_removed)
+        return build_user_channels([dict(r) for r in rows])
 
     async def admin_set_state(self, resource_id: str, state: str) -> dict:
         """Admin bật/tắt resource (đổi ngoài snapshot => resource.changed)."""

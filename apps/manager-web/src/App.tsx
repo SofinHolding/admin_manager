@@ -16,6 +16,7 @@ import PlatformsPage from "./routes/PlatformsPage";
 import OidcCallbackPage from "./routes/OidcCallbackPage";
 import ChannelsPage from "./routes/ChannelsPage";
 import MyToolsPage from "./routes/MyToolsPage";
+import UserChannelsPage from "./routes/UserChannelsPage";
 import { PERM_REWARD_ACCESS, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION } from "./auth/permissions";
 import CredentialsPage from "./reward/pages/CredentialsPage";
 import JobsPage from "./reward/pages/JobsPage";
@@ -54,6 +55,7 @@ export default function App() {
             <Route element={<RoleGate allow={["admin", "dash_admin"]} />}>
               <Route path="/admin/manage" element={<AdminPage />} />
               <Route path="/admin/platforms" element={<PlatformsPage />} />
+              <Route path="/admin/user-channels" element={<UserChannelsPage />} />
             </Route>
 
             {/* Công cụ — capability:tool_integration (không cần role admin) */}

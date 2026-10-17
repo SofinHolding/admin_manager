@@ -6221,6 +6221,201 @@
         ]
       }
     },
+    "/v1/integrations/admin/user-channels": {
+      "get": {
+        "description": "Role `admin` hoặc `dash_admin`, chỉ đọc. Mọi kênh của mọi user (nhập từ website lẫn do Tool đẩy), gom theo user, kèm job gần nhất và số video đã có số liệu. `shared_tool_visible` cho biết Tool dùng chung có thấy kênh đó không (`execution_mode=fallback_tool`, chưa xoá). `include_removed` (mặc định true) kèm cả kênh đã xoá để giải thích vì sao một kênh/user không còn ở Tool. Không gồm nhóm (`resource_type=group`).",
+        "operationId": "admin_user_channels_v1_integrations_admin_user_channels_get",
+        "parameters": [
+          {
+            "description": "Chỉ một user",
+            "in": "query",
+            "name": "owner_account_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "Chỉ một user",
+              "title": "Owner Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_removed",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Removed",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "summary": {
+                      "active_channels": 2,
+                      "removed_channels": 1,
+                      "shared_tool_channels": 2,
+                      "users": 1,
+                      "visible_in_shared_tool": 1
+                    },
+                    "users": [
+                      {
+                        "channels": [
+                          {
+                            "content_count": 30,
+                            "created_at": "2026-10-17T02:02:29+00:00",
+                            "display_name": "Example",
+                            "enabled": true,
+                            "execution_mode": "fallback_tool",
+                            "external_id": "UC_example",
+                            "id": "res_example",
+                            "last_collected_at": "2026-10-17T07:16:00+00:00",
+                            "last_job_at": "2026-10-17T07:16:00+00:00",
+                            "last_job_status": "succeeded",
+                            "origin": "web_manual",
+                            "platform": "youtube",
+                            "removed": false,
+                            "resource_type": "channel",
+                            "shared_tool_visible": true,
+                            "updated_at": "2026-10-17T02:02:29+00:00",
+                            "url": ""
+                          }
+                        ],
+                        "owner_account_id": "acc_example",
+                        "totals": {
+                          "active": 2,
+                          "personal_tool": 0,
+                          "removed": 1,
+                          "shared_tool": 2
+                        },
+                        "username": "alice",
+                        "visible_in_shared_tool": true
+                      }
+                    ]
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_dict_"
+                }
+              }
+            },
+            "description": "Kênh theo user"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "UserAccessToken": []
+          }
+        ],
+        "summary": "Kênh theo từng user (admin)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/v1/integrations/audit": {
       "get": {
         "description": "`admin`/`dash_admin`. Lọc theo client/account/action/result; phân trang lùi bằng `before_id`.",

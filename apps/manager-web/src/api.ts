@@ -604,6 +604,29 @@ export interface PlatformRegistryEntry {
   aliases?: string[];
 }
 
+export interface UserChannel {
+  id: string; platform: string; resource_type: string; external_id: string; display_name: string; url: string;
+  /** `web_manual` = user nhập ở website; `tool` = Tool đẩy lên. */
+  origin: string;
+  /** `fallback_tool` = Tool dùng chung thu; `primary_tool` = Tool riêng của user. */
+  execution_mode: string;
+  enabled: boolean; removed: boolean; shared_tool_visible: boolean;
+  created_at: string | null; updated_at: string | null;
+  last_job_status: string | null; last_job_at: string | null;
+  content_count: number; last_collected_at: string | null;
+}
+
+export interface UserChannelTotals { active: number; removed: number; shared_tool: number; personal_tool: number }
+
+export interface UserChannelsUser {
+  owner_account_id: string; username: string; visible_in_shared_tool: boolean; totals: UserChannelTotals; channels: UserChannel[];
+}
+
+export interface UserChannelsResult {
+  users: UserChannelsUser[];
+  summary: { users: number; visible_in_shared_tool: number; active_channels: number; shared_tool_channels: number; removed_channels: number };
+}
+
 export const integrationApi = {
   listClients: (owner = "", o?: Opts) => {
     const q = new URLSearchParams();
@@ -662,6 +685,10 @@ export const integrationApi = {
     const d = await apiFetch<PlatformRegistryEntry[] | { items?: PlatformRegistryEntry[] }>("/v1/integrations/admin/platforms");
     return { items: Array.isArray(d) ? d : (d.items ?? []) };
   },
+
+  /** Kênh của MỌI user (admin|dash_admin, chỉ đọc), gom theo user; `shared_tool_visible` = Tool dùng chung có thấy kênh không. */
+  userChannels: (includeRemoved = true, o?: Opts) =>
+    apiFetch<UserChannelsResult>(`/v1/integrations/admin/user-channels?include_removed=${includeRemoved}`, undefined, o),
 };
 
 // ── Platform Registry (admin/dash_admin) ───────────────────────────────────
