@@ -69,20 +69,6 @@ jobs:
       - run: cd packages/observability && python -m pytest -q
       - run: cd packages/sdk-python && python -m pytest -q
 
-  isolation:
-    name: Cách ly tiến trình
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - name: Cài thư viện của mọi service (test khởi chạy tiến trình thật)
-        run: |
-          pip install -r services/identity-service/requirements.txt -r services/integration-service/requirements.txt -r services/analytics-service/requirements.txt -r services/reward-service/requirements.txt -r services/api-gateway/requirements.txt
-          pip install pytest pytest-asyncio httpx pyyaml redis bcrypt cryptography
-      - run: cd tests/integration && python -m pytest -q
-
   e2e:
     name: E2E (tiến trình thật qua gateway)
     runs-on: ubuntu-latest
@@ -102,6 +88,8 @@ jobs:
       - run: cd tests/e2e && python -m pytest -q -p no:cacheprovider -rs | tee /tmp/pytest.log
       - name: Hợp đồng (parity, reconcile — cần DB DEV)
         run: cd tests/contract && python -m pytest -q -p no:cacheprovider -rs | tee -a /tmp/pytest.log
+      - name: Cách ly tiến trình thật (mỗi service một process; cần DB DEV)
+        run: cd tests/integration && python -m pytest -q -p no:cacheprovider -rs | tee -a /tmp/pytest.log
       - name: Không được SKIP vì thiếu hạ tầng
         run: "! grep -E 'SKIPPED .*(hạ tầng DEV|Postgres|Redis)' /tmp/pytest.log"
 
