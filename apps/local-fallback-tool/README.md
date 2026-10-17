@@ -31,7 +31,7 @@ npm run electron:build   # vite build (base: './') rồi electron-builder đóng
 ```
 
 `collect.py` và các module Python đi kèm được đóng gói (`build.files` trong `package.json`); máy chạy ứng dụng cần Python trong PATH và đã
-`pip install -r requirements.txt` (httpx[socks], curl_cffi, yt-dlp, websockets, beautifulsoup4).
+`pip install -r requirements.txt` (httpx[socks], curl_cffi, yt-dlp, beautifulsoup4).
 
 ## Địa chỉ máy chủ nhúng sẵn và ánh xạ endpoint
 
@@ -86,7 +86,7 @@ Khi Admin cấp key cho công cụ dùng chung (trang Admin → Công cụ dùng
 Collector hỏi server `GET /v1/integrations/platforms` để biết nền tảng key được dùng, chỉ xử lý giao với nền tảng có adapter
 (`youtube`, `tiktok`, `facebook`). Mỗi job đẩy lên **đúng kênh + nền tảng của chính job** (`resource.external_id`, `job.platform`)
 bằng snapshot `delta` có `expected_counts`; mọi bước được kiểm lỗi (không thành công giả). Key cần scope `jobs:claim:system` để nhận job của mọi user.
-Khoá YouTube, proxy, cookie Facebook, đường dẫn Chrome được collector đọc từ file cấu hình (`--settings-file`), KHÔNG truyền qua dòng lệnh.
+Khoá YouTube, proxy, cookie Facebook được collector đọc từ file cấu hình (`--settings-file`), KHÔNG truyền qua dòng lệnh.
 
 Định dạng payload collector phải gửi (snapshot delta, job complete/fail/heartbeat, ràng buộc `X-Delegated-Job`): `docs/api/integration-tool-changes-2026-10-16.md` §4.
 
@@ -97,7 +97,7 @@ Khoá YouTube, proxy, cookie Facebook, đường dẫn Chrome được collector
 | Nền tảng | Cách làm |
 |---|---|
 | YouTube | YouTube Data API v3, xoay **nhiều key** (key hết quota nghỉ 6 giờ, dùng key kế); không có key thì yt-dlp. Lấy 30 video mới nhất + `followers`/`videos_posted` của kênh. |
-| TikTok | Liệt kê video mới nhất bằng cookie phiên của Chrome/Edge cục bộ (`tiktok_links.py`), số liệu từng video (views/likes/comments/shares/region/ngày) qua tikwm `/api/`. |
+| TikTok | Liệt kê video mới nhất bằng yt-dlp lặp qua cổng chống bot (`tiktok_links.py`, xem mục dưới), số liệu từng video (views/likes/comments/shares/region/ngày) qua tikwm `/api/` (tự thử lại lỗi tạm thời). |
 | Facebook | Chỉ link **một bài/reel/video** (cookie Facebook, `checkers/facebook_scraper` chép từ CheckviewV2 commit `74026c1`, xem `NOTICE.md`). Trang/profile không liệt kê được => job fail kèm lý do, không thử lại. |
 
 Proxy: danh sách nhiều proxy xoay vòng (`channel_collect._with_proxy`); lỗi do proxy/mạng thì proxy đó nghỉ 5 phút và dùng proxy kế, lỗi của riêng video thì giữ nguyên proxy.
@@ -111,19 +111,25 @@ dòng không hợp lệ ở lại ô nhập để sửa. Mỗi dòng trong danh 
 Danh sách chỉ đổi trong cấu hình đang soạn đến khi bấm **Lưu cấu hình**. Key hiển thị đã che (`AIzaAB…WXYZ`), mật khẩu proxy hiển thị `***`; lỗi không bao giờ chứa key/mật khẩu.
 Cấu hình cũ một giá trị (`youtube_api_key`, `proxy`) được gộp vào danh sách khi đọc và bị bỏ khi lưu.
 
-## Lấy toàn bộ link video của kênh TikTok (không cần AdsPower)
+## Lấy toàn bộ link video của kênh TikTok
 
 Tab Người dùng & Kênh: chọn kênh TikTok **đã kéo** → **🔗 Lấy toàn bộ link video**. Link lưu trong DB cục bộ (`channel_videos`), xuất file `.dev/video-links/<kênh>.txt`
 (mới nhất trước), xem/sao chép/lưu `.txt` ở nút `🔗 N link` trên dòng kênh.
 
-Cookie TikTok lấy từ **Chrome/Edge cài sẵn trên máy**, không cần AdsPower: `browser_cookie.py` mở trình duyệt chạy ẩn (hồ sơ tạm, cổng gỡ lỗi ngẫu nhiên), điều hướng
-tiktok.com, đọc cookie bằng CDP `Network.getAllCookies`, đóng trình duyệt. Chrome không hỗ trợ proxy SOCKS5/HTTP có mật khẩu nên `proxy_relay.py` dựng relay cục bộ
-không mật khẩu tự xác thực với proxy thật — nhờ đó **cookie lấy được ĐI QUA đúng proxy đang cài** (cùng IP với lúc liệt kê video, điều kiện để TikTok chấp nhận phiên).
-Sau đó yt-dlp liệt kê kênh (cùng cookie + User-Agent + proxy, TLS `chrome-136`), phân loại lỗi: kênh trống / riêng tư / đáng làm mới. Phiên lưu theo từng proxy (`.dev/tiktok-session.json`); lỗi
-khi phiên còn mới (< 10 phút) = lỗi do IP/proxy nên đổi proxy chứ không mở lại trình duyệt, phiên cũ thì làm mới đúng một lần.
+Cách làm (`tiktok_links.py`): yt-dlp `extract_flat` **không cookie, không trình duyệt**, lặp tối đa 25 lượt, mỗi lượt đổi proxy kế tiếp và đổi dấu vân tay TLS
+(chrome-136/131/124) cho tới khi qua cổng chống bot của TikTok. Lý do — số đo thật (9 proxy dân cư VN, kênh 393 video):
 
-Giới hạn đã đo: TikTok chặn liệt kê video (WAF Slardar + API trả rỗng) với IP/hồ sơ trình duyệt "sạch" không proxy tốt — yt-dlp báo `Unable to extract secondary user ID`.
-Khi đó tool báo rõ và gợi ý thêm proxy (nên dùng proxy dân cư). tikwm `/api/user/posts` bị Cloudflare chặn nên KHÔNG dùng được để liệt kê kênh.
+| Phương án | Kết quả đo |
+|---|---|
+| yt-dlp + cookie lấy từ Chrome qua proxy | 1/9 proxy qua ở lượt đầu; mở trình duyệt tốn 5–17 giây/lần, KHÔNG tăng tỉ lệ qua |
+| yt-dlp không cookie, một lượt | 8–11/36 lượt qua (~22–30%), ngẫu nhiên, không phụ thuộc proxy hay dấu vân tay |
+| **yt-dlp không cookie, lặp tới 25 lượt (đang dùng)** | **7/7 lần ra đủ 393 link** (5–60 giây, 1–15 lượt); trượt cả 25 lượt ≈ 0,1% |
+| Chrome thật cuộn trang + đọc phản hồi API | Trang đầu (24 video) qua 9/9 proxy nhưng TikTok bắt đầu trả rỗng sau ~15–19 trang: chỉ ra 112–371/393 video, mất 3,5 phút |
+| tikwm `/api/user/posts` | 403 Cloudflare ở mọi proxy và IP trực tiếp: không dùng được |
+
+Cổng chặn **ngẫu nhiên ~75% lượt gọi** (yt-dlp báo `Unable to extract secondary user ID`) nhưng lượt thất bại chỉ tốn vài giây và lượt qua cho danh sách đầy đủ,
+nên lặp là cách ít lỗi nhất. Kênh trống / riêng tư được nhận ra ngay (không lặp). Hết 25 lượt thì báo rõ và gợi ý thêm/đổi proxy (nên dùng proxy dân cư).
+Không có proxy thì đi bằng IP máy này (IP không tốt có thể trượt cả 25 lượt). Mỗi lần gọi bắt đầu từ một proxy ngẫu nhiên để job song song không dồn vào một proxy.
 
 ## Test
 

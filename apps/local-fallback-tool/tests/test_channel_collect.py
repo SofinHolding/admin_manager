@@ -168,6 +168,16 @@ def test_proxy_fault_rests_that_proxy_and_the_next_proxy_is_used():
     assert creds.proxy_pool.pick() == "http://good:2"                    # bad đang nghỉ
 
 
+def test_http_403_from_the_checker_means_that_proxy_is_blocked_so_another_one_is_tried():
+    creds = cc.Credentials(proxies=["http://blocked:1", "http://ok:2"])
+    seen: list = []
+
+    def call(proxy):
+        seen.append(proxy)
+        return fail("[tikwm] HTTP 403") if proxy == "http://blocked:1" else stat(views=1)
+    assert cc._with_proxy(creds, call)["ok"] is True and seen == ["http://blocked:1", "http://ok:2"]
+
+
 def test_non_proxy_error_is_returned_as_is_and_proxy_stays_healthy():
     creds = cc.Credentials(proxies=["http://a:1", "http://b:2"])
     seen: list = []
@@ -186,13 +196,13 @@ def test_no_proxies_goes_direct():
 
 # ── Nạp thông tin xác thực từ file cấu hình ─────────────────────────────────────────────
 
-def test_load_credentials_reads_lists_cookie_and_chrome(tmp_path, monkeypatch):
-    for name in ("YOUTUBE_API_KEY", "YOUTUBE_API_KEYS", "PROXY", "PROXIES", "FB_COOKIE", "CHROME_PATH"):
+def test_load_credentials_reads_lists_and_cookie(tmp_path, monkeypatch):
+    for name in ("YOUTUBE_API_KEY", "YOUTUBE_API_KEYS", "PROXY", "PROXIES", "FB_COOKIE"):
         monkeypatch.delenv(name, raising=False)
     cfg = tmp_path / "c.json"
-    cfg.write_text(json.dumps({"youtube_api_keys": [KEY_A], "proxies": ["1.1.1.1:80"], "fb_cookie": "c_user=9", "chrome_path": "C:/x/chrome.exe"}), encoding="utf-8")
+    cfg.write_text(json.dumps({"youtube_api_keys": [KEY_A], "proxies": ["1.1.1.1:80"], "fb_cookie": "c_user=9"}), encoding="utf-8")
     c = cc.load_credentials(cfg)
-    assert (c.youtube_keys, c.proxies, c.fb_cookie, c.chrome_path) == ([KEY_A], ["http://1.1.1.1:80"], "c_user=9", "C:/x/chrome.exe")
+    assert (c.youtube_keys, c.proxies, c.fb_cookie) == ([KEY_A], ["http://1.1.1.1:80"], "c_user=9")
 
 
 def test_load_credentials_survives_missing_or_broken_file(tmp_path):

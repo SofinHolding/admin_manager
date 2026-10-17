@@ -9,7 +9,6 @@ const ROOT_DIR    = path.join(__dirname, "../../..");
 const COLLECT_PY    = path.join(__dirname, "..", "collect.py");
 const CHANNELS_DB_PY = path.join(__dirname, "..", "channels_db.py");
 const HEALTH_PY      = path.join(__dirname, "..", "health.py");
-const BROWSER_PY     = path.join(__dirname, "..", "browser_cookie.py");
 const TIKTOK_LINKS_PY = path.join(__dirname, "..", "tiktok_links.py");
 const CONFIG_PATH   = path.join(ROOT_DIR, ".dev", "collector-config.json");
 const VIDEO_LINKS_DIR = path.join(ROOT_DIR, ".dev", "video-links");
@@ -203,7 +202,6 @@ ipcMain.handle("collector:config:read", () => {
     api_key:         data.api_key          || "",
     youtube_api_keys: pool(data.youtube_api_keys, data.youtube_api_key),
     proxies:         pool(data.proxies, data.proxy),
-    chrome_path:     data.chrome_path      || "",
     fb_cookie:       data.fb_cookie        || "",
     poll_interval:   data.poll_interval    ?? 30,
     max_concurrent:  data.max_concurrent   ?? 3,
@@ -315,18 +313,6 @@ ipcMain.handle("pool:check", (_event, { kind, items }) => {
 ipcMain.handle("pool:merge", (_event, { kind, existing, text }) => {
   if (kind !== "youtube-keys" && kind !== "proxies") return { error: "Loại danh sách không hợp lệ" };
   return runPyJson(HEALTH_PY, ["merge", kind], { existing: Array.isArray(existing) ? existing : [], text: String(text || "") }, 20_000);
-});
-
-/** Thử mở Chrome/Edge cục bộ (chạy ẩn) rồi đóng — dùng để lấy cookie TikTok thay cho AdsPower. */
-ipcMain.handle("browser:check", (_event, { chrome_path, proxy }) =>
-  runPyJson(BROWSER_PY, ["check"], { chrome_path: chrome_path || "", proxy: proxy || "" }, 60_000));
-
-ipcMain.handle("browser:pick", async () => {
-  const pick = await dialog.showOpenDialog(mainWindow, {
-    title: "Chọn chrome.exe hoặc msedge.exe", properties: ["openFile"],
-    filters: process.platform === "win32" ? [{ name: "Trình duyệt", extensions: ["exe"] }] : [],
-  });
-  return pick.canceled || !pick.filePaths[0] ? { ok: false } : { ok: true, path: pick.filePaths[0] };
 });
 
 /** Lấy TẤT CẢ link video của một kênh TikTok về máy (lưu DB cục bộ + file .txt). Có thể mất vài phút với kênh lớn. */

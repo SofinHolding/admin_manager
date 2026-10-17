@@ -18,10 +18,6 @@ contextBridge.exposeInMainWorld("collector", {
   checkPool:     (kind, items) => ipcRenderer.invoke("pool:check", { kind, items }),
   /** Thêm hàng loạt vào danh sách key/proxy (mỗi dòng một mục). Trả { items, added, duplicate, bad } hoặc { error }. */
   mergePool:     (kind, existing, text) => ipcRenderer.invoke("pool:merge", { kind, existing, text }),
-  /** Thử mở Chrome/Edge cục bộ (ẩn) — dùng lấy cookie TikTok thay AdsPower. Trả { ok, path, version, via_proxy } | { ok:false, error }. */
-  checkBrowser:  (chrome_path, proxy) => ipcRenderer.invoke("browser:check", { chrome_path, proxy }),
-  /** Chọn đường dẫn chrome.exe / msedge.exe. Trả { ok, path }. */
-  pickBrowser:   ()         => ipcRenderer.invoke("browser:pick"),
   readStatus:    ()         => ipcRenderer.invoke("collector:status:read"),
   /** Lắng nghe sự kiện scheduler (auto_started / auto_stopped). */
   onScheduleEvent: (cb) => ipcRenderer.on("collector:schedule:event", (_ev, data) => cb(data)),

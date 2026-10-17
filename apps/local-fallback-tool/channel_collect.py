@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-import browser_cookie
 import channels_db
 import tiktok_links
 from checkers import facebook as fb_checker
@@ -30,8 +29,9 @@ DEFAULT_SETTINGS = Path(channels_db.ROOT_DIR) / ".dev" / "collector-config.json"
 YOUTUBE_RECENT = 30       # video mới nhất mỗi lần (YouTube Data API trả thống kê theo lô 50 => rẻ)
 TIKTOK_RECENT = 15        # tikwm ~1 req/s/IP => 15 video ~ 17 giây/kênh
 YTDLP_RECENT = 10         # yt-dlp lấy từng video một (chậm, dễ bị chặn) => ít hơn
-PROXY_ATTEMPTS = 2        # số proxy khác nhau thử cho một lần gọi trước khi báo lỗi
-_PROXY_FAULT = re.compile(r"proxy|timeout|network|connect|ssl|tunnel|socks", re.I)
+PROXY_ATTEMPTS = 3        # số proxy khác nhau thử cho một lần gọi trước khi báo lỗi
+# 403/429 từ tikwm/Facebook = IP của proxy đó bị chặn (đo thật: cùng video qua 8 proxy khác đều đo được) => đổi proxy
+_PROXY_FAULT = re.compile(r"proxy|timeout|network|connect|ssl|tunnel|socks|HTTP 403|HTTP 429", re.I)
 
 
 class JobAbort(Exception):
@@ -47,7 +47,6 @@ class Credentials:
     youtube_keys: list[str] = field(default_factory=list)
     proxies: list[str] = field(default_factory=list)
     fb_cookie: str = ""
-    chrome_path: str = ""
 
     def __post_init__(self) -> None:
         self.key_pool = Pool(self.youtube_keys, cooldown_s=yt_checker.QUOTA_COOLDOWN_S)
@@ -55,16 +54,15 @@ class Credentials:
 
 
 def load_credentials(settings_path: str | Path = DEFAULT_SETTINGS) -> Credentials:
-    """Khoá YouTube + proxy (nhiều mục, xem `pools.load_pools`), cookie Facebook, đường dẫn Chrome — từ file cấu hình của tool;
-    biến môi trường `FB_COOKIE` / `CHROME_PATH` chỉ dùng khi file không có."""
+    """Khoá YouTube + proxy (nhiều mục, xem `pools.load_pools`) và cookie Facebook — từ file cấu hình của tool;
+    biến môi trường `FB_COOKIE` chỉ dùng khi file không có."""
     try:
         data = json.loads(Path(settings_path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
     keys, proxies = load_pools(str(settings_path))
     return Credentials(youtube_keys=keys, proxies=proxies,
-                       fb_cookie=str(data.get("fb_cookie") or os.environ.get("FB_COOKIE", "")),
-                       chrome_path=str(data.get("chrome_path") or os.environ.get("CHROME_PATH", "")))
+                       fb_cookie=str(data.get("fb_cookie") or os.environ.get("FB_COOKIE", "")))
 
 
 def to_item(result: dict, external_id: str) -> dict:
@@ -152,11 +150,9 @@ def _with_listing(creds: Credentials, call: Callable[[str | None], list[str]]) -
 
 def collect_tiktok(input_ref: str, creds: Credentials) -> tuple[list[dict], dict]:
     try:
-        listing = tiktok_links.fetch_links(input_ref, chrome_path=creds.chrome_path, proxies=creds.proxies, limit=TIKTOK_RECENT)
+        listing = tiktok_links.fetch_links(input_ref, proxies=creds.proxies, limit=TIKTOK_RECENT)
     except tiktok_links.TikTokError as exc:
         raise JobAbort(str(exc)) from exc
-    except browser_cookie.BrowserError as exc:
-        raise JobAbort(f"Không lấy được cookie TikTok từ trình duyệt: {exc}") from exc
     videos = listing["videos"][:TIKTOK_RECENT]
     if not videos:
         if listing["kind"] == "empty":

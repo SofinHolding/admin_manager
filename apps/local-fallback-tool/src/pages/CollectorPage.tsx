@@ -21,7 +21,6 @@ interface CollectorConfig {
   api_key:         string;
   youtube_api_keys: string[];   // nhiều key, xoay vòng khi một key hết quota
   proxies:         string[];    // nhiều proxy, xoay vòng khi một proxy lỗi
-  chrome_path:     string;      // Chrome/Edge lấy cookie TikTok; rỗng = tự tìm
   fb_cookie:       string;
   poll_interval:   number;
   max_concurrent:  number;
@@ -81,7 +80,7 @@ type PlatformKey = "youtube" | "tiktok" | "facebook";
 const DEF_PLAT: PlatformCfg = { enabled: true, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
 
 const DEFAULT_CONFIG: CollectorConfig = {
-  gateway: "", api_key: "", youtube_api_keys: [], proxies: [], chrome_path: "",
+  gateway: "", api_key: "", youtube_api_keys: [], proxies: [],
   fb_cookie: "", poll_interval: 30, max_concurrent: 3,
   platforms: {
     youtube:  { ...DEF_PLAT },
@@ -153,8 +152,6 @@ export default function CollectorPage() {
   const [dirty,     setDirty]     = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [saveMsg,   setSaveMsg]   = useState("");
-  const [browserMsg, setBrowserMsg] = useState<{ text: string; ok: boolean } | null>(null);
-  const [browserBusy, setBrowserBusy] = useState(false);
 
   // Connection
   const [health,         setHealth]         = useState<"unknown" | "ok" | "fail">("unknown");
@@ -318,25 +315,6 @@ export default function CollectorPage() {
   const setField = <K extends keyof CollectorConfig>(k: K, v: CollectorConfig[K]) => {
     setConfig(c => ({ ...c, [k]: v }));
     setDirty(true);
-  };
-
-  const pickBrowser = async () => {
-    const r = await bridge().pickBrowser();
-    if (r.ok && r.path) setField("chrome_path", r.path);
-  };
-
-  const testBrowser = async () => {
-    setBrowserBusy(true);
-    setBrowserMsg(null);
-    try {
-      const r = await bridge().checkBrowser(config.chrome_path);
-      setBrowserMsg(r.ok ? { text: `Mở được ${r.version} (${r.path}) — dùng được để lấy cookie TikTok, không cần AdsPower.`, ok: true }
-                         : { text: r.error ?? "Không mở được trình duyệt", ok: false });
-    } catch (e) {
-      setBrowserMsg({ text: e instanceof Error ? e.message : String(e), ok: false });
-    } finally {
-      setBrowserBusy(false);
-    }
   };
 
   const addScheduleTime = (p: PlatformKey) => {
@@ -1062,26 +1040,6 @@ export default function CollectorPage() {
                   </div>
                 </div>
 
-                <div style={{ marginTop: 14 }}>
-                  <CfgField label="Trình duyệt lấy cookie TikTok (không cần AdsPower)">
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <input value={config.chrome_path} onChange={e => setField("chrome_path", e.target.value)}
-                             placeholder="Để trống = tự tìm Chrome/Edge trên máy" style={{ ...inputCss, height: 32 }} />
-                      <button type="button" onClick={pickBrowser} disabled={!isElectron} style={{ ...btnCss("ghost", !isElectron), height: 32 }}>Chọn…</button>
-                      <button type="button" onClick={testBrowser} disabled={!isElectron || browserBusy}
-                              style={{ ...btnCss("ghost", !isElectron || browserBusy), height: 32, whiteSpace: "nowrap" }}>
-                        {browserBusy ? "Đang mở…" : "Kiểm tra trình duyệt"}
-                      </button>
-                    </div>
-                    {browserMsg && (
-                      <p style={{ fontSize: 11, margin: "4px 0 0", color: browserMsg.ok ? "var(--green)" : "var(--red)" }}>{browserMsg.text}</p>
-                    )}
-                    <p style={{ fontSize: 10, color: "var(--muted)", margin: "3px 0 0" }}>
-                      Tool tự mở Chrome/Edge chạy ẩn (hồ sơ tạm, đi qua proxy ở trên) để lấy cookie TikTok rồi đóng ngay.
-                    </p>
-                  </CfgField>
-                </div>
-
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
                   <button type="submit" disabled={!isElectron || saving}
                           style={{ ...btnCss("primary", !isElectron || saving), height: 34, padding: "0 20px", fontSize: 13 }}>
@@ -1222,8 +1180,6 @@ declare global {
         { results: { item: string; state: "alive" | "quota" | "dead" | "error"; detail: string; ms: number; ip?: string }[] } | { error: string }>;
       mergePool:       (kind: "youtube-keys" | "proxies", existing: string[], text: string) => Promise<
         { items: string[]; added: number; duplicate: number; bad: string[] } | { error: string }>;
-      checkBrowser:    (chrome_path: string, proxy?: string) => Promise<{ ok: boolean; path?: string; version?: string; via_proxy?: boolean; error?: string }>;
-      pickBrowser:     () => Promise<{ ok: boolean; path?: string }>;
       onScheduleEvent: (cb: (ev: { type: string; platforms?: string[]; time?: string }) => void) => void;
     };
   }

@@ -64,6 +64,6 @@ Máy Windows không có cơ sở dữ liệu múi giờ (thiếu gói `tzdata`):
 
 ## 5. Chưa làm (ngoài đợt này)
 
-- TikTok: liệt kê video bằng cookie phiên của Chrome/Edge cục bộ (`tiktok_links.py`); bị TikTok chặn IP/proxy thì job fail kèm gợi ý (không đẩy 0 giả). Quy đổi ngày/`region` dùng chung cho mọi nền tảng.
+- TikTok: liệt kê video bằng yt-dlp không cookie, lặp tối đa 25 lượt qua cổng chống bot (`tiktok_links.py`); chặn hết 25 lượt thì job fail kèm gợi ý (không đẩy 0 giả). Quy đổi ngày/`region` dùng chung cho mọi nền tảng.
 - Mỗi lần mới thu: YouTube 30 video gần nhất (yt-dlp: 10), TikTok 15, Facebook một link; R4 khuyến nghị gửi lại toàn bộ bài trong cửa sổ còn biến động (≈30 ngày).
-- Cấu hình thu thật: YouTube API key (nhiều key), proxy (nhiều proxy), cookie Facebook, đường dẫn Chrome — ở Cấu hình của tool (`.dev/collector-config.json`).
+- Cấu hình thu thật: YouTube API key (nhiều key), proxy (nhiều proxy), cookie Facebook — ở Cấu hình của tool (`.dev/collector-config.json`).

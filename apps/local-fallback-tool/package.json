@@ -52,8 +52,6 @@
       "pools.py",
       "health.py",
       "tiktok_links.py",
-      "browser_cookie.py",
-      "proxy_relay.py",
       "checkers/**",
       "requirements.txt",
       "system-endpoints.json"

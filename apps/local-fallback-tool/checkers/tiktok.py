@@ -62,7 +62,7 @@ def parse_tikwm(payload: dict, url: str) -> dict:
     )
 
 
-def check_video(url: str, proxy: str | None = None, *, client: httpx.Client | None = None) -> dict:
+def _check_once(url: str, proxy: str | None = None, *, client: httpx.Client | None = None) -> dict:
     """Không ném lỗi: mạng / proxy / HTTP đều thành `{"ok": False, "error": "[tikwm] ..."}`."""
     own = client is None
     http = client or httpx.Client(timeout=TIMEOUT_S, headers=_HEADERS, follow_redirects=True, proxy=force_remote_dns(proxy))
@@ -84,3 +84,18 @@ def check_video(url: str, proxy: str | None = None, *, client: httpx.Client | No
     finally:
         if own:
             http.close()
+
+
+_TRANSIENT = re.compile(r"limit|too many|request/second|HTTP 5\d\d|Timeout|Network|Invalid JSON|Proxy error", re.I)
+
+
+def check_video(url: str, proxy: str | None = None, *, client: httpx.Client | None = None, retries: int = 2) -> dict:
+    """`_check_once` + thử lại các lỗi tạm thời của tikwm (giới hạn tốc độ, 5xx, hết thời gian, proxy): đo thật cho thấy 1–2/15 video lỗi
+    chập chờn rồi lần sau đo được ngay. Lỗi thật của video (link sai, video bị xoá) không thử lại."""
+    result = _check_once(url, proxy, client=client)
+    for n in range(1, retries + 1):
+        if result.get("ok") or not _TRANSIENT.search(str(result.get("error") or "")):
+            break
+        time.sleep(1.5 * n)
+        result = _check_once(url, proxy, client=client)
+    return result

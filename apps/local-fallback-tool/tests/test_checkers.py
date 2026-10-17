@@ -48,9 +48,24 @@ def test_tiktok_check_video_turns_network_problems_into_errors_not_exceptions():
     def boom(request):
         raise httpx.ConnectError("x")
     client = httpx.Client(transport=httpx.MockTransport(boom))
-    assert tt.check_video("https://www.tiktok.com/@a/video/1", client=client)["ok"] is False
+    assert tt.check_video("https://www.tiktok.com/@a/video/1", client=client, retries=0)["ok"] is False
     http500 = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500)))
-    assert "HTTP 500" in tt.check_video("https://www.tiktok.com/@a/video/1", client=http500)["error"]
+    assert "HTTP 500" in tt.check_video("https://www.tiktok.com/@a/video/1", client=http500, retries=0)["error"]
+
+
+def test_tikwm_transient_errors_are_retried_but_real_video_errors_are_not(monkeypatch):
+    monkeypatch.setattr(tt.time, "sleep", lambda s: None)
+    calls: list[int] = []
+
+    def flaky(request):
+        calls.append(1)
+        return httpx.Response(200, json={"code": -1, "msg": "Free Api Limit: 1 request/second."}) if len(calls) < 3 else httpx.Response(200, json=TIKWM_OK)
+    client = httpx.Client(transport=httpx.MockTransport(flaky))
+    assert tt.check_video("https://www.tiktok.com/@a/video/1", client=client)["ok"] is True and len(calls) == 3
+
+    calls.clear()
+    bad = httpx.Client(transport=httpx.MockTransport(lambda r: calls.append(1) or httpx.Response(200, json={"code": -1, "msg": "Url parsing is failed!"})))
+    assert tt.check_video("https://www.tiktok.com/@a/video/1", client=bad)["ok"] is False and len(calls) == 1
 
 
 # ── YouTube: nhận dạng ───────────────────────────────────────────────────────────────────
