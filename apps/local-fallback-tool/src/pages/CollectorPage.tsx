@@ -1,15 +1,18 @@
 /**
  * Channel Collector — điều khiển thu thập dữ liệu kênh (Electron desktop).
- * Luồng: claim collect-job → thu thập YT/TikTok/FB → push snapshot lên VPS.
+ * Luồng: kênh đã kéo → xin job theo lịch → thu thập YT/TikTok/FB → đẩy snapshot lên website NGAY sau từng link.
  */
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import SYSTEM from "../../system-endpoints.json";
+import PoolEditor from "../components/PoolEditor";
+import ChannelDataBadges from "../components/ChannelDataBadges";
+import VideoLinksDialog from "../components/VideoLinksDialog";
 
 // ── Kiểu ─────────────────────────────────────────────────────────────────────
 
 interface PlatformCfg {
   enabled:              boolean;
-  interval:             number;
   schedule_enabled:     boolean;
   schedule_times:       string[];   // ["09:00", "15:00"]
   schedule_duration_min: number;
@@ -18,10 +21,9 @@ interface PlatformCfg {
 interface CollectorConfig {
   gateway:         string;
   api_key:         string;
-  youtube_api_key: string;
-  checkview_dir:   string;
+  youtube_api_keys: string[];   // nhiều key, xoay vòng khi một key hết quota
+  proxies:         string[];    // nhiều proxy, xoay vòng khi một proxy lỗi
   fb_cookie:       string;
-  proxy:           string;
   poll_interval:   number;
   max_concurrent:  number;
   platforms: { youtube: PlatformCfg; tiktok: PlatformCfg; facebook: PlatformCfg };
@@ -42,6 +44,7 @@ interface RecentJob {
 
 interface ChannelStat {
   channel:       string;
+  channel_id?:   string;   // resource_id của hệ thống — khớp kênh đã kéo trong DB cục bộ
   platform:      string;
   owner:         string;
   total_ok:      number;
@@ -76,15 +79,15 @@ type PlatformKey = "youtube" | "tiktok" | "facebook";
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
-const DEF_PLAT: PlatformCfg = { enabled: true, interval: 30, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
+const DEF_PLAT: PlatformCfg = { enabled: true, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
 
 const DEFAULT_CONFIG: CollectorConfig = {
-  gateway: "", api_key: "", youtube_api_key: "", checkview_dir: "",
-  fb_cookie: "", proxy: "", poll_interval: 30, max_concurrent: 3,
+  gateway: "", api_key: "", youtube_api_keys: [], proxies: [],
+  fb_cookie: "", poll_interval: 30, max_concurrent: 3,
   platforms: {
     youtube:  { ...DEF_PLAT },
-    tiktok:   { ...DEF_PLAT, interval: 60 },
-    facebook: { ...DEF_PLAT, enabled: false, interval: 120 },
+    tiktok:   { ...DEF_PLAT },
+    facebook: { ...DEF_PLAT, enabled: false },
   },
 };
 
@@ -104,16 +107,17 @@ function uptimeStr(startedAt: number | null): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
+/** Giờ hiện tại theo GIỜ VIỆT NAM (report_timezone cố định): lịch tự động tính theo giờ này, không theo múi giờ của máy chạy tool. */
 function nowHHMM(): string {
-  const n = new Date();
-  return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`;
+  return new Intl.DateTimeFormat("en-GB", { timeZone: SYSTEM.report_timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+    .format(new Date());
 }
 
 function minutesUntil(hhmm: string): number {
   const [th, tm] = hhmm.split(":").map(Number);
+  const [ch, cm] = nowHHMM().split(":").map(Number);
   const target = th * 60 + tm;
-  const n = new Date();
-  const cur = n.getHours() * 60 + n.getMinutes();
+  const cur = ch * 60 + cm;
   return target >= cur ? target - cur : 1440 - cur + target;
 }
 
@@ -150,7 +154,6 @@ export default function CollectorPage() {
   const [dirty,     setDirty]     = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [saveMsg,   setSaveMsg]   = useState("");
-  const [configOpen,setConfigOpen]= useState(false);
 
   // Connection
   const [health,         setHealth]         = useState<"unknown" | "ok" | "fail">("unknown");
@@ -182,7 +185,7 @@ export default function CollectorPage() {
 
   const refreshStatus = useCallback(async () => {
     if (!isElectron) return;
-    const s = await window.collector.status();
+    const s = await bridge().status();
     setRunning(s.running);
     setPid(s.running ? s.pid : null);
     setAutoState(s.autoState ?? null);
@@ -190,7 +193,7 @@ export default function CollectorPage() {
 
   const refreshLog = useCallback(async () => {
     if (!isElectron) return;
-    setLogText(await window.collector.readLog() || "");
+    setLogText(await bridge().readLog() || "");
   }, [isElectron]);
 
   const refreshCStatus = useCallback(async () => {
@@ -200,13 +203,13 @@ export default function CollectorPage() {
 
   useEffect(() => {
     if (!isElectron) return;
-    window.collector.readConfig().then((cfg: CollectorConfig) =>
+    bridge().readConfig().then((cfg: CollectorConfig) =>
       setConfig({
         ...DEFAULT_CONFIG, ...cfg,
         platforms: {
-          youtube:  { ...DEF_PLAT, ...cfg.platforms?.youtube },
-          tiktok:   { ...DEF_PLAT, interval: 60, ...cfg.platforms?.tiktok },
-          facebook: { ...DEF_PLAT, enabled: false, interval: 120, ...cfg.platforms?.facebook },
+          youtube:  { ...DEF_PLAT, ...(cfg.platforms?.youtube as Partial<PlatformCfg> | undefined) },
+          tiktok:   { ...DEF_PLAT, ...(cfg.platforms?.tiktok as Partial<PlatformCfg> | undefined) },
+          facebook: { ...DEF_PLAT, enabled: false, ...(cfg.platforms?.facebook as Partial<PlatformCfg> | undefined) },
         },
       })
     );
@@ -214,8 +217,8 @@ export default function CollectorPage() {
     refreshLog();
     refreshCStatus();
 
-    if (window.collector.onScheduleEvent) {
-      window.collector.onScheduleEvent((ev: { type: string }) => {
+    if (window.collector?.onScheduleEvent) {
+      bridge().onScheduleEvent((ev: { type: string }) => {
         refreshStatus();
         if (ev.type === "auto_started") refreshLog();
       });
@@ -230,6 +233,13 @@ export default function CollectorPage() {
     }, 3000);
     return () => clearInterval(id);
   }, [isElectron, running, refreshStatus, refreshLog, refreshCStatus]);
+
+  // Collector vừa dừng (hết lượt "Chạy ngay" hoặc bị dừng): đọc lần cuối để số OK/lỗi và log mới nhất hiện ra.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !running) { refreshLog(); refreshCStatus(); setReloadTick((n) => n + 1); }
+    wasRunning.current = running;
+  }, [running, refreshLog, refreshCStatus]);
 
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 1000);
@@ -251,7 +261,7 @@ export default function CollectorPage() {
     if (!isElectron) return;
     setStartError(""); setStarting(true);
     try {
-      const res = await window.collector.start(config);
+      const res = await bridge().start(config);
       if (res.ok) { setRunning(true); setPid(res.pid ?? null); setStartedAt(Date.now()); }
       else setStartError(res.reason || "Không thể khởi động");
     } catch (e) {
@@ -259,9 +269,22 @@ export default function CollectorPage() {
     } finally { setStarting(false); }
   };
 
+  /** "Chạy ngay": MỘT lượt (xin job + xử lý hết) rồi collector tự dừng, không chờ lịch. Không truyền `resourceIds` = mọi kênh đã kéo + đang bật. */
+  const handleRunNow = async (resourceIds?: string[]) => {
+    if (!isElectron || running) return;
+    setStartError(""); setStarting(true);
+    try {
+      const res = await bridge().runNow({ resource_ids: resourceIds });
+      if (res.ok) { setRunning(true); setPid(res.pid ?? null); setStartedAt(Date.now()); }
+      else setStartError(res.reason === "already_running" ? "Collector đang chạy — dừng trước khi chạy ngay" : res.reason || "Không thể chạy");
+    } catch (e) {
+      setStartError(e instanceof Error ? e.message : String(e));
+    } finally { setStarting(false); }
+  };
+
   const handleStop = async () => {
     if (!isElectron) return;
-    await window.collector.stop();
+    await bridge().stop();
     setRunning(false); setPid(null); setStartedAt(null); setAutoState(null);
     await refreshLog();
   };
@@ -271,17 +294,27 @@ export default function CollectorPage() {
     if (!isElectron) return;
     setSaving(true); setSaveMsg("");
     try {
-      await window.collector.writeConfig(config);
+      await bridge().writeConfig(config);
       setSaveMsg("Đã lưu"); setDirty(false);
       setTimeout(() => setSaveMsg(""), 2500);
     } finally { setSaving(false); }
+  };
+
+  const handleImportConnection = async () => {
+    if (!isElectron) return;
+    const r = await bridge().importConnection();
+    if (r.canceled) return;
+    if (!r.ok) { setSaveMsg(r.error ?? "Không nạp được file kết nối"); setTimeout(() => setSaveMsg(""), 4000); return; }
+    const cfg: CollectorConfig = await bridge().readConfig();
+    setConfig(c => ({ ...c, gateway: cfg.gateway, api_key: cfg.api_key }));
+    setSaveMsg("Đã nạp file kết nối ✓"); setTimeout(() => setSaveMsg(""), 2500);
   };
 
   const handleHealth = async () => {
     if (!isElectron) return;
     setCheckingHealth(true); setHealth("unknown"); setHealthMsg("");
     try {
-      const r = await window.collector.health();
+      const r = await bridge().health();
       setHealth(r.ok ? "ok" : "fail");
       setHealthMsg(r.ok ? `Kết nối OK (${r.status ?? 200})` : (r.reason || "Không kết nối được"));
     } finally { setCheckingHealth(false); }
@@ -295,7 +328,7 @@ export default function CollectorPage() {
     setConfig(newCfg);
     setDirty(true);
     if (isElectron) {
-      window.collector.writeConfig(newCfg)
+      bridge().writeConfig(newCfg)
         .then(() => { setSaveMsg("Đã lưu ✓"); setTimeout(() => setSaveMsg(""), 1500); })
         .catch(() => {});
     }
@@ -353,21 +386,58 @@ export default function CollectorPage() {
 
   // ── Channels tab data ─────────────────────────────────────────────────────────
 
-  const allChannels = Object.values(cStatus?.channels ?? {});
+  // Kênh ĐÃ KÉO (DB cục bộ, tab "Người dùng & Kênh") là nguồn chính; số liệu thu thập (OK/lỗi) từ file trạng thái của collector
+  // chồng lên theo khoá `${platform}/${resource_id}`. Trước đây tab này chỉ đọc file trạng thái nên kênh đã kéo không hiện
+  // cho tới khi job của nó chạy xong.
+  const [pulled, setPulled] = useState<LocalChannel[]>([]);
+  const [ownerNames, setOwnerNames] = useState<Record<string, string>>({});
+  const [pulledLoaded, setPulledLoaded] = useState(false);
+
+  const [reloadTick, setReloadTick] = useState(0);
+  const [linksOf, setLinksOf] = useState<LocalChannel | null>(null);
+
+  useEffect(() => {
+    if (tab !== "channels" || !window.channels) return;
+    let alive = true;
+    const load = async () => {
+      try {
+        await window.channels!.init();
+        const [c, u] = await Promise.all([window.channels!.listChannels({ pulled_filter: "pulled" }), window.channels!.listUsers()]);
+        if (!alive) return;
+        setPulled(c.channels ?? []);
+        setOwnerNames(Object.fromEntries((u.users ?? []).map((x) => [x.id, x.username])));
+        setPulledLoaded(true);
+      } catch { /* DB chưa sẵn sàng: giữ danh sách cũ */ }
+    };
+    // Làm tươi số liệu server (video trên web / lần thu cuối / đã liên kết) rồi mới đọc DB; lỗi mạng thì vẫn hiện số đã lưu.
+    void (async () => { try { await window.channels!.refreshStats(); } catch { /* offline */ } await load(); })();
+    const id = setInterval(load, 5000);
+    return () => { alive = false; clearInterval(id); };
+  }, [tab, reloadTick]);
+
+  const stats = cStatus?.channels ?? {};
+  const shortId = (id: string) => (id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-8)}` : id || "unknown");
+  const allChannels: ChannelRowData[] = pulled.map((c) => ({
+    key: `${c.platform}/${c.id}`, id: c.id, name: c.display_name || c.input_ref || c.id, platform: c.platform,
+    owner: c.owner_username || shortId(c.owner_id), stat: stats[`${c.platform}/${c.id}`], outside: false, local: c,
+  }));
+  const pulledKeys = new Set(allChannels.map((c) => c.key));
+  // Collector vẫn nhận job của kênh chưa kéo (server chưa lọc job theo kênh): hiện riêng, không giấu.
+  Object.entries(stats).forEach(([key, s]) => {
+    if (!pulledKeys.has(key)) allChannels.push({ key, name: s.channel || s.platform, platform: s.platform, owner: ownerNames[s.owner] ?? shortId(s.owner), stat: s, outside: true });
+  });
 
   const filteredChannels = allChannels.filter(ch => {
     if (filterPlat !== "all" && ch.platform !== filterPlat) return false;
-    if (filterStatus === "ok"   && ch.total_ok === 0)   return false;
-    if (filterStatus === "fail" && ch.total_fail === 0) return false;
+    if (filterStatus === "ok"   && !(ch.stat && ch.stat.total_ok > 0))   return false;
+    if (filterStatus === "fail" && !(ch.stat && ch.stat.total_fail > 0)) return false;
     return true;
   });
 
-  // Group by owner
-  const byOwner: Record<string, ChannelStat[]> = {};
-  filteredChannels.forEach(ch => {
-    const key = ch.owner || "unknown";
-    (byOwner[key] ??= []).push(ch);
-  });
+  // Group by owner (kênh ngoài danh sách đã kéo xếp nhóm riêng ở cuối)
+  const byOwner: Record<string, ChannelRowData[]> = {};
+  filteredChannels.filter(ch => !ch.outside).forEach(ch => { (byOwner[ch.owner] ??= []).push(ch); });
+  const outsideChannels = filteredChannels.filter(ch => ch.outside);
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -417,9 +487,18 @@ export default function CollectorPage() {
           {running ? (
             <button onClick={handleStop} style={btnCss("danger")}>Dừng</button>
           ) : (
-            <button onClick={handleStart} disabled={!isElectron || starting} style={btnCss("primary", !isElectron || starting)}>
-              {starting ? "Đang khởi động…" : "Bắt đầu"}
-            </button>
+            <>
+              <button onClick={() => handleRunNow()} disabled={!isElectron || starting}
+                      title="Chạy MỘT lượt cho mọi kênh đã kéo + đang bật rồi tự dừng — không chờ lịch"
+                      style={btnCss("ghost", !isElectron || starting)}>
+                ▶ Chạy ngay
+              </button>
+              <button onClick={handleStart} disabled={!isElectron || starting}
+                      title="Chạy liên tục: thu theo lịch, mỗi ngày xin job lại cho kênh đã kéo"
+                      style={btnCss("primary", !isElectron || starting)}>
+                {starting ? "Đang khởi động…" : "Bắt đầu"}
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -495,14 +574,6 @@ export default function CollectorPage() {
 
                     {pc.enabled && (
                       <div style={{ padding: "0 10px 10px", borderTop: "1px solid var(--border-light)" }}>
-                        {/* Wait interval */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                          <span style={{ fontSize: 11, color: "var(--muted)", flex: 1 }}>Chờ khi trống</span>
-                          <input type="number" min={5} max={3600} value={pc.interval}
-                                 onChange={e => setPlatCfg(p.key, { interval: Number(e.target.value) })}
-                                 style={{ ...inputCss, width: 60, textAlign: "right" }} />
-                          <span style={{ fontSize: 11, color: "var(--muted)" }}>giây</span>
-                        </div>
 
                         {/* Schedule toggle */}
                         <label style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8, cursor: "pointer" }}>
@@ -573,10 +644,10 @@ export default function CollectorPage() {
                   : <span style={{ color: "var(--amber)" }}>API key chưa cấu hình.</span>
                 }
                 {" "}
-                {config.checkview_dir
-                  ? "CheckView OK."
-                  : <span style={{ color: "var(--amber)" }}>Thiếu CheckView Dir.</span>
-                }
+                <span style={{ color: config.youtube_api_keys.length ? "var(--muted)" : "var(--amber)" }}>
+                  {config.youtube_api_keys.length} key YouTube
+                </span>
+                {" · "}{config.proxies.length} proxy.
                 {dirty && <span style={{ color: "var(--amber)" }}> · Chưa lưu.</span>}
               </p>
               <button onClick={() => setTab("config")}
@@ -701,12 +772,10 @@ export default function CollectorPage() {
                 background: "#fffbeb", border: "1px solid #fde68a", fontSize: 11, color: "#92400e",
                 display: "flex", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 3 }}>Dữ liệu kênh trong phiên này</div>
+                  <div style={{ fontWeight: 600, marginBottom: 3 }}>Kênh đã kéo về tool</div>
                   <div style={{ lineHeight: 1.6 }}>
-                    Collector claim job của tài khoản gắn với machine key này.
-                    Sau khi bắt đầu thu thập, mỗi kênh được xử lý sẽ xuất hiện ở đây — bao gồm thông tin owner, platform, số lần OK/lỗi.
-                    <br />
-                    <strong>Xem toàn bộ người dùng &amp; kênh trên hệ thống:</strong> vào Manager Web → trang Admin.
+                    Danh sách này là các kênh bạn đã kéo ở tab <strong>Người dùng &amp; Kênh</strong> (tool giữ kết nối để đẩy dữ liệu lên).
+                    Số lần OK / lỗi của từng kênh xuất hiện sau khi collector xử lý job của kênh đó.
                   </div>
                 </div>
                 {config.gateway && (
@@ -745,31 +814,26 @@ export default function CollectorPage() {
                 <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted)" }}>
                   {filteredChannels.length} kênh
                 </span>
+                <button onClick={() => handleRunNow(filteredChannels.filter(c => c.id).map(c => c.id as string))}
+                        disabled={!isElectron || running || starting || !filteredChannels.some(c => c.id)}
+                        title="Chạy ngay các kênh đang hiển thị theo bộ lọc nền tảng bên cạnh"
+                        style={{ ...btnCss("ghost", !isElectron || running || starting || !filteredChannels.some(c => c.id)), height: 24, fontSize: 11 }}>
+                  ▶ Chạy ngay {filteredChannels.filter(c => c.id).length} kênh
+                </button>
               </div>
 
               <div style={{ flex: 1, overflowY: "auto", padding: "0 14px 12px" }}>
                 {allChannels.length === 0 ? (
-                  /* Chưa có data: hướng dẫn rõ ràng */
                   <div style={{ marginTop: 28, padding: "20px 24px", borderRadius: 8,
                     background: "var(--surface)", border: "1px solid var(--border)", textAlign: "center" }}>
                     <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
-                      {running ? "Đang thu thập…" : "Chưa có dữ liệu kênh"}
+                      {pulledLoaded ? "Chưa kéo kênh nào" : "Đang tải…"}
                     </div>
-                    {running ? (
-                      <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 12px" }}>
-                        Collector đang chờ job. Dữ liệu kênh sẽ xuất hiện sau khi job đầu tiên được xử lý xong.
+                    {pulledLoaded && (
+                      <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>
+                        Sang tab <strong>Người dùng &amp; Kênh</strong>, bấm <strong>Fetch</strong> rồi chọn kênh và <strong>Kéo</strong>.<br />
+                        Kênh đã kéo sẽ hiện ở đây, kể cả khi collector chưa chạy.
                       </p>
-                    ) : (
-                      <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 14px" }}>
-                        Bấm <strong>Bắt đầu</strong> để collector nhận job từ VPS và bắt đầu thu thập dữ liệu kênh.<br />
-                        Mỗi kênh được xử lý sẽ hiện ở đây với trạng thái OK / Lỗi và thông tin người dùng sở hữu.
-                      </p>
-                    )}
-                    {!running && (
-                      <button onClick={handleStart} disabled={!isElectron || starting}
-                              style={{ ...btnCss("primary", !isElectron || starting), height: 32, padding: "0 20px" }}>
-                        {starting ? "Đang khởi động…" : "Bắt đầu thu thập"}
-                      </button>
                     )}
                   </div>
                 ) : filteredChannels.length === 0 ? (
@@ -777,53 +841,16 @@ export default function CollectorPage() {
                     Không có kênh nào khớp bộ lọc.
                   </div>
                 ) : (
-                  Object.entries(byOwner).map(([owner, chs]) => (
-                    <div key={owner} style={{ marginTop: 12 }}>
-                      {/* Owner header */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6,
-                        paddingBottom: 4, borderBottom: "1px solid var(--border)" }}>
-                        <span style={{ fontSize: 13 }}>👤</span>
-                        <span style={{ fontSize: 12, fontWeight: 600, fontFamily: "monospace" }}>
-                          {owner.length > 20 ? `${owner.slice(0, 8)}…${owner.slice(-8)}` : owner}
-                        </span>
-                        <span style={{ fontSize: 11, color: "var(--muted)" }}>({chs.length} kênh)</span>
-                      </div>
-                      {/* Channel rows */}
-                      {chs.map((ch, i) => {
-                        const platMeta = PLATFORMS.find(p => p.key === ch.platform);
-                        return (
-                          <div key={i} style={{
-                            display: "flex", alignItems: "center", gap: 8,
-                            padding: "5px 8px", borderRadius: 5, marginBottom: 2,
-                            background: ch.total_fail > 0 ? "#fff5f5" : "var(--surface)",
-                            border: `1px solid ${ch.total_fail > 0 ? "#fecaca" : "var(--border)"}`,
-                          }}>
-                            <span style={{ fontSize: 12, color: platMeta?.color, flexShrink: 0, width: 14, textAlign: "center" }}>
-                              {platMeta?.icon}
-                            </span>
-                            <span style={{ flex: 1, fontSize: 12, fontWeight: 500, overflow: "hidden",
-                              textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {ch.channel || ch.platform}
-                            </span>
-                            <span style={{ fontSize: 11, color: "var(--green)", flexShrink: 0 }}>✓{ch.total_ok}</span>
-                            <span style={{ fontSize: 11, color: ch.total_fail > 0 ? "var(--red)" : "var(--muted)", flexShrink: 0 }}>
-                              ✗{ch.total_fail}
-                            </span>
-                            <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>
-                              {fmtTime(ch.last_ok || ch.last_error_at)}
-                            </span>
-                            {ch.last_error && (
-                              <span style={{ fontSize: 10, color: "var(--red)", maxWidth: 120,
-                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                                flexShrink: 0 }} title={ch.last_error}>
-                                {ch.last_error.slice(0, 30)}…
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))
+                  <>
+                    {Object.entries(byOwner).map(([owner, chs]) => (
+                      <ChannelOwnerBlock key={owner} owner={owner} chs={chs} onRun={(id) => handleRunNow([id])} runDisabled={!isElectron || running || starting}
+                        onShowLinks={setLinksOf} />
+                    ))}
+                    {outsideChannels.length > 0 && (
+                      <ChannelOwnerBlock owner="Ngoài danh sách đã kéo" chs={outsideChannels}
+                        note="Đã thu ở phiên trước nhưng hiện không còn trong danh sách đã kéo (đã gỡ kết nối hoặc đang tắt). Collector không thu thêm các kênh này." />
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -879,6 +906,18 @@ export default function CollectorPage() {
                 </div>
               )}
 
+              {/* Cách hoạt động — thiết kế thời điểm đẩy dữ liệu */}
+              <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 8, fontSize: 11, lineHeight: 1.65,
+                background: "rgba(59,91,219,.05)", border: "1px solid rgba(59,91,219,.18)", color: "var(--text)" }}>
+                <div style={{ fontWeight: 700, marginBottom: 3 }}>Cách hoạt động</div>
+                <ul style={{ margin: 0, paddingLeft: 16 }}>
+                  <li>Mốc giờ tính theo <b>giờ Việt Nam</b> ({SYSTEM.report_timezone}), không theo múi giờ của máy này.</li>
+                  <li>Đến mốc giờ, tool bật collector, xin server tạo job thu thập cho các <b>kênh đã kéo</b> của nền tảng đó (mỗi kênh một lần mỗi ngày), rồi thu thập lần lượt từng link.</li>
+                  <li>Xong <b>link nào đẩy ngay link đó</b> lên website, không chờ hết đợt. Số liệu ghi đè theo (kênh, video); ngày đăng và ngày chỉ số kênh tính theo giờ Việt Nam.</li>
+                  <li>Hết "Chạy trong N phút" collector dừng; link chưa kịp thu sẽ được thu ở mốc kế tiếp. Kênh mới kéo thêm khi collector đang chạy được thu ngay trong phiên đó.</li>
+                </ul>
+              </div>
+
               {/* Timeline hôm nay */}
               {schedEntries.length > 0 && (
                 <div>
@@ -925,7 +964,14 @@ export default function CollectorPage() {
             <div style={{ flex: 1, overflowY: "auto" }}>
               <form onSubmit={handleSave} style={{ padding: "20px 28px", maxWidth: 700, margin: "0 auto" }}>
 
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 14 }}>Kết nối</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Kết nối</div>
+                  <button type="button" onClick={handleImportConnection}
+                          title="Chọn file .json Admin cấp cùng key dùng chung — tự điền Gateway URL và API Key"
+                          style={{ ...inputCss, height: 28, width: "auto", padding: "0 12px", cursor: "pointer" }}>
+                    Nạp file kết nối…
+                  </button>
+                </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <CfgField label="Gateway URL">
@@ -994,17 +1040,17 @@ export default function CollectorPage() {
 
                 <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 14 }}>Credentials nền tảng</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-                  <div>
-                    <CfgField label="YouTube API Key">
-                      <input value={config.youtube_api_key} onChange={e => setField("youtube_api_key", e.target.value)}
-                             placeholder="AIza…" style={{ ...inputCss, height: 32 }} />
-                    </CfgField>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <PoolEditor kind="youtube-keys" title="YouTube API Key" items={config.youtube_api_keys}
+                                onChange={(v) => setField("youtube_api_keys", v)} disabled={!isElectron}
+                                placeholder={"AIza…\nAIza…\n(mỗi dòng một key)"}
+                                hint="Nhiều key được xoay vòng: key hết quota hôm nay tự nghỉ, dùng key kế. Không có key nào thì YouTube chạy bằng yt-dlp (chậm, dễ bị chặn)." />
                   </div>
-                  <div>
-                    <CfgField label="Proxy (tùy chọn)">
-                      <input value={config.proxy} onChange={e => setField("proxy", e.target.value)}
-                             placeholder="socks5://127.0.0.1:1080" style={{ ...inputCss, height: 32 }} />
-                    </CfgField>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <PoolEditor kind="proxies" title="Proxy" items={config.proxies}
+                                onChange={(v) => setField("proxies", v)} disabled={!isElectron}
+                                placeholder={"socks5://user:pass@host:1080\nhost:port:user:pass\nhttp://host:3128\n(mỗi dòng một proxy)"}
+                                hint="Dùng cho lấy cookie/link TikTok, kiểm tra Facebook, yt-dlp. Proxy lỗi tự nghỉ vài phút rồi thử lại. Không có proxy thì đi bằng IP máy này." />
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <CfgField label="Facebook Cookie">
@@ -1034,12 +1080,6 @@ export default function CollectorPage() {
                              style={{ ...inputCss, height: 32, textAlign: "right" }} />
                     </CfgField>
                   </div>
-                  <div>
-                    <CfgField label="CheckView Dir">
-                      <input value={config.checkview_dir} onChange={e => setField("checkview_dir", e.target.value)}
-                             placeholder="D:/workspace/…" style={{ ...inputCss, height: 32 }} />
-                    </CfgField>
-                  </div>
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
@@ -1056,6 +1096,7 @@ export default function CollectorPage() {
 
         </main>
       </div>
+      {linksOf && <VideoLinksDialog channel={linksOf} onClose={() => setLinksOf(null)} />}
     </div>
   );
 }
@@ -1110,6 +1151,70 @@ function CfgField({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
+interface ChannelRowData { key: string; id?: string; name: string; platform: string; owner: string; stat?: ChannelStat; outside: boolean; local?: LocalChannel }
+
+/** Một nhóm kênh theo chủ sở hữu: tên kênh, số lần OK/lỗi, lần gần nhất, lỗi cuối (đọc từ file trạng thái của collector, giữ qua các phiên) cùng
+ *  số liệu kênh từ DB cục bộ (đã liên kết, số video trên web, link đã lấy) — cùng thành phần với tab "Người dùng & Kênh". */
+function ChannelOwnerBlock({ owner, chs, note, onRun, runDisabled, onShowLinks }: {
+  owner: string; chs: ChannelRowData[]; note?: string; onRun?: (id: string) => void; runDisabled?: boolean;
+  onShowLinks?: (c: LocalChannel) => void;
+}) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid var(--border)" }}>
+        <span style={{ fontSize: 13 }}>👤</span>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>{owner}</span>
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>({chs.length} kênh)</span>
+      </div>
+      {note && <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 6 }}>{note}</div>}
+      {chs.map((ch) => {
+        const platMeta = PLATFORMS.find(p => p.key === ch.platform);
+        const s = ch.stat;
+        const failed = !!s && s.total_fail > 0;
+        return (
+          <div key={ch.key} style={{
+            display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 5, marginBottom: 2,
+            background: failed ? "#fff5f5" : "var(--surface)", border: `1px solid ${failed ? "#fecaca" : "var(--border)"}`,
+          }}>
+            <span style={{ fontSize: 12, color: platMeta?.color, flexShrink: 0, width: 14, textAlign: "center" }}>{platMeta?.icon}</span>
+            <span style={{ flex: 1, fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ch.name}>
+              {ch.name}
+            </span>
+            {s ? (
+              <>
+                <span style={{ fontSize: 11, color: "var(--green)", flexShrink: 0 }}>✓{s.total_ok}</span>
+                <span style={{ fontSize: 11, color: failed ? "var(--red)" : "var(--muted)", flexShrink: 0 }}>✗{s.total_fail}</span>
+                <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>{fmtTime(s.last_ok || s.last_error_at)}</span>
+                {s.last_error && (
+                  <span style={{ fontSize: 10, color: "var(--red)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0 }} title={s.last_error}>
+                    {s.last_error.slice(0, 40)}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span title="Collector chưa thu kênh này lần nào trên máy này (trạng thái được giữ qua các phiên)" style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>
+                {ch.local && (ch.local.server_video_count ?? 0) > 0 ? "Đã có số liệu trên web" : "Chưa thu"}
+              </span>
+            )}
+            {ch.local && <ChannelDataBadges ch={ch.local} onShowLinks={onShowLinks ? () => onShowLinks(ch.local as LocalChannel) : undefined} />}
+            {ch.id && onRun && (
+              <button type="button" onClick={() => onRun(ch.id as string)} disabled={runDisabled} title="Chạy ngay riêng kênh này"
+                      style={{ ...btnCss("ghost", runDisabled), height: 22, fontSize: 10, padding: "0 7px", flexShrink: 0 }}>▶ Chạy ngay</button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Cầu IPC của Electron — chỉ gọi sau khi đã kiểm `isElectron` (TS không thu hẹp `window.collector` xuyên hàm). */
+function bridge() {
+  const c = window.collector;
+  if (!c) throw new Error("Chỉ chạy được trong ứng dụng Electron");
+  return c;
+}
+
 // Extend Window for Electron IPC bridge
 declare global {
   interface Window {
@@ -1117,12 +1222,19 @@ declare global {
       start:           (cfg: CollectorConfig) => Promise<{ ok: boolean; pid?: number; reason?: string }>;
       stop:            () => Promise<{ ok: boolean }>;
       status:          () => Promise<{ running: boolean; pid: number | null; autoState: AutoState | null }>;
+      runNow:          (opts?: { platforms?: string[]; resource_ids?: string[] }) => Promise<{ ok: boolean; pid?: number; reason?: string }>;
       readLog:         () => Promise<string>;
       readConfig:      () => Promise<CollectorConfig>;
       writeConfig:     (cfg: CollectorConfig) => Promise<{ ok: boolean }>;
+      importConnection:() => Promise<{ ok: boolean; canceled?: boolean; error?: string; gateway?: string }>;
       health:          () => Promise<{ ok: boolean; status?: number; reason?: string }>;
-      apiGet:          (path: string) => Promise<unknown>;
+      endpoints:       () => Promise<{ default_gateway: string; gateway: string; endpoints: SystemEndpoint[] }>;
+      probe:           () => Promise<{ gateway: string; results: SystemProbeResult[] } | { error: string }>;
       readStatus:      () => Promise<CollectorStatus | null>;
+      checkPool:       (kind: "youtube-keys" | "proxies", items: string[]) => Promise<
+        { results: { item: string; state: "alive" | "quota" | "dead" | "error"; detail: string; ms: number; ip?: string }[] } | { error: string }>;
+      mergePool:       (kind: "youtube-keys" | "proxies", existing: string[], text: string) => Promise<
+        { items: string[]; added: number; duplicate: number; bad: string[] } | { error: string }>;
       onScheduleEvent: (cb: (ev: { type: string; platforms?: string[]; time?: string }) => void) => void;
     };
   }

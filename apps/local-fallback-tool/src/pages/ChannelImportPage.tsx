@@ -1,17 +1,24 @@
 /**
  * Trang Kênh — local-fallback-tool.
  *
- * Dùng api_key máy (scope `jobs:claim`, cấu hình ở tab Thu thập) để lấy resource —
- * không cần đăng nhập admin riêng.
+ * Dùng api_key máy (cấu hình ở tab Thu thập) để lấy kênh từ website — không cần đăng nhập admin riêng.
+ * CHỈ lấy user/kênh dùng tool dùng chung (execution_mode=fallback_tool). User có Tool riêng (kênh qua primary_tool) tự đẩy
+ * dữ liệu bằng Tool của họ nên KHÔNG xuất hiện ở đây.
+ *
+ * Hai trạng thái trên mỗi kênh:
+ *  - CHƯA KÉO: kênh hiện có trên website, người vận hành chưa chọn kéo về tool.
+ *  - ĐÃ KÉO: đã chọn kéo về; tool giữ kết nối với kênh để đẩy dữ liệu lên. Kênh đã kéo KHÔNG kéo lại được (trạng thái nằm trong DB cục bộ
+ *    nên đổi tab/khởi động lại vẫn giữ).
  *
  * Luồng:
- *  1. [Fetch] → GET /v1/integrations/resources (machine api_key) → trả resource
- *     của chủ sở hữu duy nhất của máy này.
- *  2. Lọc bỏ group, upsert vào DB cục bộ, phân loại platform tự động.
- *  3. Kênh trong DB: tìm kiếm, lọc, tích chọn, xóa hoặc bật/tắt hàng loạt.
+ *  1. [Fetch] → làm tươi danh sách user + kênh từ website vào DB cục bộ (kênh mới = chưa kéo, kênh đã kéo giữ nguyên).
+ *  2. Tích chọn từng kênh (hoặc cả nhóm / "chọn tất cả chưa kéo") → [Kéo N kênh].
+ *  3. Kênh đã kéo: bật/tắt hoặc gỡ kết nối (về lại chưa kéo).
  */
 
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import VideoLinksDialog from "../components/VideoLinksDialog";
+import ChannelDataBadges from "../components/ChannelDataBadges";
 
 // ── Platform metadata ─────────────────────────────────────────────────────────
 
@@ -23,127 +30,68 @@ const PLATFORM_META: Record<string, { label: string; icon: string; color: string
 };
 const PLATFORM_ORDER = ["youtube", "tiktok", "facebook", "other"] as const;
 type PlatformKey = (typeof PLATFORM_ORDER)[number] | "all";
-
-// ── Kết quả fetch gần nhất ──────────────────────────────────────────────────────
-
-interface FetchResult { added: number; updated: number }
-
-// ── Resource trả về từ GET /v1/integrations/resources ──────────────────────────
-
-interface ApiResourceItem {
-  id: string;
-  platform: string;
-  resource_type: string;
-  external_id: string;
-  display_name: string;
-  username: string;
-  url: string;
-  state: string;
-  mapping_status: string;
-  execution_mode: string;
-  enabled: boolean;
-}
-
-// ── Gateway response type guards (envelope {ok,data,meta} hoặc lỗi IPC {error}) ─
-
-/** Type guard: lỗi cấp IPC (gateway chưa cấu hình, network lỗi) — không có `ok`. */
-function isIpcError(v: unknown): v is { error: string } {
-  return !!v && typeof v === "object" && !("ok" in v) && "error" in v
-    && typeof (v as Record<string, unknown>).error === "string";
-}
-/** Type guard: envelope lỗi từ API (`ok: false`). */
-function isApiError(v: unknown): v is { ok: false; error: { message?: string; code?: string } } {
-  return !!v && typeof v === "object" && (v as Record<string, unknown>).ok === false;
-}
-/** Type guard: envelope thành công chứa `data.items` (resources). */
-function isResourcesOk(v: unknown): v is { ok: true; data: { items: ApiResourceItem[]; owner_account_id: string; is_shared: boolean } } {
-  if (!v || typeof v !== "object") return false;
-  const obj = v as Record<string, unknown>;
-  if (obj.ok !== true || !obj.data || typeof obj.data !== "object") return false;
-  return Array.isArray((obj.data as Record<string, unknown>).items);
-}
-/** Type guard: envelope thành công chứa `data.users` (resource-owners). */
-function isOwnersOk(v: unknown): v is { ok: true; data: { users: { id: string; username: string; resource_count: number }[] } } {
-  if (!v || typeof v !== "object") return false;
-  const obj = v as Record<string, unknown>;
-  if (obj.ok !== true || !obj.data || typeof obj.data !== "object") return false;
-  return Array.isArray((obj.data as Record<string, unknown>).users);
-}
+type PulledFilter = "all" | "unpulled" | "pulled";
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ChannelImportPage() {
   const isElectron = !!window.channels;
 
-  // ── Users state ───────────────────────────────────────────────────────────
+  const [dbReady,    setDbReady]    = useState(false);
+  const [dbUsers,    setDbUsers]    = useState<DbUser[]>([]);
+  const [all,        setAll]        = useState<LocalChannel[]>([]);
+  const [newUserIds, setNewUserIds] = useState<Set<string>>(new Set());
+  const [fetching,   setFetching]   = useState(false);
+  const [fetchError, setFetchError] = useState("");
+  const [fetchNote,  setFetchNote]  = useState("");
+  const [busy,       setBusy]       = useState(false);
+  const [pullMsg,    setPullMsg]    = useState<{ ok: boolean; text: string } | null>(null);
+  const [linksBusy,  setLinksBusy]  = useState<string | null>(null);   // nhãn kênh đang lấy link
+  const [linksOf,    setLinksOf]    = useState<LocalChannel | null>(null);
 
-  const [dbUsers,     setDbUsers]     = useState<DbUser[]>([]);
-  const [newUserIds,  setNewUserIds]  = useState<Set<string>>(new Set());
-  const [selected,    setSelected]    = useState<Set<string>>(new Set());
-  const [fetching,    setFetching]    = useState(false);
-  const [fetchError,  setFetchError]  = useState("");
-  const [pulling,     setPulling]     = useState(false);
-  const [pullingId,   setPullingId]   = useState("");
-  const [pullError,   setPullError]   = useState("");
-  const [pullResults, setPullResults] = useState<Record<string, { added: number; updated: number }>>({});
-  const [dbReady,     setDbReady]     = useState(false);
-
-  // ── Channels state ────────────────────────────────────────────────────────
-
-  const [channels,      setChannels]      = useState<LocalChannel[]>([]);
+  // Bộ lọc (lọc phía giao diện: dữ liệu cục bộ chỉ vài trăm dòng)
+  const [ownerFilter,   setOwnerFilter]   = useState("");
   const [platFilter,    setPlatFilter]    = useState<PlatformKey>("all");
+  const [pulledFilter,  setPulledFilter]  = useState<PulledFilter>("all");
   const [mappingFilter, setMappingFilter] = useState<"all" | "mapped" | "unmapped">("all");
   const [enabledFilter, setEnabledFilter] = useState<"all" | "on" | "off">("all");
   const [search,        setSearch]        = useState("");
-  const [selectedCh,    setSelectedCh]    = useState<Set<string>>(new Set());
-  const [chActionBusy,  setChActionBusy]  = useState(false);
+  const [selected,      setSelected]      = useState<Set<string>>(new Set());
 
-  // ── Init ──────────────────────────────────────────────────────────────────
+  // ── Dữ liệu cục bộ ────────────────────────────────────────────────────────
 
-  const refreshChannels = useCallback(async () => {
-    if (!isElectron) return;
-    const res = await window.channels!.listChannels({
-      platform:       platFilter === "all" ? undefined : platFilter,
-      mapping_status: mappingFilter === "all" ? undefined : mappingFilter,
-      enabled_filter: enabledFilter === "all" ? undefined : enabledFilter,
-      search:         search || undefined,
-    });
-    setChannels(res.channels ?? []);
-    setSelectedCh(new Set());
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isElectron, platFilter, mappingFilter, enabledFilter, search]);
-
-  const refreshUsers = useCallback(async () => {
-    if (!isElectron) return;
-    const res = await window.channels!.listUsers();
-    setDbUsers(res.users ?? []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isElectron]);
+  const reload = useCallback(async () => {
+    if (!window.channels) return;
+    const [u, c] = await Promise.all([window.channels.listUsers(), window.channels.listChannels({})]);
+    setDbUsers(u.users ?? []);
+    setAll(c.channels ?? []);
+    // Chỉ giữ lựa chọn còn hợp lệ (kênh vừa bị dọn khỏi DB thì bỏ chọn)
+    setSelected((prev) => new Set([...prev].filter((id) => (c.channels ?? []).some((ch) => ch.id === id))));
+  }, []);
 
   useEffect(() => {
-    if (!isElectron) return;
-    window.channels!.init()
-      .then(() => { setDbReady(true); return Promise.all([refreshUsers(), refreshChannels()]); })
+    if (!window.channels) return;
+    window.channels.init()
+      .then(() => { setDbReady(true); return reload(); })
       .catch((e: unknown) => setFetchError(e instanceof Error ? e.message : String(e)));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isElectron]);
+  }, [reload]);
 
-  useEffect(() => { refreshChannels(); }, [refreshChannels]);
-
-  // ── Fetch users via machine api_key (không cần login) ────────────────────
+  // ── Fetch: làm tươi danh sách từ website ─────────────────────────────────
 
   const handleFetch = async () => {
-    if (!isElectron || fetching || !dbReady) return;
-    setFetching(true); setFetchError(""); setNewUserIds(new Set());
+    if (!window.channels || fetching || !dbReady) return;
+    setFetching(true); setFetchError(""); setFetchNote(""); setPullMsg(null);
     try {
-      const raw = await window.collector!.apiGet("/v1/integrations/resource-owners");
-      if (isIpcError(raw)) throw new Error(raw.error);
-      if (isApiError(raw)) throw new Error(raw.error.message ?? "Lỗi từ API");
-      if (!isOwnersOk(raw)) throw new Error("Phản hồi không hợp lệ từ /resource-owners");
-      const users = raw.data.users.map((u) => ({ id: u.id, username: u.username || u.id }));
-      const saveRes = await window.channels!.saveUsers(users);
-      setNewUserIds(new Set(saveRes.added ?? []));
-      await refreshUsers();
+      const res = await window.channels.sync();
+      if ("error" in res) throw new Error(res.error);
+      setNewUserIds(new Set(res.added_users));
+      const { personal_tool_owners: po, personal_tool_channels: pc } = res.skipped;
+      setFetchNote([
+        `Có thêm ${res.added_channels} kênh mới.`,
+        po > 0 ? `Bỏ qua ${po} user dùng Tool riêng (${pc} kênh).` : "",
+        res.removed_channels > 0 ? `Đã dọn ${res.removed_channels} kênh không còn thuộc tool dùng chung.` : "",
+      ].filter(Boolean).join(" "));
+      await reload();
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -151,71 +99,87 @@ export default function ChannelImportPage() {
     }
   };
 
-  // ── Pull channels cho user đã chọn (machine api_key) ─────────────────────
+  // ── Hành động trên kênh đã chọn ───────────────────────────────────────────
 
+  const byId = new Map(all.map((c) => [c.id, c]));
+  const selUnpulled = [...selected].filter((id) => byId.get(id)?.pulled === 0);
+  const selPulled   = [...selected].filter((id) => byId.get(id)?.pulled === 1);
+  const selLinkable = selPulled.filter((id) => ["youtube", "tiktok"].includes(byId.get(id)?.platform ?? ""));   // nền tảng đã hỗ trợ lấy toàn bộ link
+
+  /** Kéo CHỈ các kênh chưa kéo trong lựa chọn; kênh đã kéo không bao giờ được gửi đi kéo lại. */
   const handlePull = async () => {
-    if (!isElectron || selected.size === 0 || pulling) return;
-    setPulling(true); setPullError(""); setPullResults({});
-    const results: Record<string, { added: number; updated: number }> = {};
+    if (!window.channels || busy || selUnpulled.length === 0) return;
+    setBusy(true); setPullMsg(null);
     try {
-      for (const uid of selected) {
-        const user = dbUsers.find((u) => u.id === uid);
-        if (!user) continue;
-        setPullingId(uid);
-        const raw = await window.collector!.apiGet(
-          `/v1/integrations/resources?owner_account_id=${encodeURIComponent(uid)}`,
-        );
-        if (isIpcError(raw) || isApiError(raw) || !isResourcesOk(raw)) {
-          results[uid] = { added: -1, updated: -1 };
-          continue;
-        }
-        // Chỉ kênh — bỏ group
-        const channelItems: ApiInventoryItem[] = raw.data.items
-          .filter((r) => r.resource_type !== "group")
-          .map((r) => ({
-            id: r.id, owner_account_id: uid, owner_username: user.username,
-            platform: r.platform, resource_type: r.resource_type,
-            canonical_external_id: r.external_id,
-            input_ref: r.username || r.external_id,
-            display_name: r.display_name, url: r.url, mapping_status: r.mapping_status,
-            enabled: r.enabled,
-          }));
-        const pullRes = await window.channels!.pull(uid, user.username, channelItems);
-        results[uid] = { added: pullRes.added ?? 0, updated: pullRes.updated ?? 0 };
-      }
+      const res = await window.channels.pull(selUnpulled);
+      setPullMsg({ ok: true, text: `Đã kéo ${res.pulled} kênh. Tool giữ kết nối để đẩy dữ liệu lên.` });
+      setSelected(new Set());
+      await reload();
     } catch (e) {
-      setPullError(e instanceof Error ? e.message : String(e));
+      setPullMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
-      setPullingId(""); setPulling(false); setPullResults(results);
-      await Promise.all([refreshUsers(), refreshChannels()]);
+      setBusy(false);
     }
   };
 
-  // ── Channel bulk actions ──────────────────────────────────────────────────
-
-  const chAction = async (action: "delete" | "enable" | "disable") => {
-    if (!isElectron || selectedCh.size === 0 || chActionBusy) return;
-    setChActionBusy(true);
-    const ids = [...selectedCh];
-    if (action === "delete") await window.channels!.deleteChannels(ids);
-    else await window.channels!.setEnabled(ids, action === "enable");
-    await Promise.all([refreshUsers(), refreshChannels()]);
-    setChActionBusy(false);
+  const pulledAction = async (action: "enable" | "disable" | "unpull") => {
+    if (!window.channels || busy || selPulled.length === 0) return;
+    setBusy(true);
+    try {
+      if (action === "unpull") await window.channels.unpull(selPulled);
+      else await window.channels.setEnabled(selPulled, action === "enable");
+      await reload();
+    } finally {
+      setBusy(false);
+    }
   };
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  /** Lấy TẤT CẢ link video của các kênh YouTube/TikTok đã kéo trong lựa chọn (lần lượt từng kênh; kênh lớn có thể mất vài phút). */
+  const handleFetchLinks = async () => {
+    if (!window.channels || busy || linksBusy || selLinkable.length === 0) return;
+    setPullMsg(null);
+    const lines: string[] = [];
+    let failed = 0;
+    try {
+      for (const id of selLinkable) {
+        const ch = byId.get(id);
+        if (!ch) continue;
+        const label = ch.display_name || ch.input_ref || ch.id;
+        setLinksBusy(label);
+        const res = await window.channels.fetchLinks(ch.platform, ch.id, ch.input_ref || ch.url);
+        if ("error" in res) { failed++; lines.push(`${label}: ${res.error}`); continue; }
+        lines.push(res.kind === "empty" ? `${label}: kênh chưa có video` : `${label}: ${res.found} link (mới ${res.added}, tổng ${res.total}) → ${res.export}`);
+      }
+    } finally {
+      setLinksBusy(null);
+      await reload();
+    }
+    setPullMsg({ ok: failed === 0, text: lines.join("\n") });
+  };
 
-  const platCounts: Record<string, number> = { all: 0, youtube: 0, tiktok: 0, facebook: 0, other: 0 };
-  channels.forEach((c) => { platCounts.all++; if (c.platform in platCounts) platCounts[c.platform]++; });
+  // ── Dẫn xuất ──────────────────────────────────────────────────────────────
+
+  const q = search.trim().toLowerCase();
+  const visible = all.filter((c) =>
+    (!ownerFilter || c.owner_id === ownerFilter)
+    && (platFilter === "all" || c.platform === platFilter)
+    && (pulledFilter === "all" || (pulledFilter === "pulled") === (c.pulled === 1))
+    && (mappingFilter === "all" || (mappingFilter === "mapped") === (c.mapping_status === "mapped"))
+    && (enabledFilter === "all" || (enabledFilter === "on") === (c.enabled === 1))
+    && (!q || [c.display_name, c.input_ref, c.canonical_id].some((s) => s.toLowerCase().includes(q))));
+
+  const platCounts: Record<string, number> = { all: all.length, youtube: 0, tiktok: 0, facebook: 0, other: 0 };
+  all.forEach((c) => { if (c.platform in platCounts) platCounts[c.platform]++; });
+  const pulledCount = all.filter((c) => c.pulled === 1).length;
 
   const channelsByOwner: Record<string, LocalChannel[]> = {};
-  channels.forEach((c) => { (channelsByOwner[c.owner_id] ??= []).push(c); });
+  visible.forEach((c) => { (channelsByOwner[c.owner_id] ??= []).push(c); });
 
-  let pullAddedTotal = 0; let pullUpdatedTotal = 0; let pullHasErr = false;
-  Object.values(pullResults).forEach(({ added, updated }) => {
-    if (added < 0) { pullHasErr = true; return; }
-    pullAddedTotal += added; pullUpdatedTotal += updated;
-  });
+  const toggle = (ids: string[], add: boolean) =>
+    setSelected((prev) => { const s = new Set(prev); ids.forEach((id) => (add ? s.add(id) : s.delete(id))); return s; });
+
+  const canPull = !!window.channels && !busy && selUnpulled.length > 0;
+  const filtersOn = !!(q || ownerFilter || platFilter !== "all" || pulledFilter !== "all" || mappingFilter !== "all" || enabledFilter !== "all");
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -231,7 +195,7 @@ export default function ChannelImportPage() {
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", letterSpacing: ".04em" }}>
-              NGƯỜI DÙNG
+              NGƯỜI DÙNG TOOL DÙNG CHUNG
             </span>
             <button onClick={handleFetch} disabled={!isElectron || fetching || !dbReady} style={btnCss("ghost", !isElectron || fetching || !dbReady)}>
               {fetching ? "Đang tải…" : "⟳ Fetch"}
@@ -244,62 +208,55 @@ export default function ChannelImportPage() {
             </div>
           )}
 
+          {fetchNote && (
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8, padding: "7px 9px", background: "var(--surface)", borderRadius: 5, border: "1px solid var(--border)" }}>
+              {fetchNote}
+            </div>
+          )}
+
           {!fetching && dbUsers.length === 0 && (
             <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: "24px 8px", lineHeight: 1.7 }}>
-              Bấm <strong>Fetch</strong> để lấy danh sách người dùng.
+              Bấm <strong>Fetch</strong> để lấy kênh của người dùng đang dùng tool dùng chung (người dùng có Tool riêng không hiện ở đây).
             </div>
           )}
 
           {dbUsers.length > 0 && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-              <button onClick={() => setSelected(new Set(dbUsers.map((u) => u.id)))} style={{ ...btnCss("ghost"), fontSize: 10, height: 22, padding: "0 8px" }}>Chọn tất cả</button>
-              {selected.size > 0 && <button onClick={() => setSelected(new Set())} style={{ ...btnCss("ghost"), fontSize: 10, height: 22, padding: "0 8px" }}>Bỏ chọn</button>}
+            <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 6 }}>
+              Bấm vào người dùng để chỉ xem kênh của họ.
             </div>
           )}
 
           {dbUsers.map((user) => {
-            const isNew      = newUserIds.has(user.id);
-            const isSel      = selected.has(user.id);
-            const isPull     = pulling && pullingId === user.id;
-            const result     = pullResults[user.id];
-            const pullFailed = result && result.added < 0;
+            const active = ownerFilter === user.id;
             return (
-              <label key={user.id} style={{
-                display: "flex", alignItems: "center", gap: 8, padding: "7px 8px",
-                borderRadius: 5, cursor: "pointer", marginBottom: 3,
-                background: isSel ? "rgba(59,91,219,.07)" : "transparent",
-                border: `1px solid ${isSel ? "rgba(59,91,219,.25)" : "transparent"}`,
+              <button key={user.id} onClick={() => setOwnerFilter(active ? "" : user.id)} style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", width: "100%", textAlign: "left",
+                borderRadius: 5, cursor: "pointer", marginBottom: 3, fontFamily: "inherit", color: "inherit",
+                background: active ? "rgba(59,91,219,.07)" : "transparent",
+                border: `1px solid ${active ? "rgba(59,91,219,.25)" : "transparent"}`,
               }}>
-                <input type="checkbox" checked={isSel}
-                  onChange={(e) => { const s = new Set(selected); e.target.checked ? s.add(user.id) : s.delete(user.id); setSelected(s); }}
-                  style={{ width: 14, height: 14, accentColor: "var(--accent)", flexShrink: 0 }}
-                />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</div>
-                  {!isPull && user.channel_count > 0 && <div style={{ fontSize: 10, color: "var(--muted)" }}>{user.channel_count} kênh</div>}
-                  {isPull && <div style={{ fontSize: 10, color: "var(--accent)" }}>Đang kéo…</div>}
+                  <div style={{ fontSize: 10, color: "var(--muted)" }}>{user.pulled_count}/{user.channel_count} kênh đã kéo</div>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-                  {isNew && <span style={{ fontSize: 9, fontWeight: 700, color: "#fff", background: "var(--accent)", borderRadius: 3, padding: "1px 5px" }}>MỚI</span>}
-                  {result && !pullFailed && result.added > 0 && <span style={{ fontSize: 10, color: "var(--green)", fontWeight: 600 }}>+{result.added}</span>}
-                  {pullFailed && <span style={{ fontSize: 10, color: "var(--red)" }}>lỗi</span>}
-                </div>
-              </label>
+                {newUserIds.has(user.id) && (
+                  <span style={{ fontSize: 9, fontWeight: 700, color: "#fff", background: "var(--accent)", borderRadius: 3, padding: "1px 5px" }}>MỚI</span>
+                )}
+              </button>
             );
           })}
         </div>
 
-        {/* Footer: Kéo kênh */}
+        {/* Footer: Kéo kênh đã chọn */}
         <div style={{ flexShrink: 0, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--surface)" }}>
-          {pullError && <div style={{ fontSize: 11, color: "var(--red)", marginBottom: 6 }}>{pullError}</div>}
-          {Object.keys(pullResults).length > 0 && !pulling && (
-            <div style={{ fontSize: 11, marginBottom: 6, color: pullHasErr ? "var(--amber)" : "var(--green)" }}>
-              {pullHasErr ? "⚠ " : "✓ "}+{pullAddedTotal} mới, cập nhật {pullUpdatedTotal}{pullHasErr ? " (có lỗi)" : ""}
+          {pullMsg && (
+            <div style={{ fontSize: 11, marginBottom: 6, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 140, overflowY: "auto", color: pullMsg.ok ? "var(--green)" : "var(--red)" }}>
+              {pullMsg.ok ? "✓ " : ""}{pullMsg.text}
             </div>
           )}
-          <button onClick={handlePull} disabled={!isElectron || pulling || selected.size === 0}
-            style={{ ...btnCss("primary", !isElectron || pulling || selected.size === 0), width: "100%", height: 32, fontSize: 12 }}>
-            {pulling ? "Đang kéo kênh…" : selected.size > 0 ? `Kéo kênh (${selected.size} user)` : "Kéo kênh"}
+          <button onClick={handlePull} disabled={!canPull}
+            style={{ ...btnCss("primary", !canPull), width: "100%", height: 32, fontSize: 12 }}>
+            {busy ? "Đang xử lý…" : selUnpulled.length > 0 ? `Kéo ${selUnpulled.length} kênh đã chọn` : "Chọn kênh chưa kéo để kéo"}
           </button>
         </div>
       </aside>
@@ -326,40 +283,60 @@ export default function ChannelImportPage() {
             );
           })}
           <div style={{ width: 1, height: 18, background: "var(--border)", flexShrink: 0 }} />
+          {(["all", "unpulled", "pulled"] as const).map((v) => (
+            <button key={v} onClick={() => setPulledFilter(v)} style={chip(pulledFilter === v)}>
+              {v === "all" ? "Mọi kênh" : v === "unpulled" ? `Chưa kéo ${all.length - pulledCount}` : `✓ Đã kéo ${pulledCount}`}
+            </button>
+          ))}
+          <div style={{ width: 1, height: 18, background: "var(--border)", flexShrink: 0 }} />
           {(["all", "mapped", "unmapped"] as const).map((v) => (
-            <button key={v} onClick={() => setMappingFilter(v)} style={{ ...filterChip, background: mappingFilter === v ? "rgba(59,91,219,.12)" : "transparent", color: mappingFilter === v ? "var(--accent)" : "var(--muted)", fontWeight: mappingFilter === v ? 600 : 400 }}>
-              {v === "all" ? "Mọi trạng thái" : v === "mapped" ? "✓ mapped" : "— chưa map"}
+            <button key={v} onClick={() => setMappingFilter(v)} style={chip(mappingFilter === v)}>
+              {v === "all" ? "Mọi trạng thái liên kết" : v === "mapped" ? "✓ Đã liên kết" : "— Chưa liên kết"}
             </button>
           ))}
           <div style={{ width: 1, height: 18, background: "var(--border)", flexShrink: 0 }} />
           {(["all", "on", "off"] as const).map((v) => (
-            <button key={v} onClick={() => setEnabledFilter(v)} style={{ ...filterChip, background: enabledFilter === v ? "rgba(59,91,219,.12)" : "transparent", color: enabledFilter === v ? "var(--accent)" : "var(--muted)", fontWeight: enabledFilter === v ? 600 : 400 }}>
-              {v === "all" ? "Tất cả" : v === "on" ? "⚡ Bật" : "○ Tắt"}
+            <button key={v} onClick={() => setEnabledFilter(v)} style={chip(enabledFilter === v)}>
+              {v === "all" ? "Bật/tắt" : v === "on" ? "⚡ Bật" : "○ Tắt"}
             </button>
           ))}
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={() => toggle(visible.filter((c) => c.pulled === 0).map((c) => c.id), true)}
+            disabled={!visible.some((c) => c.pulled === 0)}
+            style={{ ...btnCss("ghost", !visible.some((c) => c.pulled === 0)), fontSize: 11, height: 26 }}>
+            Chọn tất cả chưa kéo
+          </button>
         </div>
 
         {/* ── Action bar (hiện khi có kênh được chọn) ── */}
-        {selectedCh.size > 0 && (
+        {selected.size > 0 && (
           <div style={{ flexShrink: 0, padding: "6px 12px", background: "rgba(59,91,219,.06)", borderBottom: "1px solid rgba(59,91,219,.15)", display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--accent)" }}>{selectedCh.size} kênh đã chọn</span>
-            <button onClick={() => setSelectedCh(new Set())} style={{ ...btnCss("ghost"), fontSize: 10, height: 22, padding: "0 8px" }}>Bỏ chọn</button>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--accent)" }}>
+              {selected.size} kênh đã chọn ({selUnpulled.length} chưa kéo · {selPulled.length} đã kéo)
+            </span>
+            <button onClick={() => setSelected(new Set())} style={{ ...btnCss("ghost"), fontSize: 10, height: 22, padding: "0 8px" }}>Bỏ chọn</button>
             <div style={{ flex: 1 }} />
-            <button onClick={() => chAction("enable")}  disabled={chActionBusy} style={{ ...btnCss("ghost", chActionBusy), fontSize: 11, height: 26, color: "var(--green)" }}>⚡ Bật</button>
-            <button onClick={() => chAction("disable")} disabled={chActionBusy} style={{ ...btnCss("ghost", chActionBusy), fontSize: 11, height: 26 }}>○ Tắt</button>
-            <button onClick={() => chAction("delete")}  disabled={chActionBusy} style={{ ...btnCss("ghost", chActionBusy), fontSize: 11, height: 26, color: "var(--red)" }}>✕ Xóa</button>
+            <span style={{ fontSize: 10, color: "var(--muted)" }}>Với kênh đã kéo:</span>
+            <button onClick={() => pulledAction("enable")}  disabled={busy || selPulled.length === 0} style={{ ...btnCss("ghost", busy || selPulled.length === 0), fontSize: 11, height: 26, color: "var(--green)" }}>⚡ Bật</button>
+            <button onClick={() => pulledAction("disable")} disabled={busy || selPulled.length === 0} style={{ ...btnCss("ghost", busy || selPulled.length === 0), fontSize: 11, height: 26 }}>○ Tắt</button>
+            <button onClick={() => pulledAction("unpull")}  disabled={busy || selPulled.length === 0} style={{ ...btnCss("ghost", busy || selPulled.length === 0), fontSize: 11, height: 26, color: "var(--red)" }}>Gỡ kết nối</button>
+            <div style={{ width: 1, height: 16, background: "var(--border)" }} />
+            <button onClick={handleFetchLinks} disabled={busy || !!linksBusy || selLinkable.length === 0}
+                    title="Lấy toàn bộ video của kênh YouTube (Data API) / TikTok (yt-dlp qua proxy), lưu trên máy + file .txt"
+                    style={{ ...btnCss("ghost", busy || !!linksBusy || selLinkable.length === 0), fontSize: 11, height: 26, color: "var(--accent)" }}>
+              {linksBusy ? `Đang lấy: ${linksBusy}…` : `🔗 Lấy toàn bộ link video (${selLinkable.length} kênh YouTube/TikTok)`}
+            </button>
           </div>
         )}
 
         {/* ── Channel list ── */}
         <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px" }}>
-          {channels.length === 0 ? (
+          {visible.length === 0 ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", minHeight: 160, color: "var(--muted)", textAlign: "center", gap: 8 }}>
               <span style={{ fontSize: 24, opacity: 0.2 }}>⚡</span>
               <span style={{ fontSize: 13, fontWeight: 500 }}>
-                {search || platFilter !== "all" || mappingFilter !== "all" || enabledFilter !== "all"
-                  ? "Không có kênh phù hợp bộ lọc"
-                  : "Chưa có kênh nào trong DB"}
+                {filtersOn ? "Không có kênh phù hợp bộ lọc" : "Chưa có kênh nào — bấm Fetch để lấy từ website"}
               </span>
             </div>
           ) : (
@@ -368,14 +345,16 @@ export default function ChannelImportPage() {
                 key={ownerId}
                 ownerName={chs[0]?.owner_username ?? ownerId}
                 channels={chs}
-                selectedCh={selectedCh}
-                onToggleCh={(id) => { const s = new Set(selectedCh); s.has(id) ? s.delete(id) : s.add(id); setSelectedCh(s); }}
-                onToggleAll={(ids, add) => { const s = new Set(selectedCh); ids.forEach((id) => (add ? s.add(id) : s.delete(id))); setSelectedCh(s); }}
+                selected={selected}
+                onToggleCh={(id) => toggle([id], !selected.has(id))}
+                onToggleAll={(ids, add) => toggle(ids, add)}
+                onShowLinks={setLinksOf}
               />
             ))
           )}
         </div>
       </main>
+      {linksOf && <VideoLinksDialog channel={linksOf} onClose={() => setLinksOf(null)} />}
     </div>
   );
 }
@@ -399,17 +378,19 @@ function PlatTab({ active, count, color, onClick, children }: {
   );
 }
 
-function OwnerGroup({ ownerName, channels, selectedCh, onToggleCh, onToggleAll }: {
+function OwnerGroup({ ownerName, channels, selected, onToggleCh, onToggleAll, onShowLinks }: {
   ownerName: string;
   channels: LocalChannel[];
-  selectedCh: Set<string>;
+  selected: Set<string>;
   onToggleCh: (id: string) => void;
   onToggleAll: (ids: string[], add: boolean) => void;
+  onShowLinks: (ch: LocalChannel) => void;
 }) {
   const [open, setOpen] = useState(true);
   const allIds = channels.map((c) => c.id);
-  const allSelected = allIds.every((id) => selectedCh.has(id));
-  const someSelected = !allSelected && allIds.some((id) => selectedCh.has(id));
+  const allSelected = allIds.every((id) => selected.has(id));
+  const someSelected = !allSelected && allIds.some((id) => selected.has(id));
+  const pulled = channels.filter((c) => c.pulled === 1).length;
 
   return (
     <div style={{ marginBottom: 12 }}>
@@ -427,14 +408,14 @@ function OwnerGroup({ ownerName, channels, selectedCh, onToggleCh, onToggleAll }
         >
           <span style={{ fontSize: 10, color: "var(--muted)", width: 10 }}>{open ? "▾" : "▸"}</span>
           <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>{ownerName}</span>
-          <span style={{ fontSize: 10, color: "var(--muted)" }}>· {channels.length} kênh</span>
+          <span style={{ fontSize: 10, color: "var(--muted)" }}>· {channels.length} kênh · {pulled} đã kéo</span>
         </button>
       </div>
 
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingLeft: 20 }}>
           {channels.map((ch) => (
-            <ChannelRow key={ch.id} ch={ch} selected={selectedCh.has(ch.id)} onToggle={() => onToggleCh(ch.id)} />
+            <ChannelRow key={ch.id} ch={ch} selected={selected.has(ch.id)} onToggle={() => onToggleCh(ch.id)} onShowLinks={() => onShowLinks(ch)} />
           ))}
         </div>
       )}
@@ -442,14 +423,15 @@ function OwnerGroup({ ownerName, channels, selectedCh, onToggleCh, onToggleAll }
   );
 }
 
-function ChannelRow({ ch, selected, onToggle }: { ch: LocalChannel; selected: boolean; onToggle: () => void }) {
-  const meta  = PLATFORM_META[ch.platform] ?? PLATFORM_META.other;
-  const label = ch.display_name || ch.input_ref || ch.canonical_id || ch.id;
+function ChannelRow({ ch, selected, onToggle, onShowLinks }: { ch: LocalChannel; selected: boolean; onToggle: () => void; onShowLinks: () => void }) {
+  const meta   = PLATFORM_META[ch.platform] ?? PLATFORM_META.other;
+  const label  = ch.display_name || ch.input_ref || ch.canonical_id || ch.id;
+  const pulled = ch.pulled === 1;
 
   let dateStr = "—";
-  if (ch.imported_at) {
-    try { dateStr = new Date(ch.imported_at).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" }); }
-    catch { dateStr = ch.imported_at.slice(0, 10); }
+  if (pulled && ch.pulled_at) {
+    try { dateStr = new Date(ch.pulled_at).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" }); }
+    catch { dateStr = ch.pulled_at.slice(0, 10); }
   }
 
   return (
@@ -458,7 +440,7 @@ function ChannelRow({ ch, selected, onToggle }: { ch: LocalChannel; selected: bo
       borderRadius: 5, cursor: "pointer",
       background: selected ? "rgba(59,91,219,.06)" : "var(--surface)",
       border: `1px solid ${selected ? "rgba(59,91,219,.2)" : "var(--border)"}`,
-      opacity: ch.enabled ? 1 : 0.5,
+      opacity: pulled && !ch.enabled ? 0.5 : 1,
     }}>
       <input type="checkbox" checked={selected} onChange={onToggle}
         style={{ width: 13, height: 13, accentColor: "var(--accent)", flexShrink: 0 }} />
@@ -466,21 +448,24 @@ function ChannelRow({ ch, selected, onToggle }: { ch: LocalChannel; selected: bo
         {meta.icon}
       </span>
       <span style={{ flex: 1, fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {!ch.enabled && <span style={{ fontSize: 9, color: "var(--muted)", marginRight: 4, verticalAlign: "middle" }}>○</span>}
+        {pulled && !ch.enabled && <span style={{ fontSize: 9, color: "var(--muted)", marginRight: 4, verticalAlign: "middle" }}>○</span>}
         {label}
       </span>
       {ch.input_ref && ch.input_ref !== label && (
         <span style={{ fontSize: 10, color: "var(--muted)", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0 }}>{ch.input_ref}</span>
       )}
-      <span style={{
-        fontSize: 10, padding: "1px 5px", borderRadius: 3, flexShrink: 0,
-        background: ch.mapping_status === "mapped" ? "rgba(22,163,74,.1)" : "var(--bg)",
-        color: ch.mapping_status === "mapped" ? "var(--green)" : "var(--muted)",
-        border: `1px solid ${ch.mapping_status === "mapped" ? "rgba(22,163,74,.2)" : "var(--border)"}`,
-      }}>
-        {ch.mapping_status === "mapped" ? "mapped" : "chưa map"}
+      <span
+        title={pulled ? "Đã kéo về tool — tool giữ kết nối với kênh này để đẩy dữ liệu lên" : "Chưa kéo về tool"}
+        style={{
+          fontSize: 10, padding: "1px 6px", borderRadius: 3, flexShrink: 0, fontWeight: 600,
+          background: pulled ? "rgba(22,163,74,.1)" : "rgba(217,119,6,.1)",
+          color: pulled ? "var(--green)" : "var(--amber)",
+          border: `1px solid ${pulled ? "rgba(22,163,74,.2)" : "rgba(217,119,6,.25)"}`,
+        }}>
+        {pulled ? "✓ Đã kéo" : "Chưa kéo"}
       </span>
-      <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0, minWidth: 56, textAlign: "right" }}>{dateStr}</span>
+      <ChannelDataBadges ch={ch} onShowLinks={onShowLinks} />
+      <span title="Ngày kéo về" style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0, minWidth: 56, textAlign: "right" }}>{dateStr}</span>
     </label>
   );
 }
@@ -509,3 +494,10 @@ const filterChip: CSSProperties = {
   padding: "2px 8px", borderRadius: 4, border: "none",
   cursor: "pointer", fontSize: 11, fontFamily: "inherit",
 };
+
+const chip = (active: boolean): CSSProperties => ({
+  ...filterChip,
+  background: active ? "rgba(59,91,219,.12)" : "transparent",
+  color: active ? "var(--accent)" : "var(--muted)",
+  fontWeight: active ? 600 : 400,
+});

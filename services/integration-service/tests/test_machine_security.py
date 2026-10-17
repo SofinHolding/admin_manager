@@ -83,8 +83,7 @@ async def test_repeated_bad_keys_from_one_ip_get_rate_limited(env):
 async def test_scope_denial_for_every_endpoint_family(env):
     only_hs = await env.tool(kind="service", scopes=["integration:handshake"], handshake=False)
     assert (await only_hs.post(HS, hs_body())).status_code == 200
-    cases = [("put", "/v1/integrations/projects/p1", {"name": "n"}),
-             ("post", "/v1/integrations/resources/batch", {"items": [{"x": 1}]}),
+    cases = [("post", "/v1/integrations/resources/batch", {"items": [{"x": 1}]}),
              ("post", SNAP, snap_body()),
              ("post", "/v1/integrations/snapshots/snp_" + "0" * 32 + "/commit", {}),
              ("post", "/v1/integrations/snapshots/snp_" + "0" * 32 + "/resources", {"items": [{}]}),
@@ -109,7 +108,6 @@ async def test_platform_denial_on_every_entry_point(env):
     assert r.status_code == 200, r.text
     r = await tool.post(SNAP, snap_body(platform="youtube"))
     assert r.status_code == 403 and r.json()["error"]["code"] == "PLATFORM_NOT_ALLOWED"
-    assert (await tool.put("/v1/integrations/projects/p1", {"name": "n", "platform": "youtube"})).status_code == 403
     r = await tool.post("/v1/integrations/resources/batch", {"items": [
         {"platform": "facebook", "resource_type": "page", "external_id": "ok"},
         {"platform": "youtube", "resource_type": "channel", "external_id": "no"}]})

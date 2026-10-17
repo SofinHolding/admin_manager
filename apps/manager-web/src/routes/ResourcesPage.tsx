@@ -24,14 +24,13 @@ import {
 } from "../components/ui/select";
 import { EmptyState, Field, Notice, PageHeader, Section, TechDetails } from "../components/kit";
 import { cn } from "../lib/utils";
+import { platformLabel, type PlatformNameMap } from "../lib/platforms";
 
 function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
 const MAX_IMPORT = 500;
-
-const platformLabel = (p: string) => ({ facebook: "Facebook", youtube: "YouTube" } as Record<string, string>)[p] ?? p;
 
 /** Tách các dòng dán vào: bỏ dòng trống, gộp dòng lặp, đối chiếu với kênh đã có. Thuần để dễ test. */
 function previewImport(text: string, existingRefs: Iterable<string>) {
@@ -56,6 +55,7 @@ export default function ResourcesPage() {
   const [sources, setSources] = useState<ResourceSource[]>([]);
   const [loadingSources, setLoadingSources] = useState(true);
   const [platforms, setPlatforms] = useState<string[]>([]);
+  const [platformNames, setPlatformNames] = useState<PlatformNameMap>({});
   /** Bước 1 = danh sách nguồn (rỗng), bước 2 = chi tiết kênh của nguồn đã chọn. */
   const [selectedSourceId, setSelectedSourceId] = useState("");
   const [resources, setResources] = useState<ManagedResource[]>([]);
@@ -74,6 +74,9 @@ export default function ResourcesPage() {
         resourcesApi.listSources(), resourcesApi.listPlatforms(),
       ]);
       setSources(items);
+      const nameMap: PlatformNameMap = {};
+      for (const p of plats) nameMap[p.platform] = p.display_name || p.platform;
+      setPlatformNames(nameMap);
       setPlatforms(plats.map((p) => p.platform));
     } catch (e) {
       toast.error(errMsg(e, "Không tải được danh sách nguồn. Kiểm tra mạng rồi tải lại trang."));
@@ -138,6 +141,7 @@ export default function ResourcesPage() {
         </Button>
         <ResourcePanel
           source={selectedSource}
+          names={platformNames}
           resources={resources}
           loading={loadingResources}
           onCreated={reloadResources}
@@ -171,7 +175,7 @@ export default function ResourcesPage() {
                   <span className="min-w-0 flex-1">
                     <span className="block break-words font-semibold">{s.name}</span>
                     <span className="block text-sm text-muted-foreground">
-                      {platformLabel(s.platform)}{s.default_country ? ` · Quốc gia mặc định: ${s.default_country}` : ""}
+                      {platformLabel(s.platform, platformNames)}{s.default_country ? ` · Quốc gia mặc định: ${s.default_country}` : ""}
                     </span>
                   </span>
                   <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -198,7 +202,7 @@ export default function ResourcesPage() {
                 <Select value={newSourcePlatform} onValueChange={setNewSourcePlatform}>
                   <SelectTrigger id={p.id} aria-describedby={p["aria-describedby"]}><SelectValue placeholder="Chọn nền tảng" /></SelectTrigger>
                   <SelectContent>
-                    {platforms.map((pl) => <SelectItem key={pl} value={pl}>{platformLabel(pl)}</SelectItem>)}
+                    {platforms.map((pl) => <SelectItem key={pl} value={pl}>{platformLabel(pl, platformNames)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               )}
@@ -232,8 +236,9 @@ const modeText = (m: string) =>
 
 type ImportPhase = "edit" | "preview" | "done";
 
-function ResourcePanel({ source, resources, loading, onCreated, onDelete }: {
+function ResourcePanel({ source, names, resources, loading, onCreated, onDelete }: {
   source: ResourceSource;
+  names: PlatformNameMap;
   resources: ManagedResource[];
   loading: boolean;
   onCreated: () => void | Promise<void>;
@@ -296,7 +301,7 @@ function ResourcePanel({ source, resources, loading, onCreated, onDelete }: {
     <div>
       <PageHeader
         title={source.name}
-        description={`${platformLabel(source.platform)}${source.project_key ? ` · ${source.project_key}` : ""}${source.default_country ? ` · Quốc gia mặc định: ${source.default_country}` : ""}`}
+        description={`${platformLabel(source.platform, names)}${source.default_country ? ` · Quốc gia mặc định: ${source.default_country}` : ""}`}
         actions={
           <Button variant="outline" onClick={() => { resetImport(); setImportOpen(true); }}>
             <Import aria-hidden /> Nhập nhiều kênh

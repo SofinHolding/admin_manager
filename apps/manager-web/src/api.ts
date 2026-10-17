@@ -175,7 +175,6 @@ export interface ChannelBreakdownRow {
   managed: number;
   active: number;
   is_custom_tag?: boolean;
-  by_group?: { group: string; managed: number; active: number }[];
   by_country?: { country: string; managed: number; active: number }[];
 }
 
@@ -185,9 +184,9 @@ export interface ChannelBreakdown extends AnalyticsMeta {
 }
 
 /** `GET /v1/analytics/compare/{dimension}` — country có biểu đồ RIÊNG, "Biểu đồ chung" không dùng. */
-export type CompareDimension = "platform" | "owner" | "country" | "channel" | "group" | "project";
-/** Chiều xuất hiện trong "Biểu đồ chung" — KHÔNG có `country` (biểu đồ riêng) và chưa có UI cho `project`. */
-export type CommonCompareDimension = Exclude<CompareDimension, "country" | "project">;
+export type CompareDimension = "platform" | "owner" | "country" | "channel" | "group";
+/** Chiều xuất hiện trong "Biểu đồ chung" — KHÔNG có `country` (biểu đồ riêng). */
+export type CommonCompareDimension = Exclude<CompareDimension, "country">;
 
 export interface CompareItem {
   key: string;
@@ -594,9 +593,39 @@ export interface ConnectionGuide {
   limits: { batch_max_items: number; body_max_bytes: number };
   error_codes: ConnectionGuideErrorCode[];
   recent_snapshots: ConnectionGuideSnapshot[];
+  /** Nền tảng + mã Tool này được dùng ở trường `platform` (mã chính `key` hoặc mã phụ `aliases`). Chỉ Admin sửa được. */
+  platforms?: { key: string; display_name: string; aliases: string[]; codes: string[] }[];
+  platform_rules?: string[];
 }
 
-export interface PlatformRegistryEntry { key: string; display_name: string; enabled: boolean; description?: string | null }
+export interface PlatformRegistryEntry {
+  key: string; display_name: string; enabled: boolean; description?: string | null;
+  /** Mã phụ (Tool gửi mã nào trong `key` + `aliases` cũng được gom về nền tảng này). */
+  aliases?: string[];
+}
+
+export interface UserChannel {
+  id: string; platform: string; resource_type: string; external_id: string; display_name: string; url: string;
+  /** `web_manual` = user nhập ở website; `tool` = Tool đẩy lên. */
+  origin: string;
+  /** `fallback_tool` = Tool dùng chung thu; `primary_tool` = Tool riêng của user. */
+  execution_mode: string;
+  enabled: boolean; removed: boolean; shared_tool_visible: boolean;
+  created_at: string | null; updated_at: string | null;
+  last_job_status: string | null; last_job_at: string | null;
+  content_count: number; last_collected_at: string | null;
+}
+
+export interface UserChannelTotals { active: number; removed: number; shared_tool: number; personal_tool: number }
+
+export interface UserChannelsUser {
+  owner_account_id: string; username: string; visible_in_shared_tool: boolean; totals: UserChannelTotals; channels: UserChannel[];
+}
+
+export interface UserChannelsResult {
+  users: UserChannelsUser[];
+  summary: { users: number; visible_in_shared_tool: number; active_channels: number; shared_tool_channels: number; removed_channels: number };
+}
 
 export const integrationApi = {
   listClients: (owner = "", o?: Opts) => {
@@ -656,6 +685,29 @@ export const integrationApi = {
     const d = await apiFetch<PlatformRegistryEntry[] | { items?: PlatformRegistryEntry[] }>("/v1/integrations/admin/platforms");
     return { items: Array.isArray(d) ? d : (d.items ?? []) };
   },
+
+  /** Kênh của MỌI user (admin|dash_admin, chỉ đọc), gom theo user; `shared_tool_visible` = Tool dùng chung có thấy kênh không. */
+  userChannels: (includeRemoved = true, o?: Opts) =>
+    apiFetch<UserChannelsResult>(`/v1/integrations/admin/user-channels?include_removed=${includeRemoved}`, undefined, o),
+};
+
+// ── Platform Registry (admin/dash_admin) ───────────────────────────────────
+
+export const platformsApi = {
+  /** Sửa tên hiển thị / bật-tắt một nền tảng ĐÃ CÓ (admin|dash_admin). */
+  putPlatform: (key: string, data: { display_name: string; enabled: boolean }) =>
+    apiFetch<PlatformRegistryEntry>(`/v1/integrations/admin/platforms/${enc(key)}`, json("PUT", data)),
+
+  /** Tạo nền tảng mới: server chặn trùng MỌI mã (chính + phụ) bằng 409 `PLATFORM_CODE_EXISTS`. */
+  createPlatform: (data: { key: string; display_name: string; aliases?: string[] }) =>
+    apiFetch<PlatformRegistryEntry>("/v1/integrations/admin/platforms", json("POST", data)),
+
+  /** Thêm mã phụ cho nền tảng `key` (409 nếu mã đã được giữ bởi bất kỳ nền tảng nào). */
+  addAlias: (key: string, alias: string) =>
+    apiFetch<PlatformRegistryEntry>(`/v1/integrations/admin/platforms/${enc(key)}/aliases`, json("POST", { alias })),
+
+  removeAlias: (key: string, alias: string) =>
+    apiFetch<PlatformRegistryEntry>(`/v1/integrations/admin/platforms/${enc(key)}/aliases/${enc(alias)}`, json("DELETE")),
 };
 
 // ── Profile API (user tự quản lý) ──────────────────────────────────────────
@@ -712,7 +764,7 @@ export interface ImportSkip {
 }
 
 export const resourcesApi = {
-  listPlatforms: () => apiFetch<{ items: { platform: string }[] }>("/v1/resources/platforms"),
+  listPlatforms: () => apiFetch<{ items: { platform: string; display_name?: string }[] }>("/v1/resources/platforms"),
 
   listSources: () => apiFetch<{ items: ResourceSource[] }>("/v1/resources/sources"),
 
@@ -766,18 +818,17 @@ export interface ChannelGroup {
   created_at: string;
 }
 
+/** Server trả envelope `{ok:true,data,meta}`; `apiFetch` đã bóc `data` nên ở đây nhận thẳng giá trị. */
 export const channelGroupsApi = {
   list: () =>
-    apiFetch<{ data: ChannelGroup[] }>("/v1/user/channel-groups").then((r) => ({ items: r.data ?? [] })),
+    apiFetch<ChannelGroup[]>("/v1/user/channel-groups").then((rows) => ({ items: rows ?? [] })),
 
   create: (name: string, country_code = "") =>
-    apiFetch<{ data: ChannelGroup }>("/v1/user/channel-groups", json("POST", { name, country_code }))
-      .then((r) => r.data),
+    apiFetch<ChannelGroup>("/v1/user/channel-groups", json("POST", { name, country_code })),
 
   update: (id: string, data: Partial<{ name: string; country_code: string }>) =>
-    apiFetch<{ data: ChannelGroup }>(`/v1/user/channel-groups/${enc(id)}`, json("PATCH", data))
-      .then((r) => r.data),
+    apiFetch<ChannelGroup>(`/v1/user/channel-groups/${enc(id)}`, json("PATCH", data)),
 
   delete: (id: string) =>
-    apiFetch<{ data: { deleted: boolean } }>(`/v1/user/channel-groups/${enc(id)}`, json("DELETE")),
+    apiFetch<{ deleted: boolean }>(`/v1/user/channel-groups/${enc(id)}`, json("DELETE")),
 };

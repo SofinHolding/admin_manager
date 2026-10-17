@@ -9,7 +9,7 @@
  *  - Chỉ đóng được sau khi người dùng tick "Tôi đã lưu khóa" (áp dụng cho cả nút đóng lẫn dấu X).
  */
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { Check, Copy, TriangleAlert } from "lucide-react";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dialog";
@@ -21,6 +21,8 @@ export interface OneTimeSecret {
   value: string;
   /** Thông tin không nhạy cảm đi kèm (mã khóa, quyền, hạn dùng...). */
   details?: { label: string; value: string }[];
+  /** Nội dung thêm (vd nút tải file kết nối) — hiện giữa `details` và cảnh báo cuối. */
+  extra?: ReactNode;
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -119,6 +121,8 @@ export function SecretOnceDialog({ secret, onClose }: { secret: OneTimeSecret | 
             ))}
           </dl>
         ) : null}
+
+        {secret?.extra}
 
         <p className="mt-4 flex items-start gap-2 text-sm text-muted-foreground">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />

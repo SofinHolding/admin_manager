@@ -63,7 +63,7 @@ Mỗi mục: **bối cảnh → việc → nghiệm thu**. Không có mục nào
 | Thuật ngữ | Nghĩa |
 |---|---|
 | Strangler | Thay dần legacy bằng service mới, chạy song song, cắt chuyển từng route |
-| Canonical | Dạng dữ liệu chuẩn hóa trong `integration_db` (projects/resources/content/metrics/events) với `revision` |
+| Canonical | Dạng dữ liệu chuẩn hóa trong `integration_db` (resources/content/metrics/events) với `revision` |
 | Read model | Bảng của Analytics dựng từ canonical để truy vấn Dashboard |
 | Snapshot | Một lần Tool đẩy dữ liệu; chỉ thành *current* sau commit nguyên tử |
 | Outbox / Feed | Bảng sự kiện ghi cùng transaction + endpoint pull `/internal/v1/feed` |

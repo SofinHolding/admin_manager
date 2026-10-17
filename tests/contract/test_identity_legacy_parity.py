@@ -196,6 +196,9 @@ def norm(value, key=""):
         return "<ts>" if value else ""
     if key == "email_verified":
         return bool(value)  # SQLite lưu 0/1, Postgres lưu boolean
+    if key == "expires_in":
+        # Khác biệt CÓ CHỦ ĐÍCH (ADR D12, commit 9da0323): access token 600 s (RS256) thay vì 900 s của legacy. Vẫn kiểm là số nguyên dương.
+        return "<ttl>" if isinstance(value, int) and value > 0 else value
     if isinstance(value, str):
         if _HEX32.match(value):
             return "<id>"

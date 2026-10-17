@@ -1,12 +1,14 @@
 import { useState, type CSSProperties } from "react";
 import CollectorPage from "./pages/CollectorPage";
 import ChannelImportPage from "./pages/ChannelImportPage";
+import SystemApiPage from "./pages/SystemApiPage";
 
-type PageKey = "collector" | "channels";
+type PageKey = "collector" | "channels" | "system";
 
 const NAV_TABS: { key: PageKey; label: string }[] = [
   { key: "collector", label: "◎ Thu thập" },
   { key: "channels",  label: "⚡ Người dùng & Kênh" },
+  { key: "system",    label: "🔌 API hệ thống" },
 ];
 
 export default function App() {
@@ -40,7 +42,7 @@ export default function App() {
 
       {/* ── Page content ── */}
       <div style={{ flex: 1, overflow: "hidden" }}>
-        {page === "collector" ? <CollectorPage /> : <ChannelImportPage />}
+        {page === "collector" ? <CollectorPage /> : page === "channels" ? <ChannelImportPage /> : <SystemApiPage />}
       </div>
     </div>
   );

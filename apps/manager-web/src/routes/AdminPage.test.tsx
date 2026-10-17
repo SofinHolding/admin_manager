@@ -568,3 +568,42 @@ describe("AdminPage — Công cụ dùng chung: wizard không cho nhảy bước
     expect(screen.queryByRole("button", { name: "Lưu cấu hình" })).toBeNull();
   });
 });
+
+describe("AdminPage — chuẩn hoá quốc gia (cả admin lẫn dash_admin)", () => {
+  function countriesServer(state: { canon: string[]; aliases: { alias: string; canonical: string }[] }): Responder[] {
+    return [
+      ...server({ perms: [] }),
+      (c) => c.method === "GET" && c.path === "/v1/analytics/admin/country-canonicals"
+        ? jsonResponse({ items: state.canon.map((name) => ({ name, created_at: "" })) }) : undefined,
+      (c) => c.method === "GET" && c.path === "/v1/analytics/admin/country-aliases"
+        ? jsonResponse({ items: state.aliases.map((a) => ({ ...a, created_at: "" })) }) : undefined,
+      (c) => {
+        if (c.method !== "POST" || c.path !== "/v1/analytics/admin/country-canonicals") return undefined;
+        const name = JSON.parse(c.body!).name; state.canon.push(name); return jsonResponse({ name, created_at: "" });
+      },
+      (c) => {
+        if (c.method !== "POST" || c.path !== "/v1/analytics/admin/country-aliases") return undefined;
+        const b = JSON.parse(c.body!); state.aliases.push(b); return jsonResponse({ alias: b.alias.toLowerCase(), canonical: b.canonical });
+      },
+    ];
+  }
+
+  it.each([["admin", admin], ["dash_admin", dashAdmin]])("%s thấy tab Quốc gia, tạo tên chuẩn rồi gộp cách viết người dùng tự gõ", async (_n, who) => {
+    const f = installFetch(...countriesServer({ canon: [], aliases: [] }));
+    renderAdmin(who, []);                                   // không có quyền domain nào: vẫn phải dùng được
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Quốc gia" }));
+
+    await user.type(await screen.findByLabelText("Tên chuẩn mới"), "Nigeria");
+    await user.click(screen.getByRole("button", { name: /Tạo tên chuẩn/ }));
+    await waitFor(() => expect(f.byPath("/v1/analytics/admin/country-canonicals").some((c) => c.method === "POST")).toBe(true));
+
+    await user.type(screen.getByLabelText("Cách viết khác"), "naija");
+    await user.click(screen.getByRole("combobox", { name: /Gộp về tên chuẩn/ }));
+    await user.click(await screen.findByRole("option", { name: "Nigeria" }));
+    await user.click(screen.getByRole("button", { name: /Lưu cách viết/ }));
+    await waitFor(() => expect(f.byPath("/v1/analytics/admin/country-aliases").some((c) => c.method === "POST")).toBe(true));
+    expect(JSON.parse(f.byPath("/v1/analytics/admin/country-aliases").find((c) => c.method === "POST")!.body!))
+      .toEqual({ alias: "naija", canonical: "Nigeria" });
+  });
+});

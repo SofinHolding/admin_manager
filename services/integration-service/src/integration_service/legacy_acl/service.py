@@ -25,18 +25,16 @@ from integration_service.feed import repository as outbox
 from integration_service.ingest import merge, schemas, validate
 from integration_service.jobs import repository as jobs_repo
 from integration_service.jobs import schemas as job_schemas
-from integration_service.jobs.service import JobService
+from integration_service.jobs.service import COLLECT_JOB_CAPABILITY, COLLECT_JOB_KIND, COLLECT_JOB_PRIORITY, JobService
 from integration_service.legacy_acl import mapper, repository
 from integration_service.legacy_acl.errors import LegacyError
+from integration_service.platforms import repository as registry
 from integration_service.ratelimit import FixedWindowLimiter
 from integration_service.security import iso, new_id
 
 LINK_CODE_TTL = timedelta(minutes=15)
 _NOTHING = "Không có gì để cập nhật"
 CAP_MANUAL_CHANNEL_MGMT = "capability:manual_channel_mgmt"   # identity_service/permissions/capabilities.py
-COLLECT_JOB_KIND = "collect"                  # kind job cho Shared Collector (PHASE 3), khác resource.sync (Run Queue)
-COLLECT_JOB_CAPABILITY = "data.collect"       # Shared Collector claim với capabilities=["data.collect"]
-COLLECT_JOB_PRIORITY = 50                     # kênh mới thêm tay ưu tiên hơn job mặc định (priority=0)
 
 
 class LegacyService:
@@ -84,7 +82,7 @@ class LegacyService:
     # ── Ghi resource: DUY NHẤT qua ingest.merge ────────────────────────────────────────
 
     async def _merge_one(self, conn: asyncpg.Connection, *, owner: str, platform: str, type_key: str, external_id: str,
-                         fields: dict, legacy: dict, state: str, mode_legacy: str, project_keys: set[str],
+                         fields: dict, legacy: dict, state: str, mode_legacy: str,
                          client_id: str, new_row: bool, now: datetime, observed: datetime | None = None) -> str:
         item: dict = {"platform": platform, "resource_type": type_key, "external_id": external_id,
                       "observed_at": iso(observed or now), "state": state, "extensions": {mapper.LEGACY_NS: legacy}}
@@ -93,8 +91,6 @@ class LegacyService:
                 item[key] = fields[key][:limit]   # display_name mặc định = input_ref (≤500) nhưng canonical chỉ nhận ≤200
         if fields.get("country"):
             item["country"] = {"name": fields["country"][:100]}
-        if project_keys:
-            item["projects"] = [{"project_key": k, "enabled": True} for k in sorted(project_keys)]
         staged, rejections, _ = validate.validate_items("resources", [item], default_observed_at=observed or now,
                                                         model=schemas.ResourceUpsertItem)
         if rejections:   # không bỏ sót im lặng: dữ liệu legacy không biểu diễn được ở canonical => 422 kiểu FastAPI
@@ -121,18 +117,15 @@ class LegacyService:
         type_key, external_id = mapper.normalize_key(raw_type), mapper.external_id_of(input_ref)
         await outbox.acquire_order_lock(conn)   # đọc-rồi-ghi không bị chen ngang
         existing = await repository.find_by_key(conn, owner, platform, type_key, external_id)
-        source_key = mapper.project_key_of(source["project_key"])
         if existing is not None and existing["origin"] == "tool":
             return None, "tool_owned"   # không ghi đè dữ liệu do Tool đồng bộ
         if existing is not None and not existing["removed"]:
             await repository.add_assignment(conn, assignment_id=new_id("asg"), resource_id=existing["id"],
                                             source_id=source["id"], owner=owner, now=now)
-            await self._rewrite(conn, existing, {}, now)   # cập nhật liên kết project theo Source mới
             return await repository.get_resource(conn, existing["id"]), "existing"
         rid = await self._merge_one(
             conn, owner=owner, platform=platform, type_key=type_key, external_id=external_id, fields=fields,
             legacy=self._legacy_block(raw_type, input_ref, mode_legacy), state="active", mode_legacy=mode_legacy,
-            project_keys={source_key} if source_key else set(),
             client_id=existing["client_id"] if existing else mapper.LEGACY_CLIENT, new_row=existing is None, now=now)
         await repository.add_assignment(conn, assignment_id=new_id("asg"), resource_id=rid, source_id=source["id"],
                                         owner=owner, now=now)
@@ -144,12 +137,11 @@ class LegacyService:
         view = mapper.resource_to_legacy(row)
         view.update(updates)
         mode = mode_legacy or view["execution_mode"]
-        keys = {k for k in (mapper.project_key_of(x) for x in await repository.source_project_keys(conn, row["id"])) if k}
         legacy = self._legacy_block(view["resource_type"], view["input_ref"], mode, mapper.legacy_ext(row))
         await self._merge_one(
             conn, owner=row["owner_account_id"], platform=row["platform"], type_key=row["resource_type"],
             external_id=row["external_id"], fields=view, legacy=legacy, state=row["state"], mode_legacy=mode,
-            project_keys=keys, client_id=row["client_id"], new_row=False, now=now,
+            client_id=row["client_id"], new_row=False, now=now,
             observed=max(now, row["observed_at"]))   # sửa tay luôn thắng LWW kể cả khi đồng hồ Tool chạy trước
         if mode != "fallback_local":   # không còn chạy bằng Fallback Tool => huỷ job đang chờ
             await jobs_repo.cancel_pending_for_resource(conn, row["id"], now)
@@ -179,7 +171,8 @@ class LegacyService:
     async def available_platforms(self) -> dict:
         async with self._db.connection() as conn:
             policies = await repository.list_policies(conn)
-        return {"items": [{"platform": p["platform"]} for p in policies if p["web_entry_enabled"]]}
+        return {"items": [{"platform": p["platform"], "display_name": p["display_name"] or p["platform"]}
+                          for p in policies if p["web_entry_enabled"]]}
 
     async def list_sources(self, principal: Principal) -> dict:
         async with self._db.connection() as conn:
@@ -203,9 +196,6 @@ class LegacyService:
             if not updates:
                 raise LegacyError(400, _NOTHING)
             await repository.update_source(conn, source_id, updates, now)
-            if "project_key" in updates and updates["project_key"] != source["project_key"]:
-                for res in await repository.resources_of_source(conn, source_id):   # liên kết project theo Source mới
-                    await self._rewrite(conn, res, {}, now)
         return {"ok": True}
 
     async def list_resources(self, principal: Principal, filters: dict) -> dict:
@@ -324,8 +314,12 @@ class LegacyService:
             raise LegacyError(400, "Platform phải dạng chữ thường/số/gạch dưới, bắt đầu bằng chữ cái")
         now = self._now()
         async with self._db.transaction() as conn:
-            row = await repository.upsert_policy(conn, platform, body.web_entry_enabled, body.fallback_enabled,
-                                                 body.adapter_status, principal.sub, now)
+            if platform not in await registry.enabled_platforms(conn):
+                # Nền tảng do Admin/dash_admin tạo ở Platform Registry; policy chỉ chỉnh HÀNH VI của nền tảng đã có.
+                raise LegacyError(404, f"Nền tảng '{platform}' chưa được tạo (hoặc đang tắt) trong danh mục nền tảng")
+            await repository.upsert_policy(conn, platform, body.web_entry_enabled, body.fallback_enabled,
+                                           body.adapter_status, principal.sub, now)
+            row = await repository.get_policy(conn, platform)
             await self._audit(conn, principal.sub, "platform_policy_changed", "policy", platform,
                               {"web_entry_enabled": row["web_entry_enabled"], "fallback_enabled": row["fallback_enabled"],
                                "adapter_status": row["adapter_status"]})

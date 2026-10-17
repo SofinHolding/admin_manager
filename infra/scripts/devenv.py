@@ -35,12 +35,18 @@ def pg_host_port() -> tuple[str, int]:
     return os.environ.get("DEV_PG_HOST", "127.0.0.1"), int(os.environ.get("DEV_PG_PORT", "26400"))
 
 
+def db_suffix() -> str:
+    """`DEV_PG_DB_SUFFIX` (vd `_test`): chạy test/E2E trên `<service>_db_test` thay vì `<service>_db`. Test TRUNCATE dữ liệu và
+    tranh khoá với stack DEV đang chạy, nên PHẢI dùng DB riêng (tạo bằng `python infra/scripts/test_dbs.py`)."""
+    return os.environ.get("DEV_PG_DB_SUFFIX", "")
+
+
 def pg_dsn(service: str = "", *, admin: bool = False, database: str | None = None) -> str:
     host, port = pg_host_port()
     if admin:
         return f"postgresql://postgres:{_get('DEV_PG_ADMIN_PASSWORD')}@{host}:{port}/{database or 'postgres'}"
     return (f"postgresql://{service}_svc:{_get('DEV_PG_' + service.upper() + '_PASSWORD')}"
-            f"@{host}:{port}/{database or service + '_db'}")
+            f"@{host}:{port}/{database or service + '_db' + db_suffix()}")
 
 
 def redis_url() -> str:

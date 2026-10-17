@@ -1,0 +1,6 @@
+# Python của Channel Collector (collect.py, channels_db.py, health.py, tiktok_links.py ...)
+httpx[socks]>=0.28        # SystemApi, YouTube Data API, tikwm; [socks] = proxy socks5
+curl_cffi>=0.13           # kiểm tra proxy + TLS fingerprint chrome cho yt-dlp (TikTok)
+yt-dlp>=2026.8            # liệt kê video kênh TikTok / YouTube không cần key
+beautifulsoup4>=4.12      # bộ kiểm tra Facebook (checkers/facebook_scraper)
+pytest>=8                 # chạy tests/

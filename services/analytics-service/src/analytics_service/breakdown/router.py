@@ -43,13 +43,13 @@ SPEC_COMPARE = QuerySpec("compare", _build_compare)
 SPEC_COMPARE_COUNTRY = QuerySpec("compare", _build_compare, ignore_country=True)
 
 
-@router.get("/channel-breakdown", summary="Kênh/page theo nền tảng + chủ đề + quốc gia")
+@router.get("/channel-breakdown", summary="Kênh/page theo nền tảng + quốc gia")
 async def get_channel_breakdown(response: Response, query: FilterQuery = Depends(), principal: Principal = User,
                                 c=Depends(container)) -> dict:
     return await c.query.run(SPEC_BREAKDOWN, principal, query, response)
 
 
-@compare_router.get("/compare/{dimension}", summary="So sánh lượt xem theo chiều: platform|owner|country|channel|group|project")
+@compare_router.get("/compare/{dimension}", summary="So sánh lượt xem theo chiều: platform|owner|country|channel|group")
 async def get_compare(dimension: str, response: Response, limit: int = Query(50, ge=1, le=200),
                       query: FilterQuery = Depends(), principal: Principal = User, c=Depends(container)) -> dict:
     if dimension not in DIMENSIONS:

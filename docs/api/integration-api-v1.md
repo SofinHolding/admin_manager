@@ -1,6 +1,7 @@
 # Integration API v1 (contract `2026-10-01`)
 
 Bổ sung cho `docs/api/ingest-data-contract-v1.md` (hợp đồng dữ liệu) và `tasks/backlog/api-first-integration-contract-v1.md`.
+**Tool đã liên kết cần sửa gì (mã nền tảng, bỏ `PUT /projects`, định dạng job/snapshot của collector):** xem `docs/api/integration-tool-changes-2026-10-16.md`.
 Service: `integration-service` (cổng 8431, DB `integration_db`). Auth: xem `service-auth-contract-v1.md`.
 
 ## 1. Quản lý Client / Credential (mặt phẳng USER — token user RS256)
@@ -50,14 +51,14 @@ Theo `ingest-data-contract-v1.md` §3 và contract api-first. Bắt buộc:
 | Endpoint | Scope |
 |---|---|
 | `POST /v1/integrations/handshake` | `integration:handshake` |
-| `PUT /v1/integrations/projects/{project_key}` | `resources:write` |
 | `POST /v1/integrations/resources/batch` | `resources:write` |
 | `POST /v1/integrations/snapshots` | `snapshots:write` |
 | `POST /v1/integrations/snapshots/{id}/resources` · `/content` · `/events` | `snapshots:write` |
 | `POST /v1/integrations/snapshots/{id}/metrics` | `metrics:write` |
 | `POST /v1/integrations/snapshots/{id}/commit` | `snapshots:write` |
 | `GET  /v1/integrations/snapshots/{id}` | `snapshots:write` (trạng thái, đếm, rejections) |
-| `POST /v1/integrations/jobs/claim` · `/{id}/complete` · `/{id}/fail` | `jobs:claim` / `jobs:complete` (+ `jobs:claim:system` cho đa-owner) |
+| `POST /v1/integrations/jobs/claim` · `/{id}/complete` · `/{id}/fail` | `jobs:claim` / `jobs:complete` (+ `jobs:claim:system` cho đa-owner). `claim` nhận thêm `resource_ids` (tuỳ chọn): chỉ nhận job của các kênh đó |
+| `POST /v1/integrations/jobs/enqueue` | `jobs:claim:system` (chỉ `client_kind=fallback_tool`): xin tạo job `collect` cho các kênh ĐÃ KÉO (≤200/lần); kênh đã có job pending/leased → `already_active`; kênh không hợp lệ → `skipped[].reason` (`NOT_FOUND`/`NOT_ELIGIBLE`/`PLATFORM_NOT_ALLOWED`/`LIMIT_EXCEEDED`). Xem `docs/architecture/shared-collector-schedule-v1.md` |
 | `POST /v1/integrations/workers/register` · `/{worker_id}/heartbeat` | `jobs:claim` (chỉ `client_kind=fallback_tool`) — PHASE 4, chỉ in-memory (xem §4) |
 
 Hành vi bắt buộc (mỗi mục có test):
@@ -66,14 +67,21 @@ Hành vi bắt buộc (mỗi mục có test):
   Handshake từ thiết bị khác → `409 CREDENTIAL_DEVICE_BOUND` (không tạo installation). Mọi endpoint máy khác `/handshake`: khoá chưa bind →
   `403 CREDENTIAL_NOT_ACTIVATED`; header `X-Installation-Id` vắng/khác installation đã bind → `403 INSTALLATION_MISMATCH`; `jobs/claim.installation_id`
   phải trùng installation đã bind. Đổi máy = xoay khoá (khoá mới chưa bind). Nhiều worker = nhiều khoá.
-- **Client dùng chung không ghi dữ liệu đứng tên mình**: client `ownership=shared` gọi `POST /resources/batch`, `PUT /projects/{key}`, tạo/đẩy/commit
+- **Client dùng chung không ghi dữ liệu đứng tên mình**: client `ownership=shared` gọi `POST /resources/batch`, tạo/đẩy/commit
   snapshot mà thiếu `X-Delegated-Job` hợp lệ → `403 SHARED_CLIENT_REQUIRES_DELEGATION`. Đọc (`GET /resources`, `/resource-owners`) và jobs không đổi.
 - **Ownership từ credential**: `owner_*` trong payload → `422 RECORD_VALIDATION_FAILED` (schema `additionalProperties:false`). Job do server gán owner.
-- **Platform**: dữ liệu platform ngoài `allowed_platforms` của client → `403 PLATFORM_NOT_ALLOWED`.
+- **Platform + mã nền tảng**: mỗi nền tảng (tên hiển thị) có MỘT mã chính (`key`) và nhiều mã phụ (`aliases`); mọi mã là DUY NHẤT toàn hệ thống (không trùng chính/phụ, kiểm trong transaction có khoá).
+  Mọi snapshot/resource/handshake/claim BẮT BUỘC kèm `platform` = MỘT mã bất kỳ của nền tảng (chính hoặc phụ); server chuẩn hoá về mã chính TRƯỚC khi kiểm quyền và lưu, nên số liệu luôn được lưu/hiển thị
+  theo đúng nền tảng (`snapshot.platform` trong phản hồi là mã chính). Mã lạ, mã phụ đã gỡ, nền tảng bị tắt, hoặc nền tảng ngoài `allowed_platforms` của client → `403 PLATFORM_NOT_ALLOWED` (không lưu gì).
+  Tool hỏi danh sách mã bằng `GET /v1/integrations/platforms` (scope `integration:handshake`; = `allowed_platforms` ∩ registry đang bật; trả `[{key, display_name, enabled, aliases, codes}]`, `codes = [key, ...aliases]`).
+  Tool **cá nhân** tự được thêm mọi platform Admin/dash_admin tạo (bật); Tool **dùng chung** chỉ nhận platform admin chọn khi cấu hình client (cũng dùng được mọi mã của nền tảng đó).
+- **Tool có dữ liệu của NHIỀU nền tảng**: mỗi snapshot chỉ chứa dữ liệu của MỘT nền tảng (trường `platform` của snapshot áp cho mọi bản ghi trong nó — `content/metrics/events` tham chiếu kênh theo `(owner, platform, resource_external_id)` của chính nền tảng đó,
+  nên hai nền tảng trùng `external_id` kênh không lẫn nhau). Tool gửi MỘT snapshot cho mỗi nền tảng, mỗi snapshot kèm mã nền tảng của dữ liệu đó (SDK: `IntegrationClient.push_by_platform`). Mã sai/thiếu → không tạo snapshot, không lưu gì
+  (`resources/batch` trộn mã đúng và sai bị từ chối CẢ LÔ). `GET /v1/integrations/me/connection-guide` liệt kê `platforms[].codes` của client, gắn danh sách mã vào `enum` của mọi trường `platform`/`platforms` trong `request_schema`, và nêu `platform_rules`.
 - **Idempotency** (mọi POST/PUT ghi): `Idempotency-Key`; khoá lưu `(client_id, method, path, key) → (sha256(body), response)`.
   Cùng key + cùng body → trả **lại đúng phản hồi cũ** (không ghi lần 2); cùng key + khác body → `409 IDEMPOTENCY_CONFLICT`.
   Thiếu key ở `commit` → cho phép nhưng commit vốn idempotent theo trạng thái (commit lần 2 → `409 SNAPSHOT_ALREADY_COMMITTED` kèm id).
-- **Snapshot state machine**: `building → committing → committed | failed | abandoned`. `current` theo `(owner, client, platform, project?, snapshot_type)`
+- **Snapshot state machine**: `building → committing → committed | failed | abandoned`. `current` theo `(owner, client, platform, snapshot_type)`
   chỉ đổi khi commit thành công. Snapshot `building` quá `SNAPSHOT_TTL` (cấu hình, mặc định 6h) → worker đánh `abandoned`.
   Tool chết giữa chừng ⇒ canonical không đổi.
 - **Commit atomic**: một transaction: kiểm `expected_counts` (lệch → `422 SNAPSHOT_INCOMPLETE`, không đổi gì), kiểm `rejections` (còn → `SNAPSHOT_INCOMPLETE`
@@ -84,11 +92,20 @@ Hành vi bắt buộc (mỗi mục có test):
 - **Rate limit** theo `client_id`: mặc định 600 request/phút (cấu hình); vượt → `429 RATE_LIMITED` + `Retry-After`.
 - **Audit** `audit_log(account_id, client_id, installation_id, key_id, action, snapshot_id?, request_id, ip, result, at)`; admin xem `GET /v1/integrations/audit`.
 - **Registry**: `platform_registry` và `metric_registry` là DỮ LIỆU (seed trong migration: platforms `facebook, youtube, tiktok, instagram`; metrics `views, reactions, comments,
-  likes, shares, followers, interactions, videos_posted`). Thêm platform/metric = thêm dòng qua `PUT /v1/integrations/admin/platforms/{key}` / `.../metrics/{key}` (admin), không đổi code.
+  likes, shares, followers, interactions, videos_posted`). Thêm platform = `POST /v1/integrations/admin/platforms` (role `admin` **hoặc `dash_admin`**; body `{key, display_name, aliases?}`; mã đã tồn tại → `409 PLATFORM_CODE_EXISTS`);
+  sửa tên/bật-tắt = `PUT .../platforms/{key}` (không xoá, chỉ tắt); mã phụ = `POST .../platforms/{key}/aliases` · `DELETE .../platforms/{key}/aliases/{alias}`; thêm metric = `PUT .../metrics/{key}` (chỉ `admin`). Không đổi code. Platform Registry là NGUỒN SỰ THẬT về "nền tảng nào tồn tại":
+  nhập tay trên web (`/v1/resources/platforms`, kèm `display_name`) và `legacy_ingest.platform_policies` (hành vi `web_entry_enabled`/`fallback_enabled`, chỉ chỉnh được platform đã
+  có trong registry; platform mới mặc định `web_entry=true, fallback=true`: kênh nhập tay được giao cho Tool dùng chung kéo số liệu, collector chỉ nhận platform nó có adapter nên job platform chưa hỗ trợ nằm chờ) đều lấy theo registry.
 - **Delegated ingestion** (PHASE 4, Shared Collector — `docs/architecture/shared-collector-design-v1.md`): header tuỳ chọn `X-Delegated-Job: <job_id>`
   trên MỌI endpoint snapshot (`POST /snapshots`, batch, `commit`, `GET /snapshots/{id}`). Chỉ `client_kind=fallback_tool`; job phải đang `leased` bởi
   ĐÚNG client đó và có `resource_owner_id` (gán lúc tạo job `kind=collect`, xem §4) → owner dữ liệu = `job.resource_owner_id` thay vì owner của credential.
   Vắng header: hành vi y hệt trước PHASE 4. Job không thoả điều kiện → `404 JOB_NOT_FOUND` / `409 JOB_INVALID_STATE`; sai `client_kind` → `403 SCOPE_DENIED`.
+  **Ánh xạ kênh/nền tảng (bắt buộc khi có header):** `platform` của snapshot/resource PHẢI bằng `job.platform` (`403 PLATFORM_NOT_ALLOWED`); chỉ `snapshot_type=delta` (`full` kèm scope sẽ đánh
+  dấu removed các kênh Tool không thấy → `422`); không tạo/sửa resource qua snapshot (`403 SCOPE_DENIED`); mỗi bản ghi `content/metrics/events` PHẢI có `resource_external_id` = `external_id` của
+  resource trong job (khác → `rejections[].code=RESOURCE_UNKNOWN`, không lưu). Nhờ đó số liệu luôn rơi đúng kênh + đúng nền tảng user đã nhập, dù Tool tự dò ra id khác (vd `UC…` của YouTube).
+- **File kết nối cho key dùng chung**: khi Admin cấp credential cho client dùng chung, giao diện cho tải `connection-<client_id>.json`
+  `{format:"manager-connection/1", gateway, tool_name, client_id, key_id, api_key, allowed_platforms, contract_version, issued_at}` (chứa secret, tạo ở trình duyệt, chỉ có lúc cấp/xoay). Collector chạy
+  `python collect.py --connection-file connection-<client_id>.json` (Electron: nút "Nạp file kết nối…"). Key cần scope `jobs:claim:system` để nhận job của mọi user.
 
 ## 4. Jobs (Fallback Tool)
 

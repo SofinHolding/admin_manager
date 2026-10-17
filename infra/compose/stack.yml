@@ -103,6 +103,7 @@ services:
       REWARD_IDENTITY_FEED_URL: http://identity:8430
       REWARD_IDENTITY_FEED_KEY: ${IDENTITY_FEED_KEY_REWARD:?}
       REWARD_TOKEN_KEY: ${REWARD_TOKEN_KEY:?}
+    depends_on: {identity: {condition: service_healthy}}   # prefetch JWKS lúc boot cần Identity đã sẵn sàng
 
   gateway:
     <<: *svc

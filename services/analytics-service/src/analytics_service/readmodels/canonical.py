@@ -12,7 +12,7 @@ from datetime import date, datetime
 
 from analytics_service.dates import parse_iso_date, parse_ts
 
-KINDS = ("projects", "resources", "content", "metrics", "events")
+KINDS = ("resources", "content", "metrics", "events")
 LF = chr(10)
 
 
@@ -83,37 +83,16 @@ def _common(item: dict) -> dict:
             "removed": item.get("removed") is True}
 
 
-def _bindings(item: dict) -> list[dict]:
-    out: dict[str, dict] = {}
-    raw = item.get("projects")
-    if isinstance(raw, list):
-        for entry in raw:
-            if isinstance(entry, dict) and entry.get("project_key"):
-                key = str(entry["project_key"]).strip()
-                out.setdefault(key, {"project_key": key, "enabled": entry.get("enabled", True) is not False})
-            elif isinstance(entry, str) and entry.strip():
-                out.setdefault(entry.strip(), {"project_key": entry.strip(), "enabled": True})
-    if not out and isinstance(item.get("project_keys"), list):
-        for key in item["project_keys"]:
-            if isinstance(key, str) and key.strip():
-                out.setdefault(key.strip(), {"project_key": key.strip(), "enabled": True})
-    return list(out.values())
-
-
 def to_row(kind: str, item: dict) -> dict:
     row = _common(item)
-    if kind == "projects":
-        row.update(project_key=_text(item, "project_key", required=True, limit=100), name=_text(item, "name"),
-                   platform=_text(item, "platform"), country=country_name(item),
-                   enabled=item.get("enabled", True) is not False)
-    elif kind == "resources":
+    if kind == "resources":
         row.update(platform=_text(item, "platform", required=True, limit=40),
                    external_id=_text(item, "external_id", required=True, limit=200),
                    resource_type=_text(item, "resource_type", limit=40), client_id=_text(item, "client_id", limit=100),
                    display_name=_text(item, "display_name"), username=_text(item, "username"),
                    url=_text(item, "url", limit=1000), country=country_name(item),
                    state="disabled" if item.get("state") == "disabled" else "active",
-                   projects=_bindings(item), managed=_flag(item, "managed"), active=_flag(item, "active"))
+                   managed=_flag(item, "managed"), active=_flag(item, "active"))
     elif kind == "content":
         metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
         row.update(platform=_text(item, "platform", required=True, limit=40),
@@ -135,8 +114,7 @@ def to_row(kind: str, item: dict) -> dict:
         row.update(external_id=_text(item, "external_id", required=True, limit=300),
                    platform=_text(item, "platform", limit=40), resource_type=_text(item, "resource_type", limit=40),
                    resource_external_id=_text(item, "resource_external_id", limit=200),
-                   kind=_text(item, "kind", required=True, limit=60), occurred_date=_date(item, "occurred_date"),
-                   project_key=_text(item, "project_key", limit=100))
+                   kind=_text(item, "kind", required=True, limit=60), occurred_date=_date(item, "occurred_date"))
     else:
         raise BadItem(f"kind không hỗ trợ: {kind}")
     return row
@@ -147,9 +125,7 @@ def natural_key(kind: str, row: dict) -> str:
     resources (owner, platform, resource_type, external_id); content/events (…resource_type, resource_external_id,
     external_id); metrics (…resource_type, resource_external_id, date). Phần tử vắng viết rỗng."""
     o = row["owner_account_id"]
-    if kind == "projects":
-        parts = (o, row["project_key"])
-    elif kind == "resources":
+    if kind == "resources":
         parts = (o, row["platform"], row["resource_type"], row["external_id"])
     elif kind == "content":
         parts = (o, row["platform"], row["resource_type"], row["resource_external_id"], row["external_id"])

@@ -1,4 +1,4 @@
-"""Bộ lọc: quốc gia / nền tảng / người / kênh / nhóm / chủ đề, TẤT CẢ cùng lúc, và MỘT FilterContext cho mọi endpoint.
+"""Bộ lọc: quốc gia / nền tảng / người / kênh / nhóm, TẤT CẢ cùng lúc, và MỘT FilterContext cho mọi endpoint.
 
 Số kỳ vọng tính tay từ fixture `seed_world` (xem docstring test_stats_exact.py).
 """
@@ -77,17 +77,6 @@ async def test_legacy_platform_tag_native_value_means_platform(seeded):
                                                     **RANGE)).json()["scope"] == "youtube"
 
 
-async def test_project_filter_uses_bindings(seeded):
-    # `videos_posted` đếm BÀI của các kênh gắn với chủ đề (bài không mang chủ đề riêng): itl = pg1(p1,p2,p3) + pg2(p4,p6) = 5;
-    # sib = pg1(p1,p2,p3) + pg3(p5) = 4. Kỳ trước p7 thuộc pg1 nên cả hai chủ đề cùng có 1.
-    itl = (await seeded.get("/v1/analytics/summary", project="itl", **RANGE)).json()
-    assert core(itl) == {"total_views": 380, "total_views_prev": 11, "videos_posted": 5, "videos_posted_prev": 1,
-                         "active_channels": 2, "managed_channels": 2, "days_in_range": 3}
-    sib = (await seeded.get("/v1/analytics/summary", project="sib", **RANGE)).json()
-    assert core(sib) == {"total_views": 420, "total_views_prev": 11, "videos_posted": 4, "videos_posted_prev": 1,
-                         "active_channels": 1, "managed_channels": 2, "days_in_range": 3}
-
-
 async def test_person_filter_for_admin_only(seeded):
     b = (await seeded.get("/v1/analytics/top-channels", sub=ADMIN, role="admin", owner_account_id=OWN_B,
                           **RANGE)).json()["items"]
@@ -126,7 +115,7 @@ async def test_group_of_someone_else_is_not_usable(seeded):
 
 async def test_all_filters_at_once(seeded):
     gid = await make_group(seeded, members=[("pg1", "tiktok", "Chile"), ("ch1", "", "")])
-    params = dict(owner_account_id=OWN_A, platform="facebook", country="Chile", project="itl", group_id=gid,
+    params = dict(owner_account_id=OWN_A, platform="facebook", country="Chile", group_id=gid,
                   platform_tag="tiktok", **RANGE)
     s = (await seeded.get("/v1/analytics/summary", **params)).json()
     assert core(s) == {"total_views": 350, "total_views_prev": 11, "videos_posted": 3, "videos_posted_prev": 1,
@@ -134,23 +123,20 @@ async def test_all_filters_at_once(seeded):
     top = (await seeded.get("/v1/analytics/top-channels", **params)).json()["items"]
     assert [(i["id"], i["country"], i["views"]) for i in top] == [("pg1", "Chile", 350)]
     assert s["filter"] == {"date_from": "2026-10-01", "date_to": "2026-10-03", "owner_account_id": OWN_A,
-                           "platform": "facebook", "country": "Chile", "project": "itl", "group_id": gid,
+                           "platform": "facebook", "country": "Chile", "group_id": gid,
                            "platform_tag": "tiktok"}
-    # một điều kiện mâu thuẫn (project không phải của pg1) -> rỗng, không phải lỗi
-    none = (await seeded.get("/v1/analytics/summary", **{**params, "project": "khong-co"})).json()
-    assert none["total_views"] == 0 and none["managed_channels"] == 0
 
 
 DATA_ENDPOINTS = ["summary", "traffic", "top-channels", "views-by-country", "country-tags", "platform-tags",
                   "metrics", "channel-breakdown", "compare/platform", "compare/owner", "compare/country",
-                  "compare/channel", "compare/group", "compare/project"]
+                  "compare/channel", "compare/group"]
 
 
 async def test_one_filter_context_for_every_data_endpoint(seeded):
     """Mọi endpoint dữ liệu nhận CÙNG tham số và trả CÙNG khối `filter` đã áp dụng."""
     gid = await make_group(seeded, members=[("pg1", "tiktok", "")])
     params = dict(date_from="2026-10-01", date_to="2026-10-03", owner_account_id=OWN_A, platform="facebook",
-                  country="Brazil", project="itl", group_id=gid, platform_tag="tiktok")
+                  country="Brazil", group_id=gid, platform_tag="tiktok")
     filters = {}
     for ep in DATA_ENDPOINTS:
         r = await seeded.get("/v1/analytics/" + ep, **params)
@@ -168,7 +154,7 @@ async def test_one_filter_context_for_every_data_endpoint(seeded):
 
 async def test_openapi_declares_the_same_filter_params_on_every_data_endpoint(seeded):
     spec = (await seeded.client.get("/openapi.json")).json()
-    expected = {"date_from", "date_to", "owner_account_id", "platform", "country", "project", "group_id", "platform_tag"}
+    expected = {"date_from", "date_to", "owner_account_id", "platform", "country", "group_id", "platform_tag"}
     for ep in DATA_ENDPOINTS:
         path = "/v1/analytics/" + ep.replace("compare/platform", "compare/{dimension}")
         if ep.startswith("compare/") and ep != "compare/platform":
@@ -195,10 +181,6 @@ async def test_compare_dimensions_are_exact(seeded):
     chan, _ = await items("channel")
     assert {k: v["total"] for k, v in chan.items()} == {"facebook:pg1": 350, "youtube:ch2": 70, "facebook:pg3": 70,
                                                        "youtube:ch1": 40, "facebook:pg2": 30}
-    proj, _ = await items("project")
-    assert {k: v["total"] for k, v in proj.items()} == {"sib": 420, "itl": 380, "Không chủ đề": 110}
-    assert proj["sib"]["name"] == "Sible"
-
     own, _ = await items("owner", sub=ADMIN, role="admin")
     assert {k: v["total"] for k, v in own.items()} == {OWN_A: 560, OWN_B: 999}
     # người thường chỉ thấy chính mình ở chiều "owner"
@@ -234,6 +216,26 @@ async def test_country_alias_normalizes_everywhere(seeded):
     assert vbc["totals"]["Brazil"] == 380 and "BR" not in vbc["countries"]
     br = (await seeded.get("/v1/analytics/summary", country="br", **RANGE)).json()
     assert br["total_views"] == 380 and br["filter"]["country"] == "Brazil"
+
+
+async def test_unnormalized_country_is_visible_everywhere_so_admin_can_normalize_it_later(seeded):
+    """Tên quốc gia người dùng tự gõ (chưa có tên chuẩn/alias) KHÔNG được biến mất khỏi dashboard: vẫn hiện nguyên văn ở
+    biểu đồ quốc gia, danh mục lọc, phân rã kênh, so sánh; lọc theo nó ra đúng số; tổng các quốc gia = tổng view."""
+    free = "Xứ Sở Tự Đặt"
+    seeded.integration.update_item("resources", owner_account_id=OWN_A, platform="facebook", external_id="pg2",
+                                   country={"name": free})
+    await seeded.sync()
+    total = (await seeded.get("/v1/analytics/summary", **RANGE)).json()["total_views"]
+    vbc = (await seeded.get("/v1/analytics/views-by-country", **RANGE)).json()
+    assert free in vbc["countries"] and vbc["totals"][free] == 30 and vbc["totals"]["Brazil"] == 350   # tách đúng 30 view của pg2
+    assert sum(vbc["totals"].values()) == total                      # không rơi mất view nào khi quốc gia chưa chuẩn hoá
+    assert free in [t["name"] for t in (await seeded.get("/v1/analytics/country-tags")).json()["items"]]
+    cb = (await seeded.get("/v1/analytics/channel-breakdown")).json()
+    assert free in {c["country"] for p in cb["by_platform"] for c in p["by_country"]}
+    cmp_ = (await seeded.get("/v1/analytics/compare/country", **RANGE)).json()["items"]
+    assert next(i for i in cmp_ if i["id"] == free)["total"] == 30
+    by_name = (await seeded.get("/v1/analytics/summary", country=free, **RANGE)).json()
+    assert by_name["total_views"] == 30 and by_name["filter"]["country"] == free
 
 
 async def test_other_owners_group_settings_never_leak_into_my_numbers(seeded):

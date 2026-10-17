@@ -78,6 +78,29 @@ describe("MyToolsPage — render endpoint từ connection-guide", () => {
   });
 });
 
+describe("MyToolsPage — mã nền tảng dùng ở trường platform", () => {
+  it("hiện mã chính + mã phụ từng nền tảng và quy tắc, chỉ xem (không có ô nhập/nút sửa mã)", async () => {
+    installFetch((c) => c.path === "/v1/integrations/me/connection-guide" ? jsonResponse({
+      ...guideBase, credential: null,
+      platforms: [{ key: "tiktok", display_name: "TikTok", aliases: ["tt", "tik_tok"], codes: ["tiktok", "tt", "tik_tok"] },
+                  { key: "facebook", display_name: "Facebook", aliases: [], codes: ["facebook"] }],
+      platform_rules: ["Mỗi snapshot chỉ chứa dữ liệu của MỘT nền tảng, ghi ở trường `platform`."],
+    }) : undefined);
+    renderPage();
+    const section = (await screen.findByText("Mã nền tảng dùng khi gửi dữ liệu")).closest("section") as HTMLElement;
+    const tiktok = within(within(section).getByText("TikTok").closest("tr") as HTMLElement);
+    expect(tiktok.getByText("tiktok")).toBeInTheDocument();
+    expect(tiktok.getByText("tt")).toBeInTheDocument();
+    expect(tiktok.getByText("tik_tok")).toBeInTheDocument();
+    expect(within(within(section).getByText("Facebook").closest("tr") as HTMLElement).getByText("—")).toBeInTheDocument();
+    expect(within(section).getByText(/chỉ chứa dữ liệu của MỘT nền tảng/)).toBeInTheDocument();
+    expect(within(section).getByText("platform", { selector: "code" })).toBeInTheDocument();   // không hiện dấu ` thô
+    expect(section.textContent).not.toContain("`");
+    expect(within(section).queryByRole("textbox")).toBeNull();
+    expect(within(section).queryByRole("button")).toBeNull();
+  });
+});
+
 describe("MyToolsPage — reveal hiện secret một lần, không ghi storage", () => {
   const pendingCred = {
     key_id: "cred_1", scopes: ["integration:handshake"], status: "active", label: "", expires_at: null,

@@ -4,7 +4,7 @@
  */
 
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Coins, Globe, KeyRound, Link2, Settings, Users } from "lucide-react";
+import { BarChart3, Coins, Globe, KeyRound, Layers, Link2, ListTree, Settings, Users } from "lucide-react";
 import { canSeeDashboard, CAP_MANUAL_CHANNEL_MGMT, CAP_TOOL_INTEGRATION, hasCap, PERM_REWARD_ACCESS, type PrincipalLike } from "./auth/permissions";
 
 export interface NavItem {
@@ -37,13 +37,15 @@ export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: s
   const rewardBase = isAdminZone ? "/admin/reward" : "/reward";
   const groups: NavGroup[] = [];
   if (isAdminZone) {
-    groups.push({
-      title: "Theo dõi",
-      items: [
-        { to: "/admin/dashboard", label: "Tổng quan", icon: BarChart3 },
-        { to: "/admin/groups", label: "Nhóm kênh", icon: Users },
-      ],
-    });
+    const items: NavItem[] = [
+      { to: "/admin/dashboard", label: "Tổng quan", icon: BarChart3 },
+      { to: "/admin/groups", label: "Nhóm kênh", icon: Users },
+    ];
+    // Danh mục nền tảng: chỉ admin/dash_admin quản lý (server vẫn cưỡng chế quyền)
+    if (user.role === "admin" || user.role === "dash_admin") {
+      items.push({ to: "/admin/platforms", label: "Nền tảng", icon: Layers });
+    }
+    groups.push({ title: "Theo dõi", items });
   }
   if (hasPerm(PERM_REWARD_ACCESS)) {
     groups.push({
@@ -55,7 +57,10 @@ export function navFor(user: PrincipalLike | null | undefined, hasPerm: (perm: s
     });
   }
   if (user.role === "admin" || user.role === "dash_admin") {
-    groups.push({ title: "Quản trị", items: [{ to: "/admin/manage", label: "Quản trị hệ thống", icon: Settings }] });
+    groups.push({ title: "Quản trị", items: [
+      { to: "/admin/manage", label: "Quản trị hệ thống", icon: Settings },
+      { to: "/admin/user-channels", label: "Kênh theo người dùng", short: "Kênh user", icon: ListTree },
+    ] });
   }
   // Capability độc lập với vai trò website (capability-model-v1.md §8) — hiện cả với viewer trong admin zone.
   // admin/dash_admin KHÔNG hiện: họ quản lý kênh qua Admin Panel, không cần trang cá nhân.

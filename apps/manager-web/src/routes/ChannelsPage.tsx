@@ -3,7 +3,7 @@
  *
  * Layout:
  *  - Tạo nhóm quốc gia mới (form inline)
- *  - Accordion per group: tên nước + mã ISO + danh sách kênh + form thêm kênh
+ *  - Accordion per group: tên nước (người dùng tự gõ, không có danh sách dựng sẵn) + danh sách kênh + form thêm kênh
  *  - Kênh: nền tảng + username/link + tên hiển thị + badge trạng thái + nút xóa
  *
  * Backend:
@@ -21,6 +21,7 @@ import {
   type ChannelGroup, type ManagedResource,
 } from "../api";
 import { errorMessage } from "../lib/errors";
+import { platformEmoji, platformLabel, type PlatformNameMap } from "../lib/platforms";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import {
@@ -30,18 +31,6 @@ import { Badge } from "../components/ui/badge";
 import { EmptyState, Field, Notice, PageHeader, Section } from "../components/kit";
 
 // ── Hằng số ──────────────────────────────────────────────────────────────────
-
-const PLATFORM_LABEL: Record<string, string> = {
-  youtube: "YouTube",
-  tiktok: "TikTok",
-  facebook: "Facebook",
-};
-
-const PLATFORM_EMOJI: Record<string, string> = {
-  youtube: "📹",
-  tiktok: "🎵",
-  facebook: "👤",
-};
 
 const VERIFICATION_BADGE: Record<string, { text: string; variant: "secondary" | "success" | "destructive" | "warning" }> = {
   unverified: { text: "Chưa thu thập", variant: "secondary" },
@@ -55,13 +44,6 @@ const MODE_BADGE: Record<string, { text: string; hint: string; variant: "seconda
   primary_tool:   { text: "Tool riêng",    hint: "Dữ liệu do Tool cá nhân của bạn đẩy lên",          variant: "success"   },
   disabled:       { text: "Tắt",           hint: "Kênh này tạm thời không thu thập dữ liệu nào",     variant: "destructive" },
 };
-
-/** Danh sách quốc gia phổ biến cho datalist gợi ý. */
-const COMMON_COUNTRIES: [string, string][] = [
-  ["VN", "Việt Nam"], ["NG", "Nigeria"], ["US", "United States"],
-  ["PH", "Philippines"], ["ID", "Indonesia"], ["IN", "India"],
-  ["BR", "Brazil"], ["MX", "Mexico"], ["EG", "Egypt"], ["KE", "Kenya"],
-];
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -89,42 +71,92 @@ function ModeBadge({ r, onSwitch }: { r: ManagedResource; onSwitch: (mode: strin
   );
 }
 
-// ── AddChannelForm ─────────────────────────────────────────────────────────────
+// ── AddChannelsForm ────────────────────────────────────────────────────────────
 
-function AddChannelForm({
-  group, platforms, onAdded,
+const NEW_COUNTRY = "__new__";
+const MAX_LINKS = 100;      // mỗi link = một lần tạo kênh (POST /v1/resources) nên giới hạn một lượt cho hợp lý
+const CONCURRENCY = 5;
+
+function AddChannelsForm({
+  groups, platforms, names, existing, onGroupCreated, onAdded,
 }: {
-  group: ChannelGroup;
+  groups: ChannelGroup[];
   platforms: string[];
-  onAdded: (r: ManagedResource) => void;
+  names: PlatformNameMap;
+  existing: ManagedResource[];
+  onGroupCreated: (g: ChannelGroup) => void;
+  onAdded: (list: ManagedResource[]) => void;
 }) {
-  const [platform, setPlatform] = useState(platforms[0] ?? "youtube");
-  const [inputVal, setInputVal] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [platform, setPlatform] = useState("");
+  const [countryId, setCountryId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [links, setLinks] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const creatingCountry = countryId === NEW_COUNTRY;
+  // Mỗi dòng một link; bỏ dòng trống và dòng trùng (không phân biệt hoa/thường) — số hiển thị = số kênh sẽ tạo
+  const lines = [...new Map(links.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => [l.toLowerCase(), l])).values()];
+  const countryOk = creatingCountry ? !!newName.trim() : !!countryId;
+  const canSubmit = !saving && !!platform && countryOk && lines.length > 0 && lines.length <= MAX_LINKS;
+
   const handleAdd = async () => {
-    if (!platform || !inputVal.trim()) return;
+    if (!canSubmit) return;
     setSaving(true);
     try {
-      // Tìm hoặc tạo source cho platform + nhóm này
-      const sources = await resourcesApi.listSources();
-      const source =
-        sources.items.find((s) => s.platform === platform && (s.project_key ?? "") === group.name)
-        ?? sources.items.find((s) => s.platform === platform)
-        ?? await resourcesApi.createSource({ name: group.name, platform, default_country: group.name });
+      // 1) Quốc gia: có sẵn, hoặc tạo mới ngay trong form (kênh luôn gắn đúng quốc gia đã chọn)
+      let group = groups.find((g) => g.id === countryId);
+      if (creatingCountry) {
+        const name = newName.trim();
+        group = groups.find((g) => g.name.toLowerCase() === name.toLowerCase())
+          ?? await channelGroupsApi.create(name);
+        onGroupCreated(group);
+      }
+      if (!group) return;
+      const country = group.name;
 
-      const created = await resourcesApi.createResource({
-        source_instance_id: source.id,
-        platform,
-        input_ref: inputVal.trim(),
-        display_name: displayName.trim() || undefined,
-        country: group.name,  // liên kết với group
-      });
-      onAdded(created);
-      setInputVal("");
-      setDisplayName("");
-      toast.success("Đã thêm kênh vào nhóm " + group.name);
+      // 2) Nguồn (Source) theo nền tảng + quốc gia: tìm sẵn hoặc tạo — giữ nguyên cách lưu cũ
+      const sources = await resourcesApi.listSources();
+      const source = sources.items.find((s) => s.platform === platform && s.default_country === country)
+        ?? await resourcesApi.createSource({
+          name: `${platformLabel(platform, names)} · ${country}`, platform, default_country: country,
+        });
+
+      // 3) Mỗi dòng = một kênh: gắn nền tảng đã chọn + quốc gia để map đúng nhóm. Link trùng / đã có thì bỏ qua và báo.
+      const knownRefs = new Set(existing.map((r) => r.input_ref.trim().toLowerCase()));
+      const knownIds = new Set(existing.map((r) => r.id));
+      const unique: string[] = [];
+      const skipped: string[] = [];
+      for (const line of lines) {
+        const key = line.toLowerCase();
+        if (knownRefs.has(key)) { skipped.push(line); continue; }
+        knownRefs.add(key);
+        unique.push(line);
+      }
+      const created: ManagedResource[] = [];
+      const failed: string[] = [];
+      for (let i = 0; i < unique.length; i += CONCURRENCY) {
+        await Promise.all(unique.slice(i, i + CONCURRENCY).map(async (line) => {
+          try {
+            const r = await resourcesApi.createResource({
+              source_instance_id: source.id, platform, input_ref: line, country,
+            });
+            if (knownIds.has(r.id)) skipped.push(line);   // server nhận ra kênh đã có (cùng danh tính) => không nhân đôi
+            else { knownIds.add(r.id); created.push(r); }
+          } catch {
+            failed.push(line);
+          }
+        }));
+      }
+      if (created.length) onAdded(created);
+      setLinks(failed.join("\n"));          // chỉ giữ lại các dòng lỗi để thử lại
+      setCountryId(group.id);
+      setNewName("");
+      const extra = [
+        skipped.length ? `bỏ qua ${skipped.length} link đã có/trùng` : "",
+        failed.length ? `${failed.length} link lỗi (giữ lại trong ô để thử lại)` : "",
+      ].filter(Boolean).join("; ");
+      if (created.length) toast.success(`Đã thêm ${created.length} kênh vào ${country}${extra ? " — " + extra : ""}.`);
+      else toast.warning(`Không thêm kênh nào${extra ? " — " + extra : ""}.`);
     } catch (e) {
       toast.error(errorMessage(e, "Không thêm được kênh. Hãy thử lại."));
     } finally {
@@ -132,48 +164,86 @@ function AddChannelForm({
     }
   };
 
+  if (platforms.length === 0) {
+    return (
+      <Notice tone="info">
+        Chưa có nền tảng nào được bật. Quản trị viên cần tạo/bật nền tảng ở trang "Nền tảng" trước khi thêm kênh.
+      </Notice>
+    );
+  }
+
   return (
     <form
-      className="mt-4 grid gap-3 rounded-lg border border-dashed border-border p-4 sm:grid-cols-[1fr_1fr_auto]"
+      className="grid max-w-3xl gap-4"
       onSubmit={(e) => { e.preventDefault(); void handleAdd(); }}
     >
-      <Field label="Nền tảng">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Nền tảng" hint="Bắt buộc — dashboard dùng đúng nền tảng này để tính số liệu.">
+          {(p) => (
+            <Select value={platform} onValueChange={setPlatform}>
+              <SelectTrigger {...p}><SelectValue placeholder="Chọn nền tảng" /></SelectTrigger>
+              <SelectContent>
+                {platforms.map((pl) => (
+                  <SelectItem key={pl} value={pl}>
+                    {platformEmoji(pl)} {platformLabel(pl, names)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </Field>
+        <Field label="Quốc gia" hint="Chọn quốc gia của bạn hoặc tạo mới ngay tại đây.">
+          {(p) => (
+            <Select value={countryId} onValueChange={setCountryId}>
+              <SelectTrigger {...p}><SelectValue placeholder="Chọn quốc gia" /></SelectTrigger>
+              <SelectContent>
+                {groups.map((g) => (
+                  <SelectItem key={g.id} value={g.id}>
+                    {g.name}{g.country_code ? ` (${g.country_code})` : ""}
+                  </SelectItem>
+                ))}
+                <SelectItem value={NEW_COUNTRY}>+ Tạo quốc gia mới…</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        </Field>
+      </div>
+
+      {creatingCountry && (
+        <div className="rounded-lg border border-dashed border-border p-4">
+          <Field label="Tên quốc gia mới" hint="Gõ tên theo cách bạn muốn. Quản trị viên sẽ chuẩn hóa cách viết sau.">
+            {(p) => (
+              <Input
+                {...p}
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Nigeria"
+                maxLength={100}
+              />
+            )}
+          </Field>
+        </div>
+      )}
+
+      <Field
+        label="Link kênh"
+        hint={`Mỗi dòng một link hoặc @username (tối đa ${MAX_LINKS}). Đang có ${lines.length} link.`}
+      >
         {(p) => (
-          <Select value={platform} onValueChange={setPlatform}>
-            <SelectTrigger {...p}><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {platforms.map((pl) => (
-                <SelectItem key={pl} value={pl}>
-                  {PLATFORM_EMOJI[pl] ?? ""} {PLATFORM_LABEL[pl] ?? pl}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </Field>
-      <Field label="Username hoặc link kênh" hint="Ví dụ: @mykênh hoặc https://fb.com/page">
-        {(p) => (
-          <Input
+          <textarea
             {...p}
-            value={inputVal}
-            onChange={(e) => setInputVal(e.target.value)}
-            placeholder="@username hoặc link"
+            value={links}
+            onChange={(e) => setLinks(e.target.value)}
+            rows={6}
+            placeholder={"https://www.tiktok.com/@kenh1\nhttps://www.tiktok.com/@kenh2"}
+            className="w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm"
           />
         )}
       </Field>
-      <Field label="Tên hiển thị" optional>
-        {(p) => (
-          <Input
-            {...p}
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Tên dễ nhớ (tùy chọn)"
-          />
-        )}
-      </Field>
-      <div className="flex items-end sm:col-span-3">
-        <Button type="submit" disabled={saving || !inputVal.trim()} size="sm">
-          <Plus aria-hidden /> {saving ? "Đang thêm…" : "Thêm kênh"}
+
+      <div>
+        <Button type="submit" disabled={!canSubmit}>
+          <Plus aria-hidden /> {saving ? "Đang thêm…" : `Thêm ${lines.length > 1 ? `${lines.length} kênh` : "kênh"}`}
         </Button>
       </div>
     </form>
@@ -183,36 +253,34 @@ function AddChannelForm({
 // ── GroupSection (accordion item) ─────────────────────────────────────────────
 
 function GroupSection({
-  group, platforms, resources,
-  onRename, onDelete, onChannelAdded, onChannelDeleted, onChannelModeChanged,
+  group, names, resources,
+  onRename, onDelete, onChannelDeleted, onChannelModeChanged,
 }: {
   group: ChannelGroup;
-  platforms: string[];
+  names: PlatformNameMap;
   resources: ManagedResource[];
   onRename: (id: string, name: string, code: string) => void;
   onDelete: (id: string) => void;
-  onChannelAdded: (r: ManagedResource) => void;
   onChannelDeleted: (id: string) => void;
   onChannelModeChanged: (id: string, mode: string) => void;
 }) {
   const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(group.name);
-  const [editCode, setEditCode] = useState(group.country_code);
   const [renaming, setRenaming] = useState(false);
   const [deletingChannelId, setDeletingChannelId] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const channels = resources.filter((r) => r.country === group.name);
 
   const handleRename = async () => {
-    if (!editName.trim() || (editName === group.name && editCode === group.country_code)) {
+    if (!editName.trim() || editName.trim() === group.name) {
       setEditing(false);
       return;
     }
     setRenaming(true);
     try {
-      await channelGroupsApi.update(group.id, { name: editName.trim(), country_code: editCode.trim() });
-      onRename(group.id, editName.trim(), editCode.trim());
+      await channelGroupsApi.update(group.id, { name: editName.trim() });
+      onRename(group.id, editName.trim(), group.country_code);
       setEditing(false);
       toast.success("Đã cập nhật tên nhóm");
     } catch (e) {
@@ -280,14 +348,6 @@ function GroupSection({
                 placeholder="Tên nhóm"
                 onKeyDown={(e) => { if (e.key === "Enter") void handleRename(); if (e.key === "Escape") setEditing(false); }}
               />
-              <Input
-                value={editCode}
-                onChange={(e) => setEditCode(e.target.value.toUpperCase().slice(0, 10))}
-                className="h-7 w-16 px-2 py-0 font-mono text-sm"
-                placeholder="VN"
-                maxLength={10}
-                onKeyDown={(e) => { if (e.key === "Enter") void handleRename(); }}
-              />
             </span>
           ) : (
             <span className="flex items-center gap-2">
@@ -311,7 +371,7 @@ function GroupSection({
             <Button variant="outline" size="sm" onClick={handleRename} disabled={renaming}>
               <Save aria-hidden className="size-4" /> {renaming ? "Đang lưu…" : "Lưu"}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => { setEditing(false); setEditName(group.name); setEditCode(group.country_code); }}>
+            <Button variant="outline" size="sm" onClick={() => { setEditing(false); setEditName(group.name); }}>
               <X aria-hidden className="size-4" />
             </Button>
           </span>
@@ -340,13 +400,13 @@ function GroupSection({
                 const label = r.display_name || r.username || r.input_ref;
                 return (
                   <li key={r.id} className="flex min-h-12 items-center gap-3 py-2">
-                    <span className="text-lg" aria-label={PLATFORM_LABEL[r.platform] ?? r.platform}>
-                      {PLATFORM_EMOJI[r.platform] ?? "🔗"}
+                    <span className="text-lg" aria-label={platformLabel(r.platform, names)}>
+                      {platformEmoji(r.platform)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{label}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {PLATFORM_LABEL[r.platform] ?? r.platform}
+                        {platformLabel(r.platform, names)}
                         {r.username ? ` · @${r.username}` : ""}
                         {r.url ? ` · ${r.url}` : ""}
                       </p>
@@ -369,7 +429,6 @@ function GroupSection({
               })}
             </ul>
           )}
-          <AddChannelForm group={group} platforms={platforms} onAdded={onChannelAdded} />
         </div>
       )}
     </div>
@@ -381,13 +440,13 @@ function GroupSection({
 export default function ChannelsPage() {
   const [groups, setGroups] = useState<ChannelGroup[]>([]);
   const [resources, setResources] = useState<ManagedResource[]>([]);
-  const [platforms, setPlatforms] = useState<string[]>(["youtube", "tiktok", "facebook"]);
+  const [platforms, setPlatforms] = useState<string[]>([]);
+  const [platformNames, setPlatformNames] = useState<PlatformNameMap>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Tạo nhóm mới
   const [newName, setNewName] = useState("");
-  const [newCode, setNewCode] = useState("");
   const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
@@ -400,8 +459,10 @@ export default function ChannelsPage() {
       ]);
       setGroups(grps);
       setResources(res);
-      const names = plat.items.map((p) => p.platform);
-      if (names.length) setPlatforms(names);
+      const nameMap: PlatformNameMap = {};
+      for (const p of plat.items) nameMap[p.platform] = p.display_name || p.platform;
+      setPlatformNames(nameMap);
+      setPlatforms(plat.items.map((p) => p.platform));
       setLoadError(null);
     } catch (e) {
       setLoadError(errorMessage(e, "Không tải được dữ liệu. Kiểm tra mạng rồi thử lại."));
@@ -416,10 +477,9 @@ export default function ChannelsPage() {
     if (!newName.trim()) return;
     setCreating(true);
     try {
-      const group = await channelGroupsApi.create(newName.trim(), newCode.trim().toUpperCase());
+      const group = await channelGroupsApi.create(newName.trim());
       setGroups((prev) => [...prev, group]);
       setNewName("");
-      setNewCode("");
       toast.success(`Đã tạo nhóm "${group.name}"`);
     } catch (e) {
       toast.error(errorMessage(e, "Không tạo được nhóm. Tên có thể đã tồn tại."));
@@ -442,8 +502,12 @@ export default function ChannelsPage() {
     setGroups((prev) => prev.filter((g) => g.id !== id));
   };
 
-  const handleChannelAdded = (r: ManagedResource) => {
-    setResources((prev) => [r, ...prev]);
+  const handleGroupCreated = (group: ChannelGroup) => {
+    setGroups((prev) => (prev.some((g) => g.id === group.id) ? prev : [...prev, group]));
+  };
+
+  const handleChannelsAdded = (list: ManagedResource[]) => {
+    setResources((prev) => [...list, ...prev]);
   };
 
   const handleChannelDeleted = (id: string) => {
@@ -462,44 +526,27 @@ export default function ChannelsPage() {
     <div>
       <PageHeader
         title="Kênh của tôi"
-        description="Gom kênh YouTube, TikTok, Facebook theo từng nhóm quốc gia. Tool dự phòng sẽ tự kéo dữ liệu về."
+        description="Gom kênh theo từng nhóm quốc gia. Tool dự phòng sẽ tự kéo dữ liệu về."
       />
 
       {/* Tạo nhóm mới */}
       <Section
         title="Tạo nhóm quốc gia"
-        description="Ví dụ: Nigeria (NG), Việt Nam (VN), Philippines (PH)."
+        description="Gõ tên quốc gia theo cách bạn muốn, ví dụ: Nigeria, Việt Nam. Quản trị viên sẽ chuẩn hóa cách viết sau."
       >
         <form
           className="flex max-w-xl flex-wrap items-end gap-3"
           onSubmit={(e) => { e.preventDefault(); void handleCreateGroup(); }}
         >
-          <Field label="Tên quốc gia" hint="Dùng để nhóm kênh. Ví dụ: Nigeria.">
+          <Field label="Tên quốc gia" hint="Dùng để nhóm kênh. Tự do nhập, không cần chọn từ danh sách.">
             {(p) => (
               <Input
                 {...p}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="Nigeria"
-                list="country-suggestions"
-                className="w-44"
-              />
-            )}
-          </Field>
-          <datalist id="country-suggestions">
-            {COMMON_COUNTRIES.map(([code, name]) => (
-              <option key={code} value={name} />
-            ))}
-          </datalist>
-          <Field label="Mã ISO" optional hint="2 ký tự. Ví dụ: NG">
-            {(p) => (
-              <Input
-                {...p}
-                value={newCode}
-                onChange={(e) => setNewCode(e.target.value.toUpperCase().slice(0, 10))}
-                placeholder="NG"
-                maxLength={10}
-                className="w-20 font-mono"
+                maxLength={100}
+                className="w-64"
               />
             )}
           </Field>
@@ -507,6 +554,21 @@ export default function ChannelsPage() {
             <Plus aria-hidden /> {creating ? "Đang tạo…" : "Tạo nhóm"}
           </Button>
         </form>
+      </Section>
+
+      {/* Thêm kênh: chọn Nền tảng + Quốc gia rồi dán nhiều link (mỗi dòng một link) */}
+      <Section
+        title="Thêm kênh"
+        description="Chọn nền tảng và quốc gia, rồi dán link kênh — mỗi dòng một link, thêm được nhiều kênh cùng lúc."
+      >
+        <AddChannelsForm
+          groups={groups}
+          platforms={platforms}
+          names={platformNames}
+          existing={resources}
+          onGroupCreated={handleGroupCreated}
+          onAdded={handleChannelsAdded}
+        />
       </Section>
 
       {/* Danh sách nhóm */}
@@ -524,11 +586,10 @@ export default function ChannelsPage() {
               <GroupSection
                 key={g.id}
                 group={g}
-                platforms={platforms}
+                names={platformNames}
                 resources={resources}
                 onRename={handleRename}
                 onDelete={handleDeleteGroup}
-                onChannelAdded={handleChannelAdded}
                 onChannelDeleted={handleChannelDeleted}
                 onChannelModeChanged={handleChannelModeChanged}
               />
@@ -546,11 +607,11 @@ export default function ChannelsPage() {
               const label = r.display_name || r.username || r.input_ref;
               return (
                 <li key={r.id} className="flex items-center gap-3 py-3">
-                  <span className="text-lg">{PLATFORM_EMOJI[r.platform] ?? "🔗"}</span>
+                  <span className="text-lg">{platformEmoji(r.platform)}</span>
                   <div className="min-w-0 flex-1">
                     <p className="font-medium">{label}</p>
                     <p className="text-xs text-muted-foreground">
-                      {PLATFORM_LABEL[r.platform] ?? r.platform}
+                      {platformLabel(r.platform, platformNames)}
                       {r.country ? ` · ${r.country}` : ""}
                     </p>
                   </div>

@@ -51,7 +51,7 @@ from integration_service import migrate as integration_migrate  # noqa: E402
 from integration_service.app import create_app as create_integration_app  # noqa: E402
 from integration_service.db import Database as IntegrationDb  # noqa: E402
 
-KINDS = ("projects", "resources", "content", "metrics", "events")
+KINDS = ("resources", "content", "metrics", "events")
 
 
 class IntegrationOverAsgi:
@@ -165,19 +165,17 @@ def evt(ext, resource, date, kind="post_ok", **kw):
 
 
 async def seed(tool):
-    """Dữ liệu đa dạng: chủ đề, hai resource_type cùng external_id, null ≠ 0, số 0, sự kiện trùng id trên hai kênh."""
-    await tool.put("/v1/integrations/projects/itl", {"name": "ITL", "country_code": "BR"})
+    """Dữ liệu đa dạng: hai resource_type cùng external_id, null ≠ 0, số 0, sự kiện trùng id trên hai kênh."""
     await ingest(
         tool, obs=0,
-        resources=[res("r1", display_name="One", country={"code": "BR", "name": "Brazil"}, managed=True,
-                       projects=[{"project_key": "itl", "enabled": True}]),
+        resources=[res("r1", display_name="One", country={"code": "BR", "name": "Brazil"}, managed=True),
                    res("r2", display_name="Two"),
                    res("dup", "page", display_name="Dup page"), res("dup", "profile", display_name="Dup profile")],
         content=[post("p1", "r1", "2026-10-01", views=100, reactions=None, comments=2),
                  post("p2", "r1", "2026-10-02", views=0, reactions=0, comments=0),
                  post("p1", "r2", "2026-10-03", views=7)],
         metrics=[daily("r1", "2026-10-01", views=40), daily("r2", "2026-10-01", views=0)],
-        events=[evt("e1", "r1", "2026-10-01", project_key="itl"), evt("e1", "r2", "2026-10-02"),
+        events=[evt("e1", "r1", "2026-10-01"), evt("e1", "r2", "2026-10-02"),
                 evt("e2", "r1", "2026-10-02", kind="post_fail")])
 
 
@@ -210,12 +208,11 @@ async def test_reconcile_stays_ok_through_removed_and_updates(stack):
     await world.sync()
     # snapshot full mới: 'r2', 'dup/profile' và bài p2 vắng mặt => removed; r1/p1 đổi số liệu
     await ingest(tool, obs=10,
-                 resources=[res("r1", obs=10, display_name="One", managed=True, country={"code": "BR", "name": "Brazil"},
-                                projects=[{"project_key": "itl", "enabled": True}]),
+                 resources=[res("r1", obs=10, display_name="One", managed=True, country={"code": "BR", "name": "Brazil"}),
                             res("dup", "page", obs=10, display_name="Dup page")],
                  content=[post("p1", "r1", "2026-10-01", obs=10, views=250, reactions=3, comments=2)],
                  metrics=[daily("r1", "2026-10-01", obs=10, views=55)],
-                 events=[evt("e1", "r1", "2026-10-01", project_key="itl")])
+                 events=[evt("e1", "r1", "2026-10-01")])
     await world.sync()
     assert_reconciled(await world.consumer.reconcile())
     removed = await world.fetch("SELECT count(*) AS n FROM read_resources WHERE removed")

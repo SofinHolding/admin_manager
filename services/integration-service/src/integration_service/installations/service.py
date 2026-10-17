@@ -62,7 +62,8 @@ class InstallationService:
                              status_code=400)
         enabled = await registry.enabled_platforms(conn)
         usable = set(ctx.allowed_platforms) & enabled
-        denied = sorted(set(body.platforms) - usable)
+        declared = await registry.resolve_many(conn, list(body.platforms))   # mã Tool khai (chính/phụ) -> mã chính
+        denied = sorted(set(declared) - usable)
         if denied:
             raise forbidden(ErrorCode.PLATFORM_NOT_ALLOWED, "Platform không nằm trong phạm vi client được phép",
                             {"platforms": denied[:10]})
@@ -84,6 +85,6 @@ class InstallationService:
         return {"client_id": ctx.client_id, "installation_id": installation["id"],
                 "installation_created": created, "owner_account_id": ctx.owner_account_id,
                 "accepted_contract_version": CONTRACT_VERSION,
-                "allowed_platforms": sorted(set(body.platforms) or usable),
+                "allowed_platforms": sorted(set(declared) or usable),
                 "allowed_scopes": sorted(ctx.scopes), "allowed_capabilities": sorted(allowed_caps),
                 "accepted_capabilities": accepted, "server_time": self._now()}

@@ -92,11 +92,6 @@ class Country(_Strict):
     name: Annotated[str, StringConstraints(max_length=100)] = None
 
 
-class ProjectRef(_Strict):
-    project_key: Key
-    enabled: StrictBool
-
-
 class ResourceItem(_Strict):
     external_id: ExternalId
     resource_type: Key
@@ -107,7 +102,6 @@ class ResourceItem(_Strict):
     state: Literal["active", "disabled"] = "active"
     managed: StrictBool = None
     active: StrictBool = None
-    projects: list[ProjectRef] = Field(default=None, max_length=100)
     observed_at: Timestamp
     extensions: Extensions = None
 
@@ -138,7 +132,6 @@ class EventItem(_Strict):
     kind: Key
     occurred_date: DateStr
     occurred_at: Timestamp = None
-    project_key: Key = None
     extensions: Extensions = None
 
 
@@ -147,15 +140,11 @@ class ResourceUpsertItem(ResourceItem):
     platform: Key
     observed_at: Timestamp = None
     country_code: Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")] = None
-    project_key: Key = None
-    enabled: StrictBool = None
 
     @model_validator(mode="after")
     def _fold_convenience_fields(self) -> "ResourceUpsertItem":
         if self.country_code and self.country is None:
             self.country = Country(code=self.country_code)
-        if self.project_key and self.projects is None:
-            self.projects = [ProjectRef(project_key=self.project_key, enabled=True if self.enabled is None else self.enabled)]
         return self
 
 

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ResourcesPage from "./ResourcesPage";
 import GroupsPage from "./GroupsPage";
+import { AuthContext, type AuthCtx, type User } from "../auth";
 import { clearTokens } from "../auth/tokenStore";
 import { __resetHttpForTests } from "../lib/http";
 import { installFetch, jsonResponse, type Responder } from "../test/helpers";
@@ -72,13 +73,22 @@ describe("ResourcesPage — Kênh và nguồn", () => {
 });
 
 describe("GroupsPage — Nhóm kênh", () => {
+  const viewer: User = { id: "u1", username: "vi", email: "v@x", role: "viewer", perms: [] };
+  const authValue: AuthCtx = {
+    user: viewer, loading: false, mode: "password", sessionExpired: false, sessionReason: "expired",
+    showWarning: false, warningSeconds: 300, login: vi.fn(), loginWithOidc: vi.fn(), completeOidcLogin: vi.fn(),
+    logout: vi.fn(), continueSession: vi.fn(), dismissExpired: vi.fn(), hasPerm: () => true,
+  };
+  const renderGroups = () => render(
+    <MemoryRouter><AuthContext.Provider value={authValue}><GroupsPage /></AuthContext.Provider></MemoryRouter>,
+  );
   const empty: Responder[] = [
     (c) => c.method === "GET" && c.path === "/v1/analytics/groups" ? jsonResponse({ items: [] }) : undefined,
   ];
 
   it("chưa có nhóm: giải thích lợi ích và hướng dẫn tạo nhóm đầu tiên", async () => {
     installFetch(...empty);
-    render(<MemoryRouter><GroupsPage /></MemoryRouter>);
+    renderGroups();
     expect(await screen.findByText("Bạn chưa có nhóm kênh nào")).toBeInTheDocument();
     expect(document.body.textContent).toContain("Gom nhiều kênh thành một nhóm để xem tổng riêng và so sánh");
   });
@@ -89,7 +99,7 @@ describe("GroupsPage — Nhóm kênh", () => {
         ? jsonResponse({ id: "g1", account_id: "u1", name: "Kênh chính", created_at: "", updated_at: "", members: [] }) : undefined,
       ...empty,
     );
-    render(<MemoryRouter><GroupsPage /></MemoryRouter>);
+    renderGroups();
     const user = userEvent.setup();
     await screen.findByText("Bạn chưa có nhóm kênh nào");
     await user.type(screen.getAllByLabelText("Tên nhóm")[0], "Kênh chính");
@@ -98,12 +108,12 @@ describe("GroupsPage — Nhóm kênh", () => {
     expect(await screen.findByText("Nhóm này chưa có kênh nào. Chọn kênh ở bên dưới để thêm vào.")).toBeInTheDocument();
   });
 
-  it("quốc gia ghi đè được mô tả bằng lời", async () => {
+  it("quốc gia ghi đè được mô tả bằng lời; KHÔNG còn hiện nhãn nền tảng tự do", async () => {
     installFetch((c) => c.method === "GET" && c.path === "/v1/analytics/groups"
       ? jsonResponse({ items: [{ id: "g1", account_id: "u1", name: "N1", created_at: "", updated_at: "",
         members: [{ channel_ref: "ch1", platform_tag: "tiktok", country_override: "Nigeria" }] }] }) : undefined);
-    render(<MemoryRouter><GroupsPage /></MemoryRouter>);
+    renderGroups();
     expect(await screen.findByText("Tính vào quốc gia: Nigeria")).toBeInTheDocument();
-    expect(screen.getByText("Nhãn nền tảng: tiktok")).toBeInTheDocument();
+    expect(screen.queryByText(/Nhãn nền tảng/)).not.toBeInTheDocument();
   });
 });

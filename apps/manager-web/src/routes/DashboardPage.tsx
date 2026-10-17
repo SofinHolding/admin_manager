@@ -525,19 +525,6 @@ function ChannelKpiCard({ breakdown, loading, country }: {
                 </span>
                 <span className="font-medium tabular-nums">{fmtNum(a)} / {fmtNum(m)}</span>
               </div>
-              {!country && p.by_group && p.by_group.length > 1 && (
-                <details className="mt-0.5 ml-2">
-                  <summary className="cursor-pointer text-muted-foreground/80">
-                    {p.by_group.length} chủ đề
-                  </summary>
-                  {p.by_group.map((g) => (
-                    <div key={g.group} className="flex items-center justify-between pl-2 text-muted-foreground">
-                      <span>{g.group}</span>
-                      <span className="tabular-nums">{fmtNum(g.active)} / {fmtNum(g.managed)}</span>
-                    </div>
-                  ))}
-                </details>
-              )}
             </div>
           );
         })}

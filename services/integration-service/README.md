@@ -36,7 +36,7 @@ Cổng duy nhất cho Tool/hệ thống ngoài: client, credential, resource, sn
 | Mặt phẳng | Credential | Endpoint |
 |---|---|---|
 | USER | access token RS256 (Identity ký, verify offline bằng JWKS) | `/v1/integrations/clients*`, `/me/*`, `/audit`, `/admin/*` |
-| MÁY | API key `mpk_<key_id>.<secret>` + scope + platform, bind 1 thiết bị (`X-Installation-Id` ngoài handshake) | `/v1/integrations/handshake`, `/projects/*`, `/resources/batch`, `/snapshots*`, `/jobs/*` |
+| MÁY | API key `mpk_<key_id>.<secret>` + scope + platform, bind 1 thiết bị (`X-Installation-Id` ngoài handshake) | `/v1/integrations/handshake`, `/platforms`, `/resources/batch`, `/snapshots*`, `/jobs/*` |
 | NỘI BỘ | `X-Service-Key` (mỗi bên đọc một khoá) | `/internal/v1/feed`, `/internal/v1/canonical/*` (không qua gateway, không nằm trong OpenAPI) |
 
 Token user không dùng được ở endpoint máy và ngược lại; service key không gọi được API công khai.
@@ -62,7 +62,8 @@ Token user không dùng được ở endpoint máy và ngược lại; service k
 |---|---|---|
 | `POST /v1/integrations/jobs` | USER (chủ resource; admin/dash_admin: mọi resource) | resource phải `execution_mode=fallback_tool`; owner = chủ resource (body không nhận `owner_*`); `dedupe_key` chống tạo trùng |
 | `GET /v1/integrations/jobs`, `GET /{id}`, `POST /{id}/cancel` | USER | user thường chỉ thấy/huỷ job của mình |
-| `POST /v1/integrations/jobs/claim` | MÁY `jobs:claim` | body `installation_id, platforms, capabilities, limit≤50, lease_seconds≤900` → `{jobs:[...], server_time}` |
+| `POST /v1/integrations/jobs/claim` | MÁY `jobs:claim` | body `installation_id, platforms, capabilities, limit≤50, lease_seconds≤900, resource_ids?` → `{jobs:[...], server_time}` |
+| `POST /v1/integrations/jobs/enqueue` | MÁY `jobs:claim:system` + `fallback_tool` | body `resource_ids` (1..200) → `{created, already_active, skipped:[{resource_id, reason}]}`; tạo job `collect` cho kênh đã kéo, owner dữ liệu = chủ kênh |
 | `POST /{id}/heartbeat` | MÁY `jobs:claim` | gia hạn lease của chính mình |
 | `POST /{id}/complete`, `POST /{id}/fail` | MÁY `jobs:complete` | `Idempotency-Key`; complete/fail lặp lại trả `replayed=true` |
 

@@ -17,7 +17,7 @@ import hashlib
 import json
 import logging
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -129,7 +129,7 @@ class IntegrationClient:
         except ValueError:
             return IntegrationError(r.status_code, "SERVER_ERROR", f"HTTP {r.status_code}")
 
-    # ── Handshake / project / resources ─────────────────────────────────────────
+    # ── Handshake / platforms / resources ───────────────────────────────────────
 
     async def handshake(self, *, device_id: str, hostname: str, os_name: str, app_version: str, tool_name: str,
                         platforms: list[str], capabilities: list[str]) -> dict:
@@ -142,13 +142,10 @@ class IntegrationClient:
             self.installation_id = data["installation_id"]  # mọi request SAU đây tự gửi X-Installation-Id
         return data
 
-    async def put_project(self, project_key: str, *, name: str, platform: str, country_code: str | None = None,
-                          enabled: bool = True, metadata: dict | None = None) -> dict:
-        body = {"name": name, "platform": platform, "enabled": enabled, "metadata": metadata or {}}
-        if country_code:
-            body["country_code"] = country_code
-        return await self._request("PUT", f"/v1/integrations/projects/{project_key}", json_body=body,
-                                   idempotency_key=_stable_key("project", project_key, body))
+    async def platforms(self) -> list[dict]:
+        """Nền tảng + mã client này được gửi (`key`, `aliases`, `codes`). Mọi snapshot/resource PHẢI kèm `platform` = một mã
+        trong `codes`; server chuẩn hoá về `key` để Dashboard gom đúng nền tảng."""
+        return await self._request("GET", "/v1/integrations/platforms")
 
     async def resources_batch(self, items: Sequence[dict]) -> list[dict]:
         out = []
@@ -217,6 +214,27 @@ class IntegrationClient:
         if events:
             await self.add_events(sid, events)
         return await self.commit(sid, accept_partial=accept_partial)
+
+    async def push_by_platform(self, data_by_platform: Mapping[str, Mapping[str, Sequence[dict]]], *,
+                               observed_at: datetime | str, report_timezone: str, snapshot_type: str = "full",
+                               accept_partial: bool = False) -> dict[str, dict]:
+        """Tool có dữ liệu của NHIỀU nền tảng: MỖI nền tảng một snapshot riêng, kèm đúng mã nền tảng của dữ liệu đó.
+
+        `data_by_platform = {"<mã nền tảng>": {"resources": [...], "content": [...], "metrics": [...], "events": [...]}}`
+        (mã lấy từ `platforms()` → `codes`). Trả `{mã: kết quả commit}`. Mã sai ⇒ server từ chối `PLATFORM_NOT_ALLOWED` và
+        KHÔNG lưu gì cho mã đó; dừng ở nền tảng lỗi đầu tiên (nền tảng đã commit trước đó giữ nguyên)."""
+        out: dict[str, dict] = {}
+        for platform, data in data_by_platform.items():
+            unknown = set(data) - {"resources", "content", "metrics", "events"}
+            if unknown:
+                raise ValueError(f"loại dữ liệu lạ cho {platform}: {sorted(unknown)}")
+            if not any(data.get(k) for k in ("resources", "content", "metrics", "events")):
+                continue
+            out[platform] = await self.push_snapshot(
+                platform=platform, observed_at=observed_at, report_timezone=report_timezone, snapshot_type=snapshot_type,
+                resources=data.get("resources", ()), content=data.get("content", ()), metrics=data.get("metrics", ()),
+                events=data.get("events", ()), accept_partial=accept_partial)
+        return out
 
     # ── Jobs (Fallback Tool) ────────────────────────────────────────────────────
 

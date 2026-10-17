@@ -20,10 +20,6 @@
         "display_name": "Trang mẫu A",
         "country": { "code": "BR", "name": "Brazil" },
         "state": "active",
-        "projects": [
-          { "project_key": "chu_de_1", "enabled": true },
-          { "project_key": "chu_de_2", "enabled": false }
-        ],
         "observed_at": "2026-10-05T06:55:00Z"
       },
       {
@@ -32,7 +28,6 @@
         "display_name": "Trang mẫu B",
         "country": { "name": "brazil" },
         "state": "active",
-        "projects": [],
         "observed_at": "2026-10-05T06:55:00Z"
       }
     ]
@@ -62,15 +57,13 @@
         "resource_external_id": "100000000000001",
         "kind": "post_ok",
         "occurred_date": "2026-10-04",
-        "occurred_at": "2026-10-04T13:20:11Z",
-        "project_key": "chu_de_1"
+        "occurred_at": "2026-10-04T13:20:11Z"
       },
       {
         "external_id": "evt_0002",
         "resource_external_id": "100000000000001",
         "kind": "post_ok",
-        "occurred_date": "2026-10-05",
-        "project_key": "chu_de_1"
+        "occurred_date": "2026-10-05"
       }
     ]
   },

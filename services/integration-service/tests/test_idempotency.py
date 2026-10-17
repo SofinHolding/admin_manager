@@ -38,7 +38,7 @@ async def test_same_key_same_body_replays_exact_response_without_second_write(en
     assert await env.scalar("SELECT count(*) FROM snapshots") == 1
 
 
-async def test_replay_does_not_write_again_for_batches_projects_and_commit(env):
+async def test_replay_does_not_write_again_for_batches_and_commit(env):
     tool = await env.tool()
     body = {"items": [{"platform": "facebook", "resource_type": "page", "external_id": "r1", "observed_at": ts()}]}
     k = key()
@@ -48,11 +48,6 @@ async def test_replay_does_not_write_again_for_batches_projects_and_commit(env):
     assert b.content == a.content and a.json()["data"]["created"] == 1       # replay vẫn nói "created=1", không phải "unchanged"
     assert await head(env) == h1
     assert await env.scalar("SELECT count(*) FROM outbox WHERE type = 'resource.changed'") == 1
-
-    pk = key()
-    p1 = await tool.put("/v1/integrations/projects/itl", {"name": "A"}, idem=pk)
-    p2 = await tool.put("/v1/integrations/projects/itl", {"name": "A"}, idem=pk)
-    assert p2.content == p1.content and p1.json()["data"]["created"] is True       # lần 2 thật sự sẽ là created=False
 
     sid = await new_snapshot(tool, type="delta", idem=key())
     bk = key()

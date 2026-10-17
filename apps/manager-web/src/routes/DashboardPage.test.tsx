@@ -25,7 +25,7 @@ interface Opts {
 
 function echoFilter(c: FetchCall) {
   const f: Record<string, string> = {};
-  for (const k of ["date_from", "date_to", "owner_account_id", "platform", "country", "project", "group_id", "platform_tag"]) {
+  for (const k of ["date_from", "date_to", "owner_account_id", "platform", "country", "group_id", "platform_tag"]) {
     const v = c.params.get(k);
     if (v) f[k] = v;
   }
@@ -98,17 +98,17 @@ function renderDashboard(url: string, user: User = adminUser) {
   );
 }
 
-const FULL = "/dashboard?date_from=2026-09-01&date_to=2026-09-30&owner_account_id=u1&platform=youtube&country=Vietnam&project=p1&group_id=g1&platform_tag=tiktok";
+const FULL = "/dashboard?date_from=2026-09-01&date_to=2026-09-30&owner_account_id=u1&platform=youtube&country=Vietnam&group_id=g1&platform_tag=tiktok";
 const FULL_PARAMS = {
   date_from: "2026-09-01", date_to: "2026-09-30", owner_account_id: "u1", platform: "youtube",
-  country: "Vietnam", project: "p1", group_id: "g1", platform_tag: "tiktok",
+  country: "Vietnam", group_id: "g1", platform_tag: "tiktok",
 };
 
 const waitAllData = (f: ReturnType<typeof installFetch>, n = 1) =>
   waitFor(() => { for (const e of DATA_ENDPOINTS) expect(f.byPath(at(e)).length).toBeGreaterThanOrEqual(n); });
 
 describe("Dashboard — MỌI KPI/biểu đồ dùng CÙNG MỘT Filter Context", () => {
-  it("5 endpoint dữ liệu gửi CHÍNH XÁC cùng bộ tham số (đủ 8 tham số chuẩn)", async () => {
+  it("5 endpoint dữ liệu gửi CHÍNH XÁC cùng bộ tham số (đủ 7 tham số chuẩn)", async () => {
     const f = installFetch(analytics());
     renderDashboard(FULL);
     await waitAllData(f);
@@ -339,6 +339,25 @@ describe("Dashboard — so sánh quốc gia chỉ ở biểu đồ RIÊNG", () =
     for (const d of ["platform", "owner", "channel", "group"]) {
       expect(dataParams(f.byPath(at(`compare/${d}`))[0])).toEqual(FULL_PARAMS);
     }
+  });
+
+  it("tên quốc gia CHƯA chuẩn hoá (người dùng tự gõ) hiện đủ, nguyên văn, kể cả khi nhiều và trùng chữ khác hoa/thường", async () => {
+    const names = ["Vietnam", "vietnam", "U.S.A.", "Xứ Sở Tự Đặt", "Khác", ...Array.from({ length: 12 }, (_, i) => `Tự đặt ${i + 1}`)];
+    const totals = Object.fromEntries(names.map((n, i) => [n, 100 + i]));
+    const f = installFetch(
+      (c) => c.path === at("views-by-country")
+        ? jsonResponse({ countries: names, days: [{ date: "2026-09-06", ...totals }], totals, filter: {}, freshness: FRESH })
+        : c.path === at("country-tags") ? jsonResponse({ items: names.filter((n) => n !== "Khác").map((n) => ({ id: n, name: n })) })
+        : undefined,
+      analytics(),
+    );
+    renderDashboard("/dashboard");
+    await waitAllData(f);
+    expect(await screen.findByText("So sánh quốc gia")).toBeInTheDocument();
+    for (const n of names) {
+      expect(await screen.findByTitle(n)).toBeInTheDocument();        // mỗi quốc gia một hàng, không bị cắt top-N
+    }
+    expect(screen.getByTitle("Xứ Sở Tự Đặt").nextElementSibling?.nextElementSibling).toHaveTextContent("103");
   });
 
   it("viewer không có thẻ so sánh nhân sự", async () => {

@@ -22,7 +22,7 @@ def principal(sub=A, role="viewer") -> Principal:
 
 def query(**kw) -> FilterQuery:
     return FilterQuery(**{"date_from": "", "date_to": "", "owner_account_id": "", "platform": "", "country": "",
-                          "project": "", "group_id": "", "platform_tag": "", **kw})
+                          "group_id": "", "platform_tag": "", **kw})
 
 
 # ── FilterContext ───────────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ def test_cache_hash_excludes_owner_but_includes_every_other_filter():
     base = build_filter_context(query(), principal(A), today=TODAY)
     other_owner = build_filter_context(query(), principal(B), today=TODAY)
     assert base.cache_hash() == other_owner.cache_hash() and base.scope != other_owner.scope      # owner ở scope
-    for field in ("platform", "country", "project", "group_id", "platform_tag", "date_from", "date_to"):
+    for field in ("platform", "country", "group_id", "platform_tag", "date_from", "date_to"):
         changed = build_filter_context(query(**{field: "2026-01-01" if field.startswith("date") else "zzz"}),
                                        principal(A), today=TODAY)
         assert changed.cache_hash() != base.cache_hash(), field
@@ -110,7 +110,6 @@ def test_content_null_is_preserved_and_zero_is_zero():
     ("resources", {"owner_account_id": A, "platform": "fb", "external_id": "x\u0000y", "revision": 1}),
     ("events", {"owner_account_id": A, "external_id": "e", "kind": "post_ok", "occurred_date": "nope", "revision": 1}),
     ("metrics", {"owner_account_id": A, "platform": "yt", "resource_external_id": "c", "revision": 1}),
-    ("projects", {"owner_account_id": A, "revision": 1}),
     ("khong-co", {"owner_account_id": A, "revision": 1}),
 ])
 def test_invalid_canonical_items_are_rejected(kind, item):
@@ -118,16 +117,12 @@ def test_invalid_canonical_items_are_rejected(kind, item):
         to_row(kind, item)
 
 
-def test_resource_bindings_flags_and_country_forms():
+def test_resource_flags_and_country_forms():
     row = to_row("resources", {"owner_account_id": A, "platform": "fb", "external_id": "x", "revision": 1,
-                               "country": {"code": "BR", "name": "Brazil"},
-                               "projects": [{"project_key": "k1", "enabled": False}, {"project_key": "k1"},
-                                            {"project_key": "k2"}], "managed": True, "active": "yes"})
+                               "country": {"code": "BR", "name": "Brazil"}, "managed": True, "active": "yes"})
     assert row["country"] == "Brazil" and row["managed"] is True and row["active"] is None
-    assert row["projects"] == [{"project_key": "k1", "enabled": False}, {"project_key": "k2", "enabled": True}]
     assert to_row("resources", {"owner_account_id": A, "platform": "fb", "external_id": "x", "revision": 1,
-                                "country": "peru", "project_keys": ["a", "b"]})["projects"] == [
-        {"project_key": "a", "enabled": True}, {"project_key": "b", "enabled": True}]
+                                "country": "peru"})["country"] == "peru"
     assert to_row("resources", {"owner_account_id": A, "platform": "fb", "external_id": "x", "revision": 1,
                                 "country_code": "CL"})["country"] == "CL"
     gone = to_row("resources", {"owner_account_id": A, "platform": "fb", "external_id": "x", "revision": 2,
@@ -159,4 +154,4 @@ def test_checksum_is_order_independent_and_sensitive():
     met = to_row("metrics", {"owner_account_id": A, "platform": "yt", "resource_type": "channel",
                              "resource_external_id": "c", "date": "2026-10-02", "metrics": {"views": 0}, "revision": 4})
     assert checksum_line("metrics", met) == f"{A}|yt|channel|c|2026-10-02|4|0|0"
-    assert set(KINDS) == {"projects", "resources", "content", "metrics", "events"}
+    assert set(KINDS) == {"resources", "content", "metrics", "events"}

@@ -47,11 +47,6 @@ def normalize_key(raw: str, fallback: str = "unspecified") -> str:
     return text if _KEY.match(text) else fallback
 
 
-def project_key_of(raw: str) -> str | None:
-    key = normalize_key(raw, fallback="")
-    return key or None
-
-
 def external_id_of(input_ref: str) -> str:
     """Resource nhập tay chưa có id thật của nền tảng: dùng `input_ref` làm khoá tự nhiên (rút gọn bằng hash khi quá dài)."""
     ref = input_ref.strip()
@@ -80,7 +75,7 @@ def resource_to_legacy(row: dict) -> dict:
         "input_ref": ext.get("input_ref", row["external_id"]),
         "username": data.get("username") or "", "url": data.get("url") or "",
         "display_name": data.get("display_name") or "", "country": country_text(data),
-        "origin": row["origin"], "mapping_status": ext.get("mapping_status", "unmapped"),
+        "origin": row["origin"], "mapping_status": row.get("effective_mapping_status") or ext.get("mapping_status", "unmapped"),
         "execution_mode": MODE_TO_LEGACY.get(row["execution_mode"], row["execution_mode"]),
         "verification_status": ext.get("verification_status", "unverified"),
         "enabled": row["state"] == "active",
@@ -96,7 +91,9 @@ def source_to_legacy(row: dict) -> dict:
 
 
 def policy_to_legacy(row: dict) -> dict:
-    return {"platform": row["platform"], "web_entry_enabled": row["web_entry_enabled"],
+    # `display_name` là trường CỘNG THÊM (client legacy bỏ qua): tên hiển thị lấy từ Platform Registry.
+    return {"platform": row["platform"], "display_name": row.get("display_name") or row["platform"],
+            "web_entry_enabled": row["web_entry_enabled"],
             "fallback_enabled": row["fallback_enabled"], "adapter_status": row["adapter_status"],
             "updated_by": row["updated_by"], "updated_at": legacy_iso(row["updated_at"])}
 

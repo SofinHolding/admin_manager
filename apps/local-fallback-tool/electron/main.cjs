@@ -1,6 +1,6 @@
 // Electron main process — Channel Collector desktop shell.
 // Quản lý subprocess collect.py, scheduler hẹn giờ, config và log.
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -8,10 +8,22 @@ const fs = require("fs");
 const ROOT_DIR    = path.join(__dirname, "../../..");
 const COLLECT_PY    = path.join(__dirname, "..", "collect.py");
 const CHANNELS_DB_PY = path.join(__dirname, "..", "channels_db.py");
+const HEALTH_PY      = path.join(__dirname, "..", "health.py");
+const VIDEO_LINKS_PY = path.join(__dirname, "..", "video_links.py");
 const CONFIG_PATH   = path.join(ROOT_DIR, ".dev", "collector-config.json");
+const VIDEO_LINKS_DIR = path.join(ROOT_DIR, ".dev", "video-links");
 const LOG_PATH      = path.join(ROOT_DIR, ".dev", "collector.log");
 const STATUS_PATH   = path.join(ROOT_DIR, ".dev", "collector-status.json");
 const LOG_TAIL_LINES = 200;
+/** Python con trên Windows mặc định ghi stdout/stderr bằng codepage hệ thống (cp1252): tiếng Việt làm UnicodeEncodeError.
+ *  Mọi giao tiếp với Python đều là UTF-8 (JSON qua stdin/stdout, log). */
+const PY_ENV = { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" };
+
+// Địa chỉ máy chủ nhúng sẵn + danh sách endpoint hệ thống: nguồn sự thật duy nhất, dùng chung với system_api.py.
+const SYSTEM = require("../system-endpoints.json");
+const SYSTEM_API_PY = path.join(__dirname, "..", "system_api.py");
+/** Gateway đang dùng: cấu hình người dùng (file kết nối / nhập tay) nếu có, không thì địa chỉ nhúng sẵn. */
+const gatewayOf = (cfg) => String((cfg && cfg.gateway) || SYSTEM.default_gateway).replace(/\/$/, "");
 
 /** @type {import('child_process').ChildProcess|null} */
 let collectorProcess = null;
@@ -31,14 +43,12 @@ function killCollector() {
   collectorProcess = null;
 }
 
-function buildCollectorArgs(cfg, platformsOverride) {
+function buildCollectorArgs(cfg, platformsOverride, extra = []) {
   const args = [COLLECT_PY];
-  if (cfg.gateway)         args.push("--gateway",         cfg.gateway);
+  args.push("--gateway", gatewayOf(cfg));
   if (cfg.api_key)         args.push("--api-key",         cfg.api_key);
-  if (cfg.checkview_dir)   args.push("--checkview-dir",   cfg.checkview_dir);
-  if (cfg.youtube_api_key) args.push("--youtube-api-key", cfg.youtube_api_key);
-  if (cfg.fb_cookie)       args.push("--fb-cookie",       cfg.fb_cookie);
-  if (cfg.proxy)           args.push("--proxy",           cfg.proxy);
+  // Khoá YouTube / proxy / cookie đọc từ file cấu hình (không đưa lên dòng lệnh: lộ trong danh sách tiến trình).
+  args.push("--settings-file", CONFIG_PATH);
   if (cfg.poll_interval)   args.push("--poll-interval",   String(cfg.poll_interval));
   if (cfg.max_concurrent)  args.push("--max-concurrent",  String(cfg.max_concurrent));
   args.push("--status-file", STATUS_PATH);
@@ -49,16 +59,16 @@ function buildCollectorArgs(cfg, platformsOverride) {
   });
   if (platforms.length > 0 && platforms.length < 3)
     args.push("--platforms", platforms.join(","));
-  return args;
+  return [...args, ...extra];
 }
 
-function spawnCollector(cfg, platformsOverride) {
+function spawnCollector(cfg, platformsOverride, extra = []) {
   if (collectorProcess) return { ok: false, reason: "already_running" };
   fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
   const logStream = fs.createWriteStream(LOG_PATH, { flags: "a" });
   const pythonBin = process.platform === "win32" ? "python" : "python3";
-  const child = spawn(pythonBin, buildCollectorArgs(cfg, platformsOverride), {
-    cwd: path.dirname(COLLECT_PY), windowsHide: true,
+  const child = spawn(pythonBin, buildCollectorArgs(cfg, platformsOverride, extra), {
+    cwd: path.dirname(COLLECT_PY), windowsHide: true, env: PY_ENV,
   });
   child.stdout.pipe(logStream);
   child.stderr.pipe(logStream);
@@ -88,8 +98,9 @@ function tickSchedule() {
   if (collectorProcess) return;
 
   const cfg = readConfigFile();
-  const now = new Date();
-  const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  // Mốc giờ của lịch tính theo GIỜ VIỆT NAM (report_timezone cố định), không phụ thuộc múi giờ của máy chạy tool.
+  const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: SYSTEM.report_timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+    .format(new Date());
 
   const toStart = ["youtube", "tiktok", "facebook"].filter((p) => {
     const pc = cfg.platforms?.[p];
@@ -151,6 +162,14 @@ ipcMain.handle("collector:start", (_event, cfg) => {
   return spawnCollector(cfg || readConfigFile());
 });
 
+/** "Chạy ngay": một lượt (xin job + xử lý hết) rồi collector tự thoát, không chờ lịch. `resource_ids` rỗng = mọi kênh đã kéo + đang bật. */
+ipcMain.handle("collector:run-now", (_event, { platforms, resource_ids } = {}) => {
+  schedAutoState = null;
+  const extra = ["--once"];
+  if (Array.isArray(resource_ids) && resource_ids.length) extra.push("--resource-ids", resource_ids.join(","));
+  return spawnCollector(readConfigFile(), Array.isArray(platforms) && platforms.length ? platforms : undefined, extra);
+});
+
 ipcMain.handle("collector:stop", () => {
   schedAutoState = null;
   killCollector();
@@ -176,20 +195,22 @@ ipcMain.handle("collector:log", () => {
 
 ipcMain.handle("collector:config:read", () => {
   const data = readConfigFile();
-  const defP = { enabled: true, interval: 30, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
+  const defP = { enabled: true, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
   const defaultPlatforms = {
     youtube:  { ...defP },
-    tiktok:   { ...defP, interval: 60 },
-    facebook: { ...defP, enabled: false, interval: 120 },
+    tiktok:   { ...defP },
+    facebook: { ...defP, enabled: false },
   };
   const merge = (key) => ({ ...defaultPlatforms[key], ...(data.platforms?.[key] || {}) });
+  // Danh sách nhiều mục; giá trị đơn của bản cũ (youtube_api_key / proxy) được gộp vào danh sách.
+  const pool = (list, legacy) => [...new Set([...(Array.isArray(list) ? list : []), ...(typeof legacy === "string" ? [legacy] : [])]
+    .map((s) => String(s).trim()).filter(Boolean))];
   return {
-    gateway:         data.gateway          || "",
+    gateway:         data.gateway          || SYSTEM.default_gateway,
     api_key:         data.api_key          || "",
-    youtube_api_key: data.youtube_api_key  || "",
-    checkview_dir:   data.checkview_dir    || "",
+    youtube_api_keys: pool(data.youtube_api_keys, data.youtube_api_key),
+    proxies:         pool(data.proxies, data.proxy),
     fb_cookie:       data.fb_cookie        || "",
-    proxy:           data.proxy            || "",
     poll_interval:   data.poll_interval    ?? 30,
     max_concurrent:  data.max_concurrent   ?? 3,
     platforms: { youtube: merge("youtube"), tiktok: merge("tiktok"), facebook: merge("facebook") },
@@ -198,58 +219,131 @@ ipcMain.handle("collector:config:read", () => {
 
 ipcMain.handle("collector:config:write", (_event, cfg) => {
   const merged = { ...readConfigFile(), ...cfg };
+  // Danh sách mới thay thế giá trị đơn cũ: nếu không xoá, mục đã xoá trong giao diện sẽ sống lại từ khoá cũ.
+  if (Array.isArray(cfg?.youtube_api_keys)) delete merged.youtube_api_key;
+  if (Array.isArray(cfg?.proxies)) delete merged.proxy;
+  delete merged.checkview_dir;   // không còn dùng: bộ kiểm tra đã nằm trong tool
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
   return { ok: true };
 });
 
+/** Nạp file kết nối Admin cấp cùng key dùng chung ({format:"manager-connection/1", gateway, api_key}). Không log secret. */
+function parseConnectionFile(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { return { error: "File không phải JSON hợp lệ" }; }
+  if (!data || data.format !== "manager-connection/1") return { error: "Sai định dạng (cần format=manager-connection/1)" };
+  if (typeof data.gateway !== "string" || !/^https?:\/\//.test(data.gateway)) return { error: "File thiếu gateway (http/https)" };
+  if (typeof data.api_key !== "string" || !data.api_key.startsWith("mpk_")) return { error: "File thiếu api_key hợp lệ" };
+  return { gateway: data.gateway.replace(/\/$/, ""), api_key: data.api_key };
+}
+
+ipcMain.handle("collector:import-connection", async () => {
+  const pick = await dialog.showOpenDialog(mainWindow, {
+    title: "Chọn file kết nối do Admin cấp", properties: ["openFile"], filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (pick.canceled || !pick.filePaths[0]) return { ok: false, canceled: true };
+  let text;
+  try { text = fs.readFileSync(pick.filePaths[0], "utf-8"); } catch { return { ok: false, error: "Không đọc được file" }; }
+  const parsed = parseConnectionFile(text);
+  if (parsed.error) return { ok: false, error: parsed.error };
+  const merged = { ...readConfigFile(), gateway: parsed.gateway, api_key: parsed.api_key };
+  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
+  return { ok: true, gateway: parsed.gateway };
+});
+
+/** Kiểm tra gateway còn sống bằng endpoint API thật (`health` trong system-endpoints.json), không phải trang web:
+ *  `/health/ready` ở cổng web trả HTML 200 nên từng báo "khoẻ" cả khi API chết. */
 ipcMain.handle("collector:health", async () => {
-  const cfg = readConfigFile();
-  if (!cfg.gateway) return { ok: false, reason: "Chưa cấu hình Gateway URL" };
+  const base = gatewayOf(readConfigFile());
+  const ep = SYSTEM.endpoints.find((e) => e.name === "health");
   try {
-    const res = await fetch(`${cfg.gateway.replace(/\/$/, "")}/health/ready`, { signal: AbortSignal.timeout(4000) });
+    const res = await fetch(`${base}${ep.path}`, { signal: AbortSignal.timeout(4000) });
+    const body = await res.json().catch(() => null);
+    if (!body || body.ok !== true) return { ok: false, status: res.status, reason: "Địa chỉ này không phải API của hệ thống" };
     return { ok: res.ok, status: res.status };
   } catch (e) { return { ok: false, reason: e.message }; }
 });
 
-/** installation_id đã bind cho api_key hiện tại (device binding: mọi request máy ngoài /handshake phải gửi X-Installation-Id). */
-let machineInstallation = null; // { apiKey: string, installationId: string }
+ipcMain.handle("collector:endpoints", () => ({ default_gateway: SYSTEM.default_gateway, gateway: gatewayOf(readConfigFile()),
+                                                endpoints: SYSTEM.endpoints }));
 
-/**
- * Handshake CÙNG thiết bị với collect.py (device_id `shared-collector-<hostname>`, cùng capabilities) để lấy lại
- * installation_id đã bind — 1 credential chỉ kích hoạt cho 1 thiết bị, handshake lặp lại trên cùng thiết bị là idempotent.
- */
-async function machineInstallationId(cfg, base) {
-  if (machineInstallation && machineInstallation.apiKey === cfg.api_key) return machineInstallation.installationId;
-  const host = require("os").hostname();
-  const res = await fetch(`${base}/v1/integrations/handshake`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${cfg.api_key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      installation: { device_id: `shared-collector-${host}`, hostname: host, os: "windows", app_version: "collect.py/1.0" },
-      platforms: [],
-      capabilities: ["data.collect"],
-    }),
-    signal: AbortSignal.timeout(6000),
+/** Chạy một lệnh của system_api.py (key đi qua stdin, không lên dòng lệnh); trả JSON của lệnh hoặc `{ error }`. */
+function runSystemApi(command) {
+  return new Promise((resolve) => {
+    const cfg = readConfigFile();
+    const pythonBin = process.platform === "win32" ? "python" : "python3";
+    const child = spawn(pythonBin, [SYSTEM_API_PY, command], { windowsHide: true, stdio: "pipe", env: PY_ENV });
+    const out = [], err = [];
+    child.stdout.on("data", (d) => out.push(d));
+    child.stderr.on("data", (d) => err.push(d));
+    child.on("error", (e) => resolve({ error: `Không chạy được Python: ${e.message}` }));
+    child.on("close", () => {
+      const text = Buffer.concat(out).toString("utf-8").trim();
+      try { resolve(JSON.parse(text)); }
+      catch { resolve({ error: Buffer.concat(err).toString("utf-8").trim().slice(-300) || "system_api.py không trả kết quả" }); }
+    });
+    child.stdin.end(JSON.stringify({ gateway: gatewayOf(cfg), api_key: cfg.api_key || "" }), "utf-8");
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body?.error?.message ?? `Handshake lỗi HTTP ${res.status}`);
-  machineInstallation = { apiKey: cfg.api_key, installationId: body.data.installation_id };
-  return machineInstallation.installationId;
 }
 
-ipcMain.handle("collector:api:get", async (_event, apiPath) => {
-  const cfg = readConfigFile();
-  if (!cfg.gateway || !cfg.api_key) return { error: "Chưa cấu hình gateway / api_key" };
-  const base = cfg.gateway.replace(/\/$/, "");
-  try {
-    const installationId = await machineInstallationId(cfg, base);
-    const res = await fetch(`${base}${apiPath}`, {
-      headers: { Authorization: `Bearer ${cfg.api_key}`, "X-Installation-Id": installationId },
-      signal: AbortSignal.timeout(6000),
+/** Chạy thử từng endpoint an toàn. */
+ipcMain.handle("collector:probe", () => runSystemApi("probe"));
+
+/** Chạy một script Python ngắn hạn: dữ liệu vào qua stdin (key/mật khẩu proxy không lên dòng lệnh), một dòng JSON ra stdout; lỗi => `{ error }`. */
+function runPyJson(script, args, payload, timeoutMs) {
+  return new Promise((resolve) => {
+    const pythonBin = process.platform === "win32" ? "python" : "python3";
+    const child = spawn(pythonBin, [script, ...args], { windowsHide: true, stdio: "pipe", env: PY_ENV, cwd: path.dirname(script) });
+    const out = [], err = [];
+    const timer = setTimeout(() => { child.kill(); }, timeoutMs);
+    child.stdout.on("data", (d) => out.push(d));
+    child.stderr.on("data", (d) => err.push(d));
+    child.on("error", (e) => { clearTimeout(timer); resolve({ error: `Không chạy được Python: ${e.message}` }); });
+    child.on("close", () => {
+      clearTimeout(timer);
+      const lines = Buffer.concat(out).toString("utf-8").trim().split(/\r?\n/);
+      try { resolve(JSON.parse(lines[lines.length - 1])); }
+      catch { resolve({ error: Buffer.concat(err).toString("utf-8").trim().slice(-300) || `${path.basename(script)} không trả kết quả (có thể quá thời gian)` }); }
     });
-    return await res.json();
-  } catch (e) { return { error: e.message }; }
+    child.stdin.end(JSON.stringify(payload ?? {}), "utf-8");
+  });
+}
+
+/** Kiểm tra từng YouTube API key / proxy còn sống không (kind: "youtube-keys" | "proxies"; items: chuỗi gốc). */
+ipcMain.handle("pool:check", (_event, { kind, items }) => {
+  if (kind !== "youtube-keys" && kind !== "proxies") return { error: "Loại danh sách không hợp lệ" };
+  return runPyJson(HEALTH_PY, [kind], { items: Array.isArray(items) ? items : [] }, 180_000);
+});
+
+/** Thêm hàng loạt (mỗi dòng một mục) vào danh sách: phân tích + bỏ trùng bằng đúng quy tắc của collector (pools.py). */
+ipcMain.handle("pool:merge", (_event, { kind, existing, text }) => {
+  if (kind !== "youtube-keys" && kind !== "proxies") return { error: "Loại danh sách không hợp lệ" };
+  return runPyJson(HEALTH_PY, ["merge", kind], { existing: Array.isArray(existing) ? existing : [], text: String(text || "") }, 20_000);
+});
+
+/** Lấy TẤT CẢ link video của một kênh (YouTube/TikTok) về máy (lưu DB cục bộ + file .txt). Có thể mất vài phút với kênh lớn. */
+ipcMain.handle("links:fetch", (_event, { platform, channel_id, url }) =>
+  runPyJson(VIDEO_LINKS_PY, ["fetch"], { platform, channel_id, url }, 40 * 60_000));
+
+/** Mở thư mục chứa file link đã xuất (chỉ trong thư mục video-links của tool). */
+ipcMain.handle("links:reveal", (_event, { path: file }) => {
+  const resolved = path.resolve(String(file || ""));
+  if (!resolved.startsWith(VIDEO_LINKS_DIR + path.sep) || !fs.existsSync(resolved)) return { ok: false, error: "Không tìm thấy file" };
+  shell.showItemInFolder(resolved);
+  return { ok: true };
+});
+
+/** Lưu danh sách link ra file .txt người dùng chọn (mỗi link một dòng). */
+ipcMain.handle("links:save", async (_event, { name, urls }) => {
+  const lines = Array.isArray(urls) ? urls.map(String).filter(Boolean) : [];
+  const safe = String(name || "tiktok").replace(/[^\w.@-]+/g, "_").slice(0, 80) || "tiktok";
+  const pick = await dialog.showSaveDialog(mainWindow, { title: "Lưu danh sách link video", defaultPath: `${safe}.txt`, filters: [{ name: "Text", extensions: ["txt"] }] });
+  if (pick.canceled || !pick.filePath) return { ok: false, canceled: true };
+  try { fs.writeFileSync(pick.filePath, lines.join("\n") + (lines.length ? "\n" : ""), "utf-8"); }
+  catch (e) { return { ok: false, error: `Không ghi được file: ${e.message}` }; }
+  return { ok: true, path: pick.filePath };
 });
 
 ipcMain.handle("collector:status:read", () => {
@@ -271,6 +365,7 @@ function callChannelsDb(cmd) {
     const child = spawn(pythonBin, [CHANNELS_DB_PY], {
       windowsHide: true,
       stdio: "pipe",
+      env: PY_ENV,
     });
     const stdout = [];
     const stderr = [];
@@ -304,14 +399,32 @@ function callChannelsDb(cmd) {
 ipcMain.handle("channels:init", () =>
   callChannelsDb({ action: "init" }));
 
-ipcMain.handle("channels:users:save", (_event, users) =>
-  callChannelsDb({ action: "save_users", users }));
+/** Fetch: kéo từ website CHỈ user/kênh dùng tool dùng chung (user có Tool riêng bị bỏ) rồi đồng bộ vào DB cục bộ.
+ *  Kênh mới ở trạng thái CHƯA KÉO; trạng thái ĐÃ KÉO của kênh cũ được giữ nguyên. */
+ipcMain.handle("channels:sync", async () => {
+  const shared = await runSystemApi("shared");
+  if (shared.error) return { error: shared.error };
+  const res = await callChannelsDb({ action: "sync_shared", users: shared.owners, channels: shared.channels });
+  return { ...res, skipped: shared.skipped };
+});
+
+/** Làm tươi số liệu server (số video, lần thu cuối, đã liên kết) cho kênh đã có — KHÔNG thêm/xoá user/kênh nên an toàn tự chạy sau mỗi lần thu. */
+ipcMain.handle("channels:refresh-stats", async () => {
+  const shared = await runSystemApi("shared");
+  if (shared.error) return { error: shared.error };
+  return callChannelsDb({ action: "update_server_stats", channels: shared.channels });
+});
 
 ipcMain.handle("channels:users:list", () =>
   callChannelsDb({ action: "list_users" }));
 
-ipcMain.handle("channels:pull", (_event, { owner_id, owner_username, channels }) =>
-  callChannelsDb({ action: "save_channels", owner_id, owner_username, channels }));
+/** Kéo các kênh đã chọn về tool (kênh đã kéo rồi bị bỏ qua, không kéo lại). */
+ipcMain.handle("channels:pull", (_event, { ids }) =>
+  callChannelsDb({ action: "pull_channels", ids }));
+
+/** Gỡ kết nối kênh đã kéo (về lại CHƯA KÉO). */
+ipcMain.handle("channels:unpull", (_event, { ids }) =>
+  callChannelsDb({ action: "unpull_channels", ids }));
 
 ipcMain.handle("channels:list", (_event, filters) =>
   callChannelsDb({ action: "list_channels", ...(filters ?? {}) }));
@@ -319,19 +432,18 @@ ipcMain.handle("channels:list", (_event, filters) =>
 ipcMain.handle("channels:platform:counts", () =>
   callChannelsDb({ action: "platform_counts" }));
 
-ipcMain.handle("channels:delete", (_event, ids) =>
-  callChannelsDb({ action: "delete_channels", ids }));
-
 ipcMain.handle("channels:set-enabled", (_event, { ids, enabled }) =>
   callChannelsDb({ action: "set_enabled", ids, enabled }));
+
+ipcMain.handle("channels:videos:list", (_event, { channel_id }) =>
+  callChannelsDb({ action: "list_channel_videos", channel_id }));
 
 /**
  * Đăng nhập lấy JWT dùng cho /v1/ops/* (require_ops: admin/dash_admin).
  * Dùng gateway URL từ collector-config hoặc url được truyền vào.
  */
 ipcMain.handle("channels:login", async (_event, { url, username, password }) => {
-  const base = (url || readConfigFile().gateway || "").replace(/\/$/, "");
-  if (!base) return { ok: false, error: "Chưa cấu hình Gateway URL (tab Thu thập → Cấu hình)" };
+  const base = (url || gatewayOf(readConfigFile())).replace(/\/$/, "");
   try {
     const res = await fetch(`${base}/v1/auth/login`, {
       method: "POST",
@@ -348,11 +460,10 @@ ipcMain.handle("channels:login", async (_event, { url, username, password }) => 
 });
 
 /**
- * Gọi /v1/ops/* bằng user JWT (khác với collector:api:get dùng machine api_key).
+ * Gọi /v1/ops/* bằng user JWT admin (KHÔNG dùng machine api_key).
  */
 ipcMain.handle("channels:api-call", async (_event, { path, token }) => {
-  const base = readConfigFile().gateway?.replace(/\/$/, "") || "";
-  if (!base) return { error: "Chưa cấu hình Gateway URL (tab Thu thập → Cấu hình)" };
+  const base = gatewayOf(readConfigFile());
   if (!token) return { error: "Chưa đăng nhập — cần JWT admin" };
   try {
     const res = await fetch(`${base}${path}`, {

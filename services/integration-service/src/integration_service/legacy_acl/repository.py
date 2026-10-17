@@ -11,18 +11,31 @@ from datetime import datetime
 import asyncpg
 
 from integration_service.legacy_acl.mapper import MODE_TO_CANONICAL
+from integration_service.mapping import EFFECTIVE_MAPPING_SQL
 
 LEGACY_RESOURCE = "NOT r.removed AND r.origin <> 'tool'"
 
 
 # ── Platform policy ───────────────────────────────────────────────────────────────
+# NGUỒN SỰ THẬT về "nền tảng nào tồn tại" là `platform_registry` (Admin/dash_admin tạo). `platform_policies` chỉ giữ HÀNH VI
+# nhập web/collector của từng nền tảng; nền tảng chưa có dòng policy dùng mặc định: cho nhập tay VÀ giao cho Tool dùng chung
+# (collector) kéo số liệu — collector tự chỉ nhận platform nó có adapter nên job platform chưa hỗ trợ chỉ nằm chờ. Nền tảng bị
+# tắt trong registry thì không có policy (không nhập được).
+_POLICY_SELECT = (
+    "SELECT r.key AS platform, COALESCE(p.web_entry_enabled, true) AS web_entry_enabled, "
+    "COALESCE(p.fallback_enabled, true) AS fallback_enabled, COALESCE(p.adapter_status, 'none') AS adapter_status, "
+    "COALESCE(p.updated_by, '') AS updated_by, COALESCE(p.updated_at, r.updated_at) AS updated_at, "
+    "r.display_name AS display_name FROM platform_registry r "
+    "LEFT JOIN legacy_ingest.platform_policies p ON p.platform = r.key WHERE r.enabled"
+)
+
 
 async def list_policies(conn: asyncpg.Connection) -> list[dict]:
-    return [dict(r) for r in await conn.fetch("SELECT * FROM legacy_ingest.platform_policies ORDER BY platform")]
+    return [dict(r) for r in await conn.fetch(_POLICY_SELECT + " ORDER BY r.key")]
 
 
 async def get_policy(conn: asyncpg.Connection, platform: str) -> dict | None:
-    row = await conn.fetchrow("SELECT * FROM legacy_ingest.platform_policies WHERE platform = $1", platform)
+    row = await conn.fetchrow(_POLICY_SELECT + " AND r.key = $1", platform)
     return dict(row) if row else None
 
 
@@ -31,7 +44,7 @@ async def upsert_policy(conn: asyncpg.Connection, platform: str, web_entry: bool
     """Cập nhật TỪNG PHẦN: field None giữ nguyên (hoặc mặc định nếu platform chưa có policy)."""
     row = await conn.fetchrow(
         "INSERT INTO legacy_ingest.platform_policies AS p (platform, web_entry_enabled, fallback_enabled, adapter_status, "
-        "updated_by, updated_at) VALUES ($1, COALESCE($2, true), COALESCE($3, false), COALESCE($4, 'none'), $5, $6) "
+        "updated_by, updated_at) VALUES ($1, COALESCE($2, true), COALESCE($3, true), COALESCE($4, 'none'), $5, $6) "
         "ON CONFLICT (platform) DO UPDATE SET web_entry_enabled = COALESCE($2, p.web_entry_enabled), "
         "fallback_enabled = COALESCE($3, p.fallback_enabled), adapter_status = COALESCE($4, p.adapter_status), "
         "updated_by = $5, updated_at = $6 RETURNING *", platform, web_entry, fallback, adapter, updated_by, now)
@@ -87,12 +100,12 @@ async def find_by_key(conn: asyncpg.Connection, owner: str, platform: str, resou
 
 
 _LIST_RESOURCES = (
-    "SELECT r.* FROM resources r WHERE " + LEGACY_RESOURCE + " "
+    "SELECT r.*, " + EFFECTIVE_MAPPING_SQL + " AS effective_mapping_status FROM resources r WHERE " + LEGACY_RESOURCE + " "
     "AND ($1::text IS NULL OR r.owner_account_id = $1) "
     "AND ($2::text = '' OR r.platform = $2) "
     "AND ($3::text = '' OR COALESCE(r.data -> 'country' ->> 'name', r.data -> 'country' ->> 'code', '') = $3) "
     "AND ($4::text = '' OR r.origin = $4) "
-    "AND ($5::text = '' OR COALESCE(r.data -> 'extensions' -> 'legacy' ->> 'mapping_status', 'unmapped') = $5) "
+    "AND ($5::text = '' OR " + EFFECTIVE_MAPPING_SQL + " = $5) "
     "AND ($6::text = '' OR COALESCE(r.data -> 'extensions' -> 'legacy' ->> 'verification_status', 'unverified') = $6) "
     "AND ($7::text = '' OR r.execution_mode = $7) "
     "AND ($8::boolean IS NULL OR (r.state = 'active') = $8) "
@@ -144,21 +157,6 @@ async def first_assignment_id(conn: asyncpg.Connection, resource_id: str) -> str
 
 async def delete_assignments(conn: asyncpg.Connection, resource_id: str) -> None:
     await conn.execute("DELETE FROM legacy_ingest.resource_assignments WHERE resource_id = $1", resource_id)
-
-
-async def resources_of_source(conn: asyncpg.Connection, source_id: str) -> list[dict]:
-    rows = await conn.fetch(
-        "SELECT r.* FROM resources r JOIN legacy_ingest.resource_assignments a ON a.resource_id = r.id "
-        "WHERE a.source_instance_id = $1 AND " + LEGACY_RESOURCE + " ORDER BY r.created_at, r.id FOR UPDATE OF r",
-        source_id)
-    return [dict(r) for r in rows]
-
-
-async def source_project_keys(conn: asyncpg.Connection, resource_id: str) -> list[str]:
-    rows = await conn.fetch(
-        "SELECT s.project_key FROM legacy_ingest.resource_assignments a JOIN legacy_ingest.resource_sources s "
-        "ON s.id = a.source_instance_id WHERE a.resource_id = $1 ORDER BY a.created_at, a.id", resource_id)
-    return [r["project_key"] for r in rows]
 
 
 async def inventory_revision(conn: asyncpg.Connection, owner: str | None) -> tuple[datetime | None, int]:

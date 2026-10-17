@@ -151,6 +151,17 @@ describe("navFor — menu theo capability (không phụ thuộc isAdminZone)", (
     const items = groups.flatMap((g) => g.items);
     expect(items.some((i) => i.to === "/channels")).toBe(false);
   });
+
+  it("admin và dash_admin thấy menu 'Nền tảng' (trang riêng) ngay dưới 'Nhóm kênh'; viewer thì KHÔNG", () => {
+    for (const role of ["admin", "dash_admin"] as const) {
+      const items = navFor(mk(role, []), () => false).flatMap((g) => g.items);
+      const idx = items.findIndex((i) => i.to === "/admin/groups");
+      expect(items[idx + 1]).toMatchObject({ label: "Nền tảng", to: "/admin/platforms" });
+    }
+    const viewerItems = navFor(mk("viewer", []), () => false).flatMap((g) => g.items);
+    expect(viewerItems.some((i) => i.to === "/admin/platforms")).toBe(false);
+    expect(viewerItems.some((i) => i.to === "/admin/groups")).toBe(true);
+  });
 });
 
 describe("LoginPage", () => {

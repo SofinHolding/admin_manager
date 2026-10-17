@@ -27,7 +27,6 @@ async def test_hostile_strings_in_every_input_are_stored_as_data(env):
     r = await env.http.post("/v1/integrations/clients", headers=admin["headers"], json={
         "tool_name": INJECTION, "client_kind": "fallback_tool", "purpose": INJECTION, "platforms": ["facebook"]})
     assert r.status_code == 201 and r.json()["data"]["tool_name"] == INJECTION
-    assert (await tool.put("/v1/integrations/projects/itl", {"name": INJECTION, "metadata": {"k": INJECTION}})).status_code == 200
     sid = await new_snapshot(tool, type="delta", expected={"resources": 1, "content": 1})
     await push(tool, sid, "resources", [res(INJECTION, display_name=INJECTION, username=INJECTION, url=INJECTION)])
     await push(tool, sid, "content", [post(INJECTION, res_ext=INJECTION)])
@@ -55,14 +54,15 @@ async def test_nul_characters_never_cause_a_server_error(env):
         await env.http.get("/v1/integrations/clients/abc%00def", headers=admin["headers"]),
         await env.http.get("/v1/integrations/clients", headers=admin["headers"], params={"owner": "a\x00b"}),
         await env.http.get("/v1/integrations/audit", headers=admin["headers"], params={"action": "a\x00b"}),
-        await tool.put("/v1/integrations/projects/itl", {"name": "a\u0000b"}),
+        await tool.post("/v1/integrations/resources/batch", {"items": [
+            {"platform": "facebook", "resource_type": "page", "external_id": "a\u0000b"}]}),
         await tool.post("/v1/integrations/handshake", {"installation": {"device_id": "a\u0000b"}}),
         await env.http.get("/internal/v1/canonical/resources", params={"after_revision": "1\x00"},
                            headers={"X-Service-Key": "x"}),
     ]
     for r in responses:
         assert r.status_code < 500, (r.request.url, r.status_code, r.text)
-    assert await env.scalar("SELECT count(*) FROM projects") == 0
+    assert await env.scalar("SELECT count(*) FROM resources") == 0
     # tool đã handshake sẵn trong env.tool(): chỉ còn đúng installation gốc đó, NUL-device không tạo thêm
     assert await env.scalar("SELECT count(*) FROM installations") == 1
 
@@ -109,4 +109,4 @@ async def test_integration_role_is_not_superuser_and_owns_only_its_database(db):
     async with db.connection() as conn:
         row = await conn.fetchrow("SELECT rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname = current_user")
         assert row["rolsuper"] is False and row["rolcreaterole"] is False
-        assert await conn.fetchval("SELECT current_database()") == "integration_db"
+        assert await conn.fetchval("SELECT current_database()") == "integration_db" + devenv.db_suffix()

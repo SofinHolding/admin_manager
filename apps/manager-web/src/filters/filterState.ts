@@ -2,7 +2,7 @@
  * Filter Context — phần THUẦN (không React): kiểu, mặc định, parse/serialize URL, dựng query.
  *
  * Hợp đồng: docs/api/analytics-api-v1.md §1. Một bộ tham số duy nhất cho MỌI KPI/biểu đồ:
- *   date_from, date_to, owner_account_id, platform, country, project, group_id, platform_tag
+ *   date_from, date_to, owner_account_id, platform, country, group_id, platform_tag
  *
  * Quy tắc: mọi endpoint DỮ LIỆU (summary, traffic, top-channels, views-by-country, channel-breakdown,
  * compare/*) gửi CHÍNH XÁC cùng bộ tham số do `filterToParams` dựng — không widget nào tự thêm/bớt.
@@ -16,13 +16,12 @@ export interface FilterState {
   owner_account_id: string;
   platform: string;
   country: string;
-  project: string;
   group_id: string;
   platform_tag: string;
 }
 
 export const FILTER_KEYS = [
-  "date_from", "date_to", "owner_account_id", "platform", "country", "project", "group_id", "platform_tag",
+  "date_from", "date_to", "owner_account_id", "platform", "country", "group_id", "platform_tag",
 ] as const satisfies readonly (keyof FilterState)[];
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -49,7 +48,6 @@ export function defaultFilter(now: Date = new Date()): FilterState {
     owner_account_id: "",
     platform: "",
     country: "",
-    project: "",
     group_id: "",
     platform_tag: "",
   };
@@ -75,7 +73,6 @@ export function parseFilter(sp: URLSearchParams, now: Date = new Date()): Filter
     owner_account_id: cleanText(sp.get("owner_account_id")),
     platform: cleanText(sp.get("platform")),
     country: cleanText(sp.get("country")),
-    project: cleanText(sp.get("project")),
     group_id: cleanText(sp.get("group_id")),
     platform_tag: cleanText(sp.get("platform_tag")),
   };
@@ -100,7 +97,7 @@ export function filterToQuery(f: FilterState, extra?: Record<string, string | nu
 /** Tham số cho danh mục "quốc gia": mọi thứ trừ ngày và chính `country` (ô chọn quốc gia không được tự co lại). */
 export function countryCatalogParams(f: FilterState): URLSearchParams {
   const q = new URLSearchParams();
-  for (const k of ["owner_account_id", "platform", "project", "group_id", "platform_tag"] as const) {
+  for (const k of ["owner_account_id", "platform", "group_id", "platform_tag"] as const) {
     if (f[k]) q.set(k, f[k]);
   }
   return q;

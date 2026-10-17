@@ -98,7 +98,7 @@ async def test_non_admin_roles_are_scoped_to_self_for_every_data_endpoint(seeded
 
 async def test_viewer_cannot_read_other_owners_data_through_any_endpoint(seeded):
     for ep in ("summary", "traffic", "top-channels", "views-by-country", "channel-breakdown", "country-tags",
-               "compare/channel", "compare/owner", "compare/platform", "compare/project", "compare/group",
+               "compare/channel", "compare/owner", "compare/platform", "compare/group",
                "compare/country", "platform-tags"):
         for params in ({}, {"owner_account_id": OWN_A}, {"owner_account_id": ""}):
             r = await seeded.get("/v1/analytics/" + ep, sub=OWN_B, **params, **RANGE)
@@ -118,7 +118,7 @@ async def test_validation_errors_do_not_reflect_input(seeded):
 
 async def test_hostile_filter_values_are_harmless(seeded):
     for value in ("' OR 1=1 --", "'; DROP TABLE read_content; --", "a\x00b", "%", "\\", "é" * 40):
-        r = await seeded.get("/v1/analytics/summary", country=value, platform=value, project=value, group_id=value,
+        r = await seeded.get("/v1/analytics/summary", country=value, platform=value, group_id=value,
                              platform_tag=value, **RANGE)
         assert r.status_code == 200, value
         assert r.json()["total_views"] == 0
@@ -192,10 +192,9 @@ async def test_legacy_viewer_alias_shapes(seeded):
     cb = (await g("/v1/viewer/channel-breakdown")).json()
     assert set(cb) == {"total", "by_platform", "filter", "freshness"} and set(cb["total"]) == {"managed", "active"}
     fb = cb["by_platform"][0]
-    assert set(fb) == {"platform", "managed", "active", "by_group", "by_country"}
-    assert set(fb["by_group"][0]) == {"group", "managed", "active"} and set(fb["by_country"][0]) == {
-        "country", "managed", "active"}
-    assert set(cb["by_platform"][1]) == {"platform", "managed", "active", "by_country"}     # YouTube không có by_group
+    assert set(fb) == {"platform", "managed", "active", "by_country"}
+    assert set(fb["by_country"][0]) == {"country", "managed", "active"}
+    assert set(cb["by_platform"][1]) == {"platform", "managed", "active", "by_country"}
 
 
 async def test_legacy_and_new_paths_return_identical_bodies(seeded):

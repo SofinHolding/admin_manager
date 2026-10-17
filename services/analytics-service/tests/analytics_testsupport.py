@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Header, HTTPException, Query
 
 ISS, AUD = "http://identity.test", "manager-api"
-KINDS = ("projects", "resources", "content", "metrics", "events")
+KINDS = ("resources", "content", "metrics", "events")
 
 
 # ── Identity giả: JWKS + token thật ─────────────────────────────────────────────
@@ -152,8 +152,6 @@ class FakeIntegration(FakeFeedServer):
     @staticmethod
     def key_of(kind: str, it: dict) -> str:
         o = it["owner_account_id"]
-        if kind == "projects":
-            return f"{o}|{it['project_key']}"
         rt = it.get("resource_type") or ""
         if kind == "resources":
             return f"{o}|{it['platform']}|{rt}|{it['external_id']}"
@@ -210,13 +208,13 @@ class FakeIntegration(FakeFeedServer):
         return {"head_revision": self.head, "counts": counts, "checksum": checks}
 
     # -- ghi (mô phỏng Integration) --
-    def commit(self, *, owner: str, platform: str = "", projects=(), resources=(), content=(), metrics=(),
+    def commit(self, *, owner: str, platform: str = "", resources=(), content=(), metrics=(),
                events=(), snapshot_id: str | None = None, observed_at: str = "2026-10-05T09:00:00Z",
                committed_at: str | None = None, emit: bool = True) -> int:
         """Commit nguyên tử một snapshot: mọi bản ghi nhận CÙNG một revision mới. Trả revision."""
         self.head += 1
         rev = self.head
-        for kind, batch in (("projects", projects), ("resources", resources), ("content", content),
+        for kind, batch in (("resources", resources), ("content", content),
                             ("metrics", metrics), ("events", events)):
             for raw in batch:
                 item = {"owner_account_id": owner, "platform": platform, "observed_at": observed_at, "removed": False,
@@ -252,7 +250,7 @@ class FakeIntegration(FakeFeedServer):
     def update_item(self, kind: str, **changes) -> int:
         """Cập nhật một bản ghi đã có (khoá = các trường có trong `changes` khớp) — vd số view mới của bài cũ."""
         keys = {k: v for k, v in changes.items() if k in ("owner_account_id", "platform", "external_id",
-                                                           "resource_external_id", "date", "project_key")}
+                                                           "resource_external_id", "date")}
         match = [i for i in self.store[kind].values() if all(i.get(k) == v for k, v in keys.items())]
         assert len(match) == 1, f"khoá không xác định duy nhất: {keys} -> {len(match)}"
         self.head += 1
@@ -265,11 +263,9 @@ class FakeIntegration(FakeFeedServer):
 
 # ── Dựng bản ghi canonical ngắn gọn ─────────────────────────────────────────────
 
-def res(ext, name, *, platform, country="", projects=None, managed=None, active=None, state=None, **kw) -> dict:
+def res(ext, name, *, platform, country="", managed=None, active=None, state=None, **kw) -> dict:
     out = {"external_id": ext, "platform": platform, "resource_type": "page", "display_name": name,
            "country": {"name": country} if country else None}
-    if projects is not None:
-        out["projects"] = [{"project_key": k, "enabled": e} for k, e in projects]
     if managed is not None:
         out["managed"] = managed
     if active is not None:
@@ -289,14 +285,9 @@ def daily(resource, day, views, *, platform="youtube") -> dict:
     return {"resource_external_id": resource, "platform": platform, "date": day, "metrics": {"views": views}}
 
 
-def event(ext, resource, day, kind="post_ok", *, platform="facebook", project_key="") -> dict:
+def event(ext, resource, day, kind="post_ok", *, platform="facebook") -> dict:
     return {"external_id": ext, "resource_external_id": resource, "platform": platform, "kind": kind,
-            "occurred_date": day, "project_key": project_key}
-
-
-def project(key, name, country="", enabled=True) -> dict:
-    return {"project_key": key, "name": name, "platform": "", "country": {"name": country} if country else None,
-            "enabled": enabled}
+            "occurred_date": day}
 
 
 OWN_A = "a" * 32
@@ -308,11 +299,10 @@ def seed_world(fake: FakeIntegration) -> None:
     """Bộ dữ liệu tính tay dùng chung nhiều test (xem tests/test_stats_exact.py để biết số liệu kỳ vọng)."""
     fake.commit(
         owner=OWN_A, platform="facebook", observed_at="2026-10-05T08:00:00Z",
-        projects=[project("itl", "ITL", "Brazil"), project("sib", "Sible", "")],
         resources=[
-            res("pg1", "Page One", platform="facebook", country="Brazil", projects=[("itl", True), ("sib", True)]),
-            res("pg2", "Page Two", platform="facebook", country="", projects=[("itl", True)]),
-            res("pg3", "Page Three", platform="facebook", country="Peru", projects=[("sib", False)]),
+            res("pg1", "Page One", platform="facebook", country="Brazil", managed=True, active=True),
+            res("pg2", "Page Two", platform="facebook", country="Brazil", managed=True, active=True),
+            res("pg3", "Page Three", platform="facebook", country="Peru", managed=True, active=False),
         ],
         content=[
             post("p1", "pg1", "2026-10-01", 100, 10, 1), post("p2", "pg1", "2026-10-01", 50, 5, 2),
@@ -321,10 +311,10 @@ def seed_world(fake: FakeIntegration) -> None:
             post("p7", "pg1", "2026-09-30", 11, 1, 1),
         ],
         events=[
-            event("e1", "pg1", "2026-10-01", project_key="itl"), event("e2", "pg1", "2026-10-02", project_key="itl"),
-            event("e3", "pg2", "2026-10-02", project_key="itl"), event("e4", "pg3", "2026-10-03", project_key="sib"),
-            event("e6", "pg1", "2026-10-01", "post_fail", project_key="itl"),
-            event("e7", "pg1", "2026-09-30", project_key="itl"),
+            event("e1", "pg1", "2026-10-01"), event("e2", "pg1", "2026-10-02"),
+            event("e3", "pg2", "2026-10-02"), event("e4", "pg3", "2026-10-03"),
+            event("e6", "pg1", "2026-10-01", "post_fail"),
+            event("e7", "pg1", "2026-09-30"),
         ])
     fake.commit(
         owner=OWN_A, platform="youtube", observed_at="2026-10-05T08:30:00Z",

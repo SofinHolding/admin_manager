@@ -1,12 +1,12 @@
 /**
  * Nhóm kênh — người xem tự quản lý nhóm kênh của chính mình (tạo/đổi tên/xóa nhóm,
- * thêm/gỡ kênh kèm nhãn nền tảng và quốc gia ghi đè).
+ * thêm/gỡ kênh kèm quốc gia ghi đè). Danh mục nền tảng do Admin/dash_admin quản lý ở trang riêng "Nền tảng" (PlatformsPage).
  *
  * Lợi ích nói bằng lời: gom nhiều kênh thành một nhóm để xem tổng riêng và so sánh trên Tổng quan.
  * Kênh khả dụng lấy từ analyticsApi.topChannels (cùng nguồn dữ liệu Dashboard đang dùng).
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Globe, Plus, Save, Trash2, Users, X } from "lucide-react";
 import { analyticsApi, groupsApi, type TopChannel, type ViewerGroup } from "../api";
@@ -88,13 +88,11 @@ export default function GroupsPage() {
   };
 
   const handleAddMember = async (
-    group: ViewerGroup, channelRef: string, platformTag: string, countryOverride: string,
+    group: ViewerGroup, channelRef: string, countryOverride: string,
   ) => {
     if (!channelRef) return;
     try {
-      await groupsApi.addMember(group.id, {
-        channel_ref: channelRef, platform_tag: platformTag, country_override: countryOverride,
-      });
+      await groupsApi.addMember(group.id, { channel_ref: channelRef, country_override: countryOverride });
       const { items } = await groupsApi.list();
       setGroups(items);
       toast.success("Đã thêm kênh vào nhóm");
@@ -152,7 +150,7 @@ export default function GroupsPage() {
             channels={channels}
             onRename={(name) => handleRename(g, name)}
             onDelete={() => handleDelete(g)}
-            onAddMember={(ref, tag, ctry) => handleAddMember(g, ref, tag, ctry)}
+            onAddMember={(ref, ctry) => handleAddMember(g, ref, ctry)}
             onRemoveMember={(ref) => handleRemoveMember(g, ref)}
           />
         ))
@@ -166,12 +164,11 @@ function GroupSection({ group, channels, onRename, onDelete, onAddMember, onRemo
   channels: TopChannel[];
   onRename: (name: string) => void;
   onDelete: () => void;
-  onAddMember: (channelRef: string, platformTag: string, countryOverride: string) => void;
+  onAddMember: (channelRef: string, countryOverride: string) => void;
   onRemoveMember: (channelRef: string) => void;
 }) {
   const [name, setName] = useState(group.name);
   const [selectedChannel, setSelectedChannel] = useState("");
-  const [platformTag, setPlatformTag] = useState("");
   const [countryOverride, setCountryOverride] = useState("");
   const memberRefs = new Set(group.members.map((m) => m.channel_ref));
   const available = channels.filter((c) => !memberRefs.has(c.id));
@@ -202,15 +199,12 @@ function GroupSection({ group, channels, onRename, onDelete, onAddMember, onRemo
             <li key={m.channel_ref} className="flex items-start gap-3 py-2.5">
               <div className="min-w-0 flex-1">
                 <p className="break-words font-semibold">{nameOf(m.channel_ref)}</p>
-                {(m.platform_tag || m.country_override) && (
+                {m.country_override && (
                   <p className="mt-0.5 flex flex-wrap items-center gap-x-4 gap-y-0.5 text-sm text-muted-foreground">
-                    {m.platform_tag && <span>Nhãn nền tảng: {m.platform_tag}</span>}
-                    {m.country_override && (
-                      <span className="inline-flex items-center gap-1 text-foreground">
-                        <Globe className="size-3.5" aria-hidden />
-                        Tính vào quốc gia: {m.country_override}
-                      </span>
-                    )}
+                    <span className="inline-flex items-center gap-1 text-foreground">
+                      <Globe className="size-3.5" aria-hidden />
+                      Tính vào quốc gia: {m.country_override}
+                    </span>
                   </p>
                 )}
               </div>
@@ -227,8 +221,8 @@ function GroupSection({ group, channels, onRename, onDelete, onAddMember, onRemo
             onSubmit={(e) => {
               e.preventDefault();
               if (!selectedChannel) return;
-              onAddMember(selectedChannel, platformTag, countryOverride);
-              setSelectedChannel(""); setPlatformTag(""); setCountryOverride("");
+              onAddMember(selectedChannel, countryOverride);
+              setSelectedChannel(""); setCountryOverride("");
             }}>
         <Field label="Thêm kênh vào nhóm">
           {(p) => (
@@ -248,10 +242,7 @@ function GroupSection({ group, channels, onRename, onDelete, onAddMember, onRemo
             </Select>
           )}
         </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Nhãn nền tảng" optional hint="Chỉ để bạn dễ phân biệt, ví dụ: tiktok, instagram.">
-            {(p) => <Input {...p} value={platformTag} maxLength={30} onChange={(e) => setPlatformTag(e.target.value)} />}
-          </Field>
+        <div className="max-w-sm">
           <Field label="Quốc gia (ghi đè)" optional
                  hint="Điền nếu muốn tính kênh này vào một quốc gia khác với dữ liệu gốc. Áp dụng ngay cho mọi biểu đồ theo quốc gia.">
             {(p) => <Input {...p} value={countryOverride} maxLength={50} onChange={(e) => setCountryOverride(e.target.value)} placeholder="Ví dụ: Nigeria" />}

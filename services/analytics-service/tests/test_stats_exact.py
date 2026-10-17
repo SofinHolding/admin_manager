@@ -2,9 +2,9 @@
 (analytics_testsupport.py), không sinh bằng chính code đang test.
 
 Fixture (owner A, ngày 2026-10-01..03; B là người khác):
-  Facebook: pg1(Brazil; ITL+Sible) p1=100/10/1 & p2=50/5/2 (10-01), p3=200/20/4 (10-02), p7=11 (09-30);
-            pg2(quốc gia trống -> Brazil từ project ITL) p4=30/3/0 (10-02), p6=null (10-03);
-            pg3(Peru; Sible nhưng liên kết TẮT) p5=70/7/7 (10-03)
+  Facebook: pg1(Brazil) p1=100/10/1 & p2=50/5/2 (10-01), p3=200/20/4 (10-02), p7=11 (09-30);
+            pg2(Brazil) p4=30/3/0 (10-02), p6=null (10-03);
+            pg3(Peru; managed nhưng active=False) p5=70/7/7 (10-03)
   YouTube : ch1(Peru) 10-01=40, 10-02=0 ; ch2(quốc gia trống) 10-01=60, 10-03=10
   Sự kiện post_ok: e1(10-01) e2(10-02) e3(10-02) e4(10-03) e5(10-01) | post_fail e6 | trước kỳ: e7(09-30)
   `videos_posted` = SỐ BÀI theo ngày đăng (như biểu đồ traffic), ngày không có bài mới lấy event: 01-03/10 có 6 bài
@@ -81,13 +81,12 @@ async def test_country_tags_and_metrics_catalogue(seeded):
     assert [m["key"] for m in metrics] == ["views", "interactions", "comments", "videos"]
 
 
-async def test_channel_breakdown_counts_pairs_per_topic(seeded):
+async def test_channel_breakdown_counts_channels_per_platform_and_country(seeded):
     body = (await seeded.get("/v1/analytics/channel-breakdown")).json()
-    assert body["total"] == {"managed": 6, "active": 5}
+    assert body["total"] == {"managed": 5, "active": 4}
     fb, yt = body["by_platform"]
-    assert fb == {"platform": "facebook", "managed": 4, "active": 3,
-                  "by_group": [{"group": "ITL", "managed": 2, "active": 2}, {"group": "Sible", "managed": 2, "active": 1}],
-                  "by_country": [{"country": "Brazil", "managed": 3, "active": 3},
+    assert fb == {"platform": "facebook", "managed": 3, "active": 2,
+                  "by_country": [{"country": "Brazil", "managed": 2, "active": 2},
                                  {"country": "Peru", "managed": 1, "active": 0}]}
     assert yt == {"platform": "youtube", "managed": 2, "active": 2,
                   "by_country": [{"country": "Khác", "managed": 1, "active": 1},

@@ -1,15 +1,15 @@
 """Canonical Export (Integration -> Analytics): trạng thái canonical đã commit, phân trang theo `revision`.
 
 Analytics KHÔNG đọc DB Integration và không đọc payload thô. Mọi bản ghi ở đây chỉ có thể sinh ra từ snapshot đã commit
-(hoặc upsert trực tiếp resource/project): staging và snapshot building/failed/abandoned nằm ở bảng khác nên không bao giờ lộ ra.
+(hoặc upsert trực tiếp resource): staging và snapshot building/failed/abandoned nằm ở bảng khác nên không bao giờ lộ ra.
 """
 
 from __future__ import annotations
 
 import asyncpg
 
-KINDS = ("projects", "resources", "content", "metrics", "events")
-_TABLE = {"projects": "projects", "resources": "resources", "content": "content_items",
+KINDS = ("resources", "content", "metrics", "events")
+_TABLE = {"resources": "resources", "content": "content_items",
           "metrics": "daily_metrics", "events": "activity_events"}
 
 
@@ -17,21 +17,13 @@ def _base(row: dict) -> dict:
     return {"id": row["id"], "revision": row["revision"], "removed": row["removed"]}
 
 
-def _project(r: dict) -> dict:
-    return {**_base(r), "owner_account_id": r["owner_account_id"], "client_id": r["client_id"],
-            "project_key": r["project_key"], "platform": r["platform"], "name": r["name"],
-            "country_code": r["country_code"], "enabled": r["enabled"], "metadata": r["metadata"]}
-
-
 def _resource(r: dict) -> dict:
     d = r["data"]
-    projects = d.get("projects") or []
     return {**_base(r), "owner_account_id": r["owner_account_id"], "client_id": r["client_id"],
             "platform": r["platform"], "resource_type": r["resource_type"], "external_id": r["external_id"],
             "state": r["state"], "observed_at": r["observed_at"], "display_name": d.get("display_name"),
             "username": d.get("username"), "url": d.get("url"), "country": d.get("country"),
             "managed": d.get("managed"), "active": d.get("active"), "extensions": d.get("extensions", {}),
-            "projects": projects, "project_keys": [p["project_key"] for p in projects],
             "execution_mode": r["execution_mode"], "origin": r["origin"]}
 
 
@@ -58,13 +50,12 @@ def _event(r: dict) -> dict:
     return {**_base(r), "owner_account_id": r["owner_account_id"], "client_id": r["client_id"],
             "platform": r["platform"], "resource_id": r["resource_id"], "resource_type": r["resource_type"],
             "resource_external_id": r["resource_external_id"], "external_id": r["external_id"], "kind": r["kind"],
-            "occurred_date": r["occurred_date"], "occurred_at": d.get("occurred_at"), "project_key": d.get("project_key"),
+            "occurred_date": r["occurred_date"], "occurred_at": d.get("occurred_at"),
             "extensions": d.get("extensions", {}), "observed_at": r["observed_at"]}
 
 
-_SHAPE = {"projects": _project, "resources": _resource, "content": _content, "metrics": _metric, "events": _event}
+_SHAPE = {"resources": _resource, "content": _content, "metrics": _metric, "events": _event}
 _SELECT = {
-    "projects": "SELECT t.* FROM projects t",
     "resources": "SELECT t.* FROM resources t",
     "content": "SELECT t.*, r.external_id AS resource_external_id, r.resource_type AS resource_type FROM content_items t "
                "JOIN resources r ON r.id = t.resource_id",
@@ -97,7 +88,6 @@ async def export(conn: asyncpg.Connection, kind: str, after_revision: int, limit
 # Biểu thức SQL của MỘT dòng checksum cho từng kind — PHẢI trùng `analytics_service.readmodels.canonical.checksum_line`:
 #   <khoá tự nhiên>|<revision>|<0/1 removed>[|<số liệu hiển thị>]   (null/vắng viết `n`; phần tử khoá vắng viết rỗng)
 # Khoá tự nhiên (bản ghi con lấy resource_type/external_id từ resource cha `r`):
-#   projects : owner|project_key
 #   resources: owner|platform|resource_type|external_id
 #   content  : owner|platform|resource_type|resource_external_id|external_id  + |views,reactions,comments
 #   metrics  : owner|platform|resource_type|resource_external_id|YYYY-MM-DD   + |views
@@ -110,7 +100,6 @@ def _m(name: str) -> str:
 
 
 _LINE = {
-    "projects": f"format('%s|%s|%s|%s', t.owner_account_id, t.project_key, t.revision, {_RM})",
     "resources": f"format('%s|%s|%s|%s|%s|%s', t.owner_account_id, t.platform, t.resource_type, t.external_id, "
                  f"t.revision, {_RM})",
     "content": f"format('%s|%s|%s|%s|%s|%s|%s|%s,%s,%s', t.owner_account_id, t.platform, r.resource_type, "
@@ -120,7 +109,7 @@ _LINE = {
     "events": f"format('%s|%s|%s|%s|%s|%s|%s', t.owner_account_id, t.platform, r.resource_type, r.external_id, "
               f"t.external_id, t.revision, {_RM})",
 }
-_FROM = {kind: f"{_TABLE[kind]} t" + ("" if kind in ("projects", "resources") else " JOIN resources r ON r.id = t.resource_id")
+_FROM = {kind: f"{_TABLE[kind]} t" + ("" if kind == "resources" else " JOIN resources r ON r.id = t.resource_id")
          for kind in KINDS}
 
 CHECKSUM_ALGORITHM = ("sha256(join(LF, sorted(<natural_key>|<revision>|<removed 0/1>[|<displayed metrics>]))); "

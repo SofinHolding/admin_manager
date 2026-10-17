@@ -18,7 +18,7 @@ def _total_views(ds: Dataset, days: list[str], sel: Selection) -> int:
     return sum(v for v in daily.values() if v) + sum(v for v in content.values() if v)
 
 
-def summary(ds: Dataset, sel: Selection, date_from: str, date_to: str, project: str = "") -> dict:
+def summary(ds: Dataset, sel: Selection, date_from: str, date_to: str) -> dict:
     days = days_between(date_from, date_to)
     total_views = _total_views(ds, days, sel)
 
@@ -26,8 +26,8 @@ def summary(ds: Dataset, sel: Selection, date_from: str, date_to: str, project: 
     pdays = days_between(prev_from, prev_to)
     total_prev = _total_views(ds, pdays, sel) if pdays else 0
 
-    videos = sum(videos_by_day(ds, days, sel, project).values())
-    videos_prev = sum(videos_by_day(ds, pdays, sel, project).values()) if pdays else 0
+    videos = sum(videos_by_day(ds, days, sel).values())
+    videos_prev = sum(videos_by_day(ds, pdays, sel).values()) if pdays else 0
 
     managed: set = set()
     active: set = set()
@@ -35,8 +35,6 @@ def summary(ds: Dataset, sel: Selection, date_from: str, date_to: str, project: 
         if not sel.allows(e.key):
             continue
         units = channel_units(ds, e)
-        if project:
-            units = [u for u in units if u.project_key == project] or units
         if any(u.managed for u in units):
             managed.add(e.key)
         if any(u.active for u in units):

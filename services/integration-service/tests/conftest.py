@@ -164,6 +164,7 @@ async def db(migrated):
     async with database.connection() as conn:
         await conn.execute(f"TRUNCATE {_TABLES} RESTART IDENTITY CASCADE")
         await conn.execute("ALTER SEQUENCE canonical_revision_seq RESTART")
+        await conn.execute("DELETE FROM platform_aliases")
         await conn.execute("DELETE FROM platform_registry WHERE key <> ALL($1::text[])", list(SEED_PLATFORMS))
         await conn.execute("DELETE FROM metric_registry WHERE key <> ALL($1::text[])", list(SEED_METRICS))
         await conn.execute("UPDATE platform_registry SET enabled = true")

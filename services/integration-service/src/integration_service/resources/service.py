@@ -18,7 +18,30 @@ from integration_service.errors import forbidden, not_found
 from integration_service.feed import events
 from integration_service.feed import repository as outbox
 from integration_service.ingest import merge, schemas, validate
+from integration_service.mapping import EFFECTIVE_MAPPING_SQL
 from integration_service.platforms import repository as registry
+from integration_service.resources.user_channels import build_user_channels
+
+_USER_CHANNELS = (
+    "SELECT r.id, r.owner_account_id, COALESCE(p.username, '') AS owner_username, r.platform, r.resource_type, r.external_id, "
+    "COALESCE(r.data ->> 'display_name', '') AS display_name, COALESCE(r.data ->> 'url', '') AS url, "
+    "r.origin, r.execution_mode, r.state, r.removed, r.created_at, r.updated_at, "
+    "lj.status AS last_job_status, lj.updated_at AS last_job_at, "
+    "COALESCE(ci.n, 0) AS content_count, ci.last_observed_at "
+    "FROM resources r LEFT JOIN account_projection p ON p.account_id = r.owner_account_id "
+    "LEFT JOIN LATERAL (SELECT j.status, j.updated_at FROM jobs j WHERE j.resource_id = r.id "
+    "ORDER BY j.created_at DESC, j.id DESC LIMIT 1) lj ON true "
+    "LEFT JOIN LATERAL (SELECT count(*) AS n, max(c.observed_at) AS last_observed_at FROM content_items c "
+    "WHERE c.resource_id = r.id AND NOT c.removed) ci ON true "
+    "WHERE r.resource_type <> 'group' AND ($1::text IS NULL OR r.owner_account_id = $1) AND ($2::boolean OR NOT r.removed) "
+    "ORDER BY COALESCE(p.username, ''), r.owner_account_id, r.removed, r.platform, r.created_at, r.id")
+
+
+# Giá trị hiệu lực của `mapping_status` (xem `mapping.py`) + số video đã có số liệu và lần thu gần nhất của kênh — để Tool đối chiếu với website.
+_MAPPING_AND_DATA = (EFFECTIVE_MAPPING_SQL + " AS mapping_status, "
+                     "COALESCE(dc.n, 0) AS content_count, dc.last_observed_at AS last_collected_at, ")
+_DATA_JOIN = ("LEFT JOIN LATERAL (SELECT count(*) AS n, max(c.observed_at) AS last_observed_at FROM content_items c "
+              "WHERE c.resource_id = r.id AND NOT c.removed) dc ON true ")
 
 
 class ResourceService:
@@ -28,8 +51,12 @@ class ResourceService:
 
     async def upsert_batch(self, conn: asyncpg.Connection, ctx: MachineContext, items: list) -> dict:
         enabled = await registry.enabled_platforms(conn)
+        codes = await registry.code_map(conn)   # mã Tool gửi (chính/phụ) -> mã chính; lưu & kiểm quyền theo mã chính
+        items = [{**it, "platform": codes.get(it["platform"], it["platform"])}
+                 if isinstance(it, dict) and isinstance(it.get("platform"), str) else it for it in items]
         requested = {it["platform"] for it in items if isinstance(it, dict) and isinstance(it.get("platform"), str)}
-        denied = sorted(p for p in requested if p not in ctx.allowed_platforms or p not in enabled)
+        denied = sorted(p for p in requested if p not in ctx.allowed_platforms or p not in enabled
+                        or (ctx.delegated_platform is not None and p != ctx.delegated_platform))
         if denied:  # platform là vấn đề PHÂN QUYỀN, từ chối cả request
             raise forbidden(ErrorCode.PLATFORM_NOT_ALLOWED, "Platform không nằm trong phạm vi client được phép",
                             {"platforms": denied[:10]})
@@ -70,6 +97,9 @@ class ResourceService:
         Các client_kind khác:
           → chỉ thấy resource của chính owner_account_id của key.
         """
+        if platform:   # bộ lọc nhận mã bất kỳ (chính/phụ) -> mã chính, khớp cột `platform` đã chuẩn hoá lúc lưu
+            async with self._db.connection() as conn:
+                platform = await registry.resolve(conn, platform)
         is_shared = ctx.client_kind == "fallback_tool"
         # owner filter: shared + có param → lọc param; shared + không param → tất cả; không shared → chỉ self
         effective_owner = owner_account_id if (is_shared and owner_account_id) else (
@@ -85,10 +115,11 @@ class ResourceService:
                 "COALESCE(r.data->>'username','') AS username, "
                 "COALESCE(r.data->>'url','') AS url, "
                 "r.state, "
-                "COALESCE(r.data->'extensions'->'legacy'->>'mapping_status','unmapped') AS mapping_status, "
+                + _MAPPING_AND_DATA +
                 "r.execution_mode, (r.state = 'active') AS enabled "
                 "FROM resources r "
                 "LEFT JOIN account_projection p ON p.account_id = r.owner_account_id "
+                + _DATA_JOIN +
                 "WHERE NOT r.removed "
                 "AND ($1 = '' OR r.owner_account_id = $1) "
                 "AND ($2 = '' OR r.platform = $2) "
@@ -98,26 +129,27 @@ class ResourceService:
             params = (effective_owner, platform, resource_type)
         else:
             sql = (
-                "SELECT id, platform, resource_type, external_id, "
-                "owner_account_id, '' AS owner_username, "
-                "COALESCE(data->>'display_name','') AS display_name, "
-                "COALESCE(data->>'username','') AS username, "
-                "COALESCE(data->>'url','') AS url, "
-                "state, "
-                "COALESCE(data->'extensions'->'legacy'->>'mapping_status','unmapped') AS mapping_status, "
-                "execution_mode, (state = 'active') AS enabled "
-                "FROM resources "
-                "WHERE owner_account_id = $1 AND NOT removed "
-                "AND ($2 = '' OR platform = $2) "
-                "AND ($3 = '' OR resource_type = $3) "
-                "ORDER BY platform, COALESCE(data->>'display_name','')"
+                "SELECT r.id, r.platform, r.resource_type, r.external_id, "
+                "r.owner_account_id, '' AS owner_username, "
+                "COALESCE(r.data->>'display_name','') AS display_name, "
+                "COALESCE(r.data->>'username','') AS username, "
+                "COALESCE(r.data->>'url','') AS url, "
+                "r.state, "
+                + _MAPPING_AND_DATA +
+                "r.execution_mode, (r.state = 'active') AS enabled "
+                "FROM resources r "
+                + _DATA_JOIN +
+                "WHERE r.owner_account_id = $1 AND NOT r.removed "
+                "AND ($2 = '' OR r.platform = $2) "
+                "AND ($3 = '' OR r.resource_type = $3) "
+                "ORDER BY r.platform, COALESCE(r.data->>'display_name','')"
             )
             params = (ctx.owner_account_id, platform, resource_type)
 
         async with self._db.connection() as conn:
             rows = await conn.fetch(sql, *params)
         return {
-            "items": [dict(r) for r in rows],
+            "items": [{**dict(r), "last_collected_at": r["last_collected_at"].isoformat() if r["last_collected_at"] else None} for r in rows],
             "is_shared": is_shared,
             "owner_account_id": ctx.owner_account_id,
         }
@@ -141,6 +173,14 @@ class ResourceService:
                 "ORDER BY COALESCE(p.username,''), r.owner_account_id",
             )
         return {"users": [dict(r) for r in rows]}
+
+    async def list_user_channels(self, *, owner_account_id: str = "", include_removed: bool = True) -> dict:
+        """Trang quản trị "Kênh theo người dùng": MỌI kênh của mọi user (nhập từ website lẫn do Tool đẩy), kèm job gần nhất và số video
+        đã có số liệu, gom theo user. `shared_tool_visible` = Tool dùng chung có thấy kênh đó không (cùng quy tắc `system_api.shared_view`).
+        `include_removed`: kèm cả kênh đã xoá (mềm) để giải thích vì sao một kênh/user không còn xuất hiện ở Tool."""
+        async with self._db.connection() as conn:
+            rows = await conn.fetch(_USER_CHANNELS, owner_account_id or None, include_removed)
+        return build_user_channels([dict(r) for r in rows])
 
     async def admin_set_state(self, resource_id: str, state: str) -> dict:
         """Admin bật/tắt resource (đổi ngoài snapshot => resource.changed)."""

@@ -50,8 +50,8 @@ async def test_idempotency_key_is_stable_for_same_body_and_different_for_differe
     s = Server()
     c = client(s)
     for _ in range(2):
-        await c.put_project("p1", name="A", platform="facebook")
-    await c.put_project("p1", name="B", platform="facebook")
+        await c.resources_batch([{"platform": "facebook", "resource_type": "page", "external_id": "a"}])
+    await c.resources_batch([{"platform": "facebook", "resource_type": "page", "external_id": "b"}])
     keys = [r.headers["idempotency-key"] for r in s.requests]
     assert keys[0] == keys[1] != keys[2]
 
@@ -127,6 +127,31 @@ async def test_push_snapshot_stops_before_commit_when_an_upload_fails():
         await client(s).push_snapshot(platform="facebook", observed_at="2026-10-05T00:00:00Z", report_timezone="UTC",
                                       content=[{"external_id": "bad"}])
     assert not any(r.url.path.endswith("/commit") for r in s.requests)  # lỗi giữa chừng ⇒ không commit
+
+
+async def test_push_by_platform_makes_one_snapshot_per_platform_each_with_its_own_code():
+    s = Server()
+    out = await client(s).push_by_platform(
+        {"tt": {"content": [{"external_id": "v1"}]}, "facebook": {"resources": [{"external_id": "p"}], "events": [{"external_id": "e"}]},
+         "youtube": {}},   # không có dữ liệu => không tạo snapshot rỗng
+        observed_at="2026-10-05T00:00:00Z", report_timezone="UTC", snapshot_type="delta")
+    created = [body(r) for r in s.requests if r.url.path == "/v1/integrations/snapshots"]
+    assert [c["platform"] for c in created] == ["tt", "facebook"]
+    assert [c["expected_counts"] for c in created] == [{"content": 1}, {"resources": 1, "events": 1}]
+    assert sum(r.url.path.endswith("/commit") for r in s.requests) == 2 and list(out) == ["tt", "facebook"]
+
+
+async def test_push_by_platform_stops_at_the_first_rejected_code_and_commits_nothing_for_it():
+    s = Server()
+    s.script = [httpx.Response(403, json={"ok": False, "error": {"code": "PLATFORM_NOT_ALLOWED", "message": "x"}})]
+    with pytest.raises(IntegrationError) as e:
+        await client(s).push_by_platform({"khong_co": {"content": [{"external_id": "v"}]}, "facebook": {"content": [{"external_id": "w"}]}},
+                                         observed_at="2026-10-05T00:00:00Z", report_timezone="UTC")
+    assert e.value.code == "PLATFORM_NOT_ALLOWED"
+    assert len(s.requests) == 1 and not any(r.url.path.endswith("/commit") for r in s.requests)   # không gửi tiếp gì cả
+    with pytest.raises(ValueError):
+        await client(Server()).push_by_platform({"facebook": {"videos": []}}, observed_at="2026-10-05T00:00:00Z",
+                                                report_timezone="UTC")
 
 
 async def test_client_never_sends_owner_fields():

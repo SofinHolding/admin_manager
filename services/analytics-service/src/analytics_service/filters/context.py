@@ -25,7 +25,6 @@ class FilterQuery:
                                       description="admin/dash_admin: soi một account; người khác bị ép về chính mình"),
         platform: str = Query("", max_length=40, description="nền tảng (dữ liệu, vd youtube/facebook)"),
         country: str = Query("", max_length=100, description="tên quốc gia (alias → tên chuẩn, không phân biệt hoa/thường)"),
-        project: str = Query("", max_length=100, description="project_key (chủ đề/nguồn)"),
         group_id: str = Query("", max_length=64, description="nhóm kênh do viewer tạo"),
         platform_tag: str = Query("", max_length=50,
                                   description="nhãn nền tảng tự do của nhóm kênh (hoặc tên nền tảng gốc)"),
@@ -35,7 +34,6 @@ class FilterQuery:
         self.owner_account_id = owner_account_id.strip()
         self.platform = platform.strip()
         self.country = country.strip()
-        self.project = project.strip()
         self.group_id = group_id.strip()
         self.platform_tag = platform_tag.strip()
 
@@ -47,7 +45,6 @@ class FilterContext:
     owner_account_id: str | None     # None = xuyên owner (chỉ admin/dash_admin không chỉ định owner)
     platform: str = ""
     country: str = ""
-    project: str = ""
     group_id: str = ""
     platform_tag: str = ""
 
@@ -63,7 +60,7 @@ class FilterContext:
     def as_filter(self) -> dict:
         """Bộ lọc ĐÃ ÁP DỤNG (sau khi ép quyền) — trả trong mọi response."""
         return {"date_from": self.date_from, "date_to": self.date_to, "owner_account_id": self.owner_account_id,
-                "platform": self.platform, "country": self.country, "project": self.project,
+                "platform": self.platform, "country": self.country,
                 "group_id": self.group_id, "platform_tag": self.platform_tag}
 
     def cache_hash(self, extra: dict | None = None) -> str:
@@ -106,5 +103,5 @@ def build_filter_context(query: FilterQuery, principal: Principal, *, today: dat
     else:
         owner = principal.sub
     return FilterContext(date_from=date_from, date_to=date_to, owner_account_id=owner, platform=query.platform,
-                         country=query.country, project=query.project, group_id=query.group_id,
+                         country=query.country, group_id=query.group_id,
                          platform_tag=query.platform_tag)

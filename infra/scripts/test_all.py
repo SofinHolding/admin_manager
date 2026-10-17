@@ -104,7 +104,8 @@ def pytest_suites(fast: bool, legacy: bool) -> list[tuple[str, Path]]:
            ("contract", ROOT / "tests" / "contract"),
            ("pkg:contracts", ROOT / "packages" / "contracts" / "python"),
            ("pkg:observability", ROOT / "packages" / "observability"),
-           ("pkg:sdk-python", ROOT / "packages" / "sdk-python")]
+           ("pkg:sdk-python", ROOT / "packages" / "sdk-python"),
+           ("app:collector", ROOT / "apps" / "local-fallback-tool")]
     for name, svc in REGISTRY["services"].items():
         if (ROOT / svc["path"]).is_dir() and ((ROOT / svc["path"] / "tests").is_dir() or name == "reward-service"):
             out.append((f"svc:{name}", ROOT / svc["path"]))
@@ -143,14 +144,20 @@ def run_cmd(label: str, cmd: list[str], cwd: Path) -> dict:
             "failed": 0 if proc.returncode == 0 else 1, "skipped": 0, "output": text}
 
 
-def frontend_suites() -> list[tuple[str, list[str]]]:
+def frontend_suites() -> list[tuple[str, tuple[list[str], Path]]]:
+    """Mỗi bước = (nhãn, (lệnh, thư mục chạy)). Hai app có kiểm kiểu: manager-web (đủ bộ) và local-fallback-tool (typecheck)."""
+    steps: list[tuple[str, tuple[list[str], Path]]] = []
     web = ROOT / "apps" / "manager-web"
-    if not (web / "package.json").is_file():
-        return []
-    steps = []
-    if not (web / "node_modules").is_dir():
-        steps.append(("web:install", ["npm", "ci", "--no-audit", "--no-fund"]))
-    steps += [("web:typecheck", ["npm", "run", "typecheck"]), ("web:test", ["npm", "test"]), ("web:build", ["npm", "run", "build"])]
+    if (web / "package.json").is_file():
+        if not (web / "node_modules").is_dir():
+            steps.append(("web:install", (["npm", "ci", "--no-audit", "--no-fund"], web)))
+        steps += [("web:typecheck", (["npm", "run", "typecheck"], web)), ("web:test", (["npm", "test"], web)),
+                  ("web:build", (["npm", "run", "build"], web))]
+    tool = ROOT / "apps" / "local-fallback-tool"
+    if (tool / "package.json").is_file():
+        if not (tool / "node_modules").is_dir():   # không tải binary Electron: typecheck không cần
+            steps.append(("collector-ui:install", (["npm", "ci", "--no-audit", "--no-fund"], tool)))
+        steps.append(("collector-ui:typecheck", (["npm", "run", "typecheck"], tool)))
     return steps
 
 
@@ -185,7 +192,7 @@ def main() -> int:
         if args.only and args.only not in label:
             continue
         log(f"… {label}")
-        r = run_pytest(label, target) if isinstance(target, Path) else run_cmd(label, target, ROOT / "apps" / "manager-web")
+        r = run_pytest(label, target) if isinstance(target, Path) else run_cmd(label, target[0], target[1])
         results.append(r)
         if r["code"] != 0:
             print(r["output"][-2500:])

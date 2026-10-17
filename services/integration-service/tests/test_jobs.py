@@ -144,12 +144,18 @@ async def test_claim_respects_limit_priority_and_lease_cap(w):
     assert r.status_code == 422
 
 
-async def test_claim_never_returns_other_owners_jobs(env):
-    a, b = await make_world(env, ext="a"), await make_world(env, ext="b")
+async def test_claim_ownership_is_decided_by_system_scope_not_by_job_order(env):
+    """Client dùng chung (thuộc admin) chỉ nhận job của owner KHÁC khi có `jobs:claim:system`. Trước đây test này cho cả hai
+    tool scope hệ thống rồi kỳ vọng mỗi tool chỉ nhận job của mình — sai thiết kế nên chập chờn theo tie-break `id`."""
+    a, b = await make_world(env, ext="a", system=False), await make_world(env, ext="b", system=False)
     ja, jb = await a.job(), await b.job()
-    assert [j["job_id"] for j in await claim(a.tool, a.ins, limit=1)] == [ja["job_id"]]
-    assert [j["job_id"] for j in await claim(b.tool, b.ins, limit=1)] == [jb["job_id"]]
-    assert (await b.state(ja["job_id"]))["claimed_by_client"] == a.tool.client_id
+    assert await claim(a.tool, a.ins, limit=5) == []     # không system: job thuộc user khác owner của key => không thấy
+    assert await claim(b.tool, b.ins, limit=5) == []
+    s = await make_world(env, ext="s")                    # có system scope: nhận job của mọi owner
+    js = await s.job()
+    got = {j["job_id"] for j in await claim(s.tool, s.ins, limit=5)}
+    assert got == {ja["job_id"], jb["job_id"], js["job_id"]}
+    assert (await b.state(ja["job_id"]))["claimed_by_client"] == s.tool.client_id
 
 
 async def test_claim_rejects_owner_fields_and_foreign_installation(env):

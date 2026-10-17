@@ -1,4 +1,4 @@
-"""Handshake, project/resource upsert ngoài snapshot, giới hạn body/batch, owner spoof, gzip."""
+"""Handshake, resource upsert ngoài snapshot, giới hạn body/batch, owner spoof, gzip."""
 
 from __future__ import annotations
 
@@ -68,45 +68,23 @@ async def test_handshake_rejects_owner_fields_and_unknown_fields(env):
     assert await env.scalar("SELECT count(*) FROM installations") == 0
 
 
-# ── Project ─────────────────────────────────────────────────────────────────────
+# ── Project đã gỡ khỏi hợp đồng (phân loại kênh bằng Nhóm kênh) ────────────────────────────────────────────────
 
-async def test_project_upsert_create_update_and_noop(env):
+async def test_project_fields_are_no_longer_part_of_the_contract(env):
     tool = await env.tool()
-    body = {"name": "ITL", "platform": "facebook", "country_code": "BR", "metadata": {"campaign": "x"}}
-    c = (await tool.put("/v1/integrations/projects/itl", body)).json()["data"]
-    assert c["created"] is True and c["changed"] is True and c["project"]["revision"] == 1
-    same = (await tool.put("/v1/integrations/projects/itl", body)).json()["data"]
-    assert same["created"] is False and same["changed"] is False and same["project"]["revision"] == 1
-    upd = (await tool.put("/v1/integrations/projects/itl", {**body, "name": "ITL 2"})).json()["data"]
-    assert upd["changed"] is True and upd["project"]["revision"] == 2 and upd["project"]["name"] == "ITL 2"
-    items = (await canonical(env, "projects"))["items"]
-    assert len(items) == 1 and items[0]["project_key"] == "itl" and items[0]["owner_account_id"] == tool.owner
-
-
-async def test_project_validation_and_owner_spoof(env):
-    tool = await env.tool()
-    for key, body in (("itl", {"name": "n", "owner_account_id": "acc_x"}), ("itl", {}), ("itl", {"name": ""}),
-                      ("itl", {"name": "n", "country_code": "br"}), ("itl", {"name": "n", "bogus": 1}),
-                      ("BAD-KEY", {"name": "n"}), ("1abc", {"name": "n"})):
-        r = await tool.put(f"/v1/integrations/projects/{key}", body)
-        assert r.status_code == 422, (key, body)
-        assert r.json()["error"]["code"] == "PROJECT_VALIDATION_FAILED"
+    r = await tool.post(RB, {"items": [
+        rb("p1", project_key="itl"), rb("p2", projects=[{"project_key": "itl", "enabled": True}]), rb("ok")]})
+    d = r.json()["data"]
+    assert (d["created"], d["rejected"]) == (1, 2) and {x["external_id"] for x in d["rejections"]} == {"p1", "p2"}
     assert await env.scalar("SELECT count(*) FROM projects") == 0
-
-
-async def test_projects_are_scoped_per_owner(env):
-    a, b = await env.tool(), await env.tool()
-    await a.put("/v1/integrations/projects/itl", {"name": "A"})
-    await b.put("/v1/integrations/projects/itl", {"name": "B"})
-    rows = await env.rows("SELECT owner_account_id, name FROM projects ORDER BY name")
-    assert [(r["name"]) for r in rows] == ["A", "B"] and rows[0]["owner_account_id"] != rows[1]["owner_account_id"]
+    assert (await tool.put("/v1/integrations/projects/itl", {"name": "x", "platform": "facebook"})).status_code == 404
 
 
 # ── Resource batch ──────────────────────────────────────────────────────────────
 
 async def test_resource_batch_upsert_lifecycle_with_events_and_revisions(env):
     tool = await env.tool()
-    r = await tool.post(RB, {"items": [rb("r1", display_name="One", project_key="itl", country_code="BR"),
+    r = await tool.post(RB, {"items": [rb("r1", display_name="One", country_code="BR"),
                                        rb("r2", display_name="Two")]})
     d = r.json()["data"]
     assert (d["received"], d["created"], d["updated"], d["unchanged"], d["rejected"]) == (2, 2, 0, 0, 0)
@@ -114,19 +92,29 @@ async def test_resource_batch_upsert_lifecycle_with_events_and_revisions(env):
     assert (await types(env)).count("resource.changed") == 2
     head1 = (await env.http.get("/internal/v1/canonical/summary", headers={"X-Service-Key": FEED_KEY_ANALYTICS})).json()["head_revision"]
 
-    same = (await tool.post(RB, {"items": [rb("r1", display_name="One", project_key="itl", country_code="BR")]})).json()["data"]
+    same = (await tool.post(RB, {"items": [rb("r1", display_name="One", country_code="BR")]})).json()["data"]
     assert same["unchanged"] == 1 and same["created"] == 0 and (await types(env)).count("resource.changed") == 2
     head2 = (await env.http.get("/internal/v1/canonical/summary", headers={"X-Service-Key": FEED_KEY_ANALYTICS})).json()["head_revision"]
     assert head2 == head1                                   # gửi lại y hệt: KHÔNG tăng revision
 
-    newer = (await tool.post(RB, {"items": [rb("r1", obs=5, display_name="One v2", project_key="itl", country_code="BR")]})).json()["data"]
+    newer = (await tool.post(RB, {"items": [rb("r1", obs=5, display_name="One v2", country_code="BR")]})).json()["data"]
     assert newer["updated"] == 1 and newer["items"][0]["status"] == "updated"
     older = (await tool.post(RB, {"items": [rb("r1", obs=-5, display_name="CU HON")]})).json()["data"]
     assert older["stale_ignored"] == 1 and older["items"][0]["status"] == "stale_ignored"
     cur = {i["external_id"]: i for i in (await canonical(env, "resources"))["items"]}
     assert cur["r1"]["display_name"] == "One v2" and cur["r1"]["country"] == {"code": "BR", "name": None}
-    assert cur["r1"]["project_keys"] == ["itl"]
     assert (await types(env)).count("resource.changed") == 3
+
+
+async def test_resource_stored_before_project_removal_is_not_bumped_by_a_resend(env):
+    """Kênh lưu từ trước có `data.projects` (khoá đã gỡ): gửi lại y hệt phải là `unchanged`, không tạo revision giả."""
+    tool = await env.tool()
+    await tool.post(RB, {"items": [rb("old1", display_name="One")]})
+    await env.rows("UPDATE resources SET data = data || '{\"projects\": []}'::jsonb WHERE external_id = 'old1'")
+    head = (await env.http.get("/internal/v1/canonical/summary", headers={"X-Service-Key": FEED_KEY_ANALYTICS})).json()["head_revision"]
+    again = (await tool.post(RB, {"items": [rb("old1", display_name="One")]})).json()["data"]
+    assert again["unchanged"] == 1 and again["updated"] == 0
+    assert (await env.http.get("/internal/v1/canonical/summary", headers={"X-Service-Key": FEED_KEY_ANALYTICS})).json()["head_revision"] == head
 
 
 async def test_resource_batch_partial_rejections_are_reported_not_dropped(env):
