@@ -291,7 +291,7 @@ export default function ChannelImportPage() {
           <div style={{ width: 1, height: 18, background: "var(--border)", flexShrink: 0 }} />
           {(["all", "mapped", "unmapped"] as const).map((v) => (
             <button key={v} onClick={() => setMappingFilter(v)} style={chip(mappingFilter === v)}>
-              {v === "all" ? "Mọi trạng thái map" : v === "mapped" ? "✓ mapped" : "— chưa map"}
+              {v === "all" ? "Mọi trạng thái liên kết" : v === "mapped" ? "✓ Đã liên kết" : "— Chưa liên kết"}
             </button>
           ))}
           <div style={{ width: 1, height: 18, background: "var(--border)", flexShrink: 0 }} />
