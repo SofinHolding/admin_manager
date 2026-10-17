@@ -341,6 +341,25 @@ describe("Dashboard — so sánh quốc gia chỉ ở biểu đồ RIÊNG", () =
     }
   });
 
+  it("tên quốc gia CHƯA chuẩn hoá (người dùng tự gõ) hiện đủ, nguyên văn, kể cả khi nhiều và trùng chữ khác hoa/thường", async () => {
+    const names = ["Vietnam", "vietnam", "U.S.A.", "Xứ Sở Tự Đặt", "Khác", ...Array.from({ length: 12 }, (_, i) => `Tự đặt ${i + 1}`)];
+    const totals = Object.fromEntries(names.map((n, i) => [n, 100 + i]));
+    const f = installFetch(
+      (c) => c.path === at("views-by-country")
+        ? jsonResponse({ countries: names, days: [{ date: "2026-09-06", ...totals }], totals, filter: {}, freshness: FRESH })
+        : c.path === at("country-tags") ? jsonResponse({ items: names.filter((n) => n !== "Khác").map((n) => ({ id: n, name: n })) })
+        : undefined,
+      analytics(),
+    );
+    renderDashboard("/dashboard");
+    await waitAllData(f);
+    expect(await screen.findByText("So sánh quốc gia")).toBeInTheDocument();
+    for (const n of names) {
+      expect(await screen.findByTitle(n)).toBeInTheDocument();        // mỗi quốc gia một hàng, không bị cắt top-N
+    }
+    expect(screen.getByTitle("Xứ Sở Tự Đặt").nextElementSibling?.nextElementSibling).toHaveTextContent("103");
+  });
+
   it("viewer không có thẻ so sánh nhân sự", async () => {
     const f = installFetch(analytics());
     renderDashboard("/dashboard", viewerUser);

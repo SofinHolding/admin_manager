@@ -218,6 +218,26 @@ async def test_country_alias_normalizes_everywhere(seeded):
     assert br["total_views"] == 380 and br["filter"]["country"] == "Brazil"
 
 
+async def test_unnormalized_country_is_visible_everywhere_so_admin_can_normalize_it_later(seeded):
+    """Tên quốc gia người dùng tự gõ (chưa có tên chuẩn/alias) KHÔNG được biến mất khỏi dashboard: vẫn hiện nguyên văn ở
+    biểu đồ quốc gia, danh mục lọc, phân rã kênh, so sánh; lọc theo nó ra đúng số; tổng các quốc gia = tổng view."""
+    free = "Xứ Sở Tự Đặt"
+    seeded.integration.update_item("resources", owner_account_id=OWN_A, platform="facebook", external_id="pg2",
+                                   country={"name": free})
+    await seeded.sync()
+    total = (await seeded.get("/v1/analytics/summary", **RANGE)).json()["total_views"]
+    vbc = (await seeded.get("/v1/analytics/views-by-country", **RANGE)).json()
+    assert free in vbc["countries"] and vbc["totals"][free] == 30 and vbc["totals"]["Brazil"] == 350   # tách đúng 30 view của pg2
+    assert sum(vbc["totals"].values()) == total                      # không rơi mất view nào khi quốc gia chưa chuẩn hoá
+    assert free in [t["name"] for t in (await seeded.get("/v1/analytics/country-tags")).json()["items"]]
+    cb = (await seeded.get("/v1/analytics/channel-breakdown")).json()
+    assert free in {c["country"] for p in cb["by_platform"] for c in p["by_country"]}
+    cmp_ = (await seeded.get("/v1/analytics/compare/country", **RANGE)).json()["items"]
+    assert next(i for i in cmp_ if i["id"] == free)["total"] == 30
+    by_name = (await seeded.get("/v1/analytics/summary", country=free, **RANGE)).json()
+    assert by_name["total_views"] == 30 and by_name["filter"]["country"] == free
+
+
 async def test_other_owners_group_settings_never_leak_into_my_numbers(seeded):
     """Override quốc gia / nhãn của nhóm thuộc người khác (trùng channel_ref) không được ảnh hưởng số của tôi."""
     await make_group(seeded, sub=OWN_B, name="GB", members=[("pg1", "leak-tag", "Atlantis")])
