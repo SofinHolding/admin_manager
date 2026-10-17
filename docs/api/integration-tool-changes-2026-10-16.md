@@ -134,7 +134,7 @@ Hiện Dashboard vẫn chỉ đọc `views/reactions/comments` của video; ch�
 | Kiểm lỗi | **Mọi** phản hồi phải được kiểm (HTTP ≥ 400, `rejected > 0`) — lỗi ⇒ job `fail`, không báo hoàn tất giả |
 
 Khởi động: nạp **file kết nối** Admin cấp cùng key (`connection-<client_id>.json`, `format: "manager-connection/1"`: `gateway`, `api_key`, `allowed_platforms`…) — `python collect.py --connection-file …`. Key cần scope `jobs:claim:system` để nhận job của mọi user.
-Collector chỉ nhận job của nền tảng nó có adapter ∩ nền tảng key được phép. **Adapter TikTok hiện là placeholder** (chưa lấy được danh sách video/chỉ số kênh) ⇒ job TikTok fail có lý do; khi có adapter chỉ cần điền `items` (video) và `channel_stats` (`followers/videos_posted/likes`) trong `collect.process_job` — phần đẩy lên, định dạng và lưu đã sẵn sàng và có test.
+Collector chỉ nhận job của nền tảng nó có adapter ∩ nền tảng key được phép. Adapter nằm trong `apps/local-fallback-tool/channel_collect.py` (YouTube Data API/yt-dlp, TikTok cookie Chrome cục bộ + tikwm, Facebook link bài/reel) và điền `items` (video) + `channel_stats` (`followers/videos_posted/likes`) cho `collect.process_job`; không lấy được số liệu hợp lệ nào ⇒ job `fail` kèm lý do thật, không ghi 0. Phần đẩy lên, định dạng và lưu đã có test.
 
 ## 5. Tool cá nhân (`primary_tool`)
 Tool có sẵn danh sách link kênh theo **quốc gia + nền tảng** (Tool tự đăng ký kênh vào hệ thống):

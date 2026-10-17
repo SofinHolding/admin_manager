@@ -22,6 +22,11 @@ interface LocalChannel {
   pulled_at: string;
   imported_at: string;
   updated_at: string;
+  video_count?: number;   // số link video đã lấy về máy (TikTok)
+}
+
+interface VideoLink {
+  video_id: string; url: string; title: string; published_at: string; views: number | null; fetched_at: string;
 }
 
 interface SystemEndpoint {
@@ -54,5 +59,10 @@ declare interface Window {
     setEnabled:     (ids: string[], enabled: boolean) => Promise<{ updated: number }>;
     login:          (url: string, username: string, password: string) => Promise<{ ok: boolean; access_token?: string; user?: { username: string }; error?: string }>;
     apiCall:        (path: string, token: string) => Promise<unknown>;
+    fetchTikTokLinks: (channelId: string, url: string) => Promise<
+      { ok: true; found: number; added: number; total: number; kind: "ok" | "empty"; via: string; browser_opens: number; export: string } | { error: string }>;
+    listVideos:     (channelId: string) => Promise<{ videos: VideoLink[] }>;
+    revealLinks:    (path: string) => Promise<{ ok: boolean; error?: string }>;
+    saveLinks:      (name: string, urls: string[]) => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
   };
 }

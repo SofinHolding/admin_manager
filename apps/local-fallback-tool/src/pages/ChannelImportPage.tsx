@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import VideoLinksDialog from "../components/VideoLinksDialog";
 
 // ── Platform metadata ─────────────────────────────────────────────────────────
 
@@ -44,6 +45,8 @@ export default function ChannelImportPage() {
   const [fetchNote,  setFetchNote]  = useState("");
   const [busy,       setBusy]       = useState(false);
   const [pullMsg,    setPullMsg]    = useState<{ ok: boolean; text: string } | null>(null);
+  const [linksBusy,  setLinksBusy]  = useState<string | null>(null);   // nhãn kênh đang lấy link
+  const [linksOf,    setLinksOf]    = useState<LocalChannel | null>(null);
 
   // Bộ lọc (lọc phía giao diện: dữ liệu cục bộ chỉ vài trăm dòng)
   const [ownerFilter,   setOwnerFilter]   = useState("");
@@ -100,6 +103,7 @@ export default function ChannelImportPage() {
   const byId = new Map(all.map((c) => [c.id, c]));
   const selUnpulled = [...selected].filter((id) => byId.get(id)?.pulled === 0);
   const selPulled   = [...selected].filter((id) => byId.get(id)?.pulled === 1);
+  const selTikTok   = selPulled.filter((id) => byId.get(id)?.platform === "tiktok");
 
   /** Kéo CHỈ các kênh chưa kéo trong lựa chọn; kênh đã kéo không bao giờ được gửi đi kéo lại. */
   const handlePull = async () => {
@@ -127,6 +131,29 @@ export default function ChannelImportPage() {
     } finally {
       setBusy(false);
     }
+  };
+
+  /** Lấy TẤT CẢ link video của các kênh TikTok đã kéo trong lựa chọn (lần lượt từng kênh; kênh lớn có thể mất vài phút). */
+  const handleFetchLinks = async () => {
+    if (!window.channels || busy || linksBusy || selTikTok.length === 0) return;
+    setPullMsg(null);
+    const lines: string[] = [];
+    let failed = 0;
+    try {
+      for (const id of selTikTok) {
+        const ch = byId.get(id);
+        if (!ch) continue;
+        const label = ch.display_name || ch.input_ref || ch.id;
+        setLinksBusy(label);
+        const res = await window.channels.fetchTikTokLinks(ch.id, ch.input_ref || ch.url);
+        if ("error" in res) { failed++; lines.push(`${label}: ${res.error}`); continue; }
+        lines.push(res.kind === "empty" ? `${label}: kênh chưa có video` : `${label}: ${res.found} link (mới ${res.added}, tổng ${res.total}) → ${res.export}`);
+      }
+    } finally {
+      setLinksBusy(null);
+      await reload();
+    }
+    setPullMsg({ ok: failed === 0, text: lines.join("\n") });
   };
 
   // ── Dẫn xuất ──────────────────────────────────────────────────────────────
@@ -222,7 +249,7 @@ export default function ChannelImportPage() {
         {/* Footer: Kéo kênh đã chọn */}
         <div style={{ flexShrink: 0, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--surface)" }}>
           {pullMsg && (
-            <div style={{ fontSize: 11, marginBottom: 6, color: pullMsg.ok ? "var(--green)" : "var(--red)" }}>
+            <div style={{ fontSize: 11, marginBottom: 6, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 140, overflowY: "auto", color: pullMsg.ok ? "var(--green)" : "var(--red)" }}>
               {pullMsg.ok ? "✓ " : ""}{pullMsg.text}
             </div>
           )}
@@ -293,6 +320,12 @@ export default function ChannelImportPage() {
             <button onClick={() => pulledAction("enable")}  disabled={busy || selPulled.length === 0} style={{ ...btnCss("ghost", busy || selPulled.length === 0), fontSize: 11, height: 26, color: "var(--green)" }}>⚡ Bật</button>
             <button onClick={() => pulledAction("disable")} disabled={busy || selPulled.length === 0} style={{ ...btnCss("ghost", busy || selPulled.length === 0), fontSize: 11, height: 26 }}>○ Tắt</button>
             <button onClick={() => pulledAction("unpull")}  disabled={busy || selPulled.length === 0} style={{ ...btnCss("ghost", busy || selPulled.length === 0), fontSize: 11, height: 26, color: "var(--red)" }}>Gỡ kết nối</button>
+            <div style={{ width: 1, height: 16, background: "var(--border)" }} />
+            <button onClick={handleFetchLinks} disabled={busy || !!linksBusy || selTikTok.length === 0}
+                    title="Mở Chrome/Edge chạy ẩn lấy cookie rồi liệt kê toàn bộ video của kênh TikTok (lưu trên máy + file .txt)"
+                    style={{ ...btnCss("ghost", busy || !!linksBusy || selTikTok.length === 0), fontSize: 11, height: 26, color: "var(--accent)" }}>
+              {linksBusy ? `Đang lấy: ${linksBusy}…` : `🔗 Lấy toàn bộ link video (${selTikTok.length} kênh TikTok)`}
+            </button>
           </div>
         )}
 
@@ -314,11 +347,13 @@ export default function ChannelImportPage() {
                 selected={selected}
                 onToggleCh={(id) => toggle([id], !selected.has(id))}
                 onToggleAll={(ids, add) => toggle(ids, add)}
+                onShowLinks={setLinksOf}
               />
             ))
           )}
         </div>
       </main>
+      {linksOf && <VideoLinksDialog channel={linksOf} onClose={() => setLinksOf(null)} />}
     </div>
   );
 }
@@ -342,12 +377,13 @@ function PlatTab({ active, count, color, onClick, children }: {
   );
 }
 
-function OwnerGroup({ ownerName, channels, selected, onToggleCh, onToggleAll }: {
+function OwnerGroup({ ownerName, channels, selected, onToggleCh, onToggleAll, onShowLinks }: {
   ownerName: string;
   channels: LocalChannel[];
   selected: Set<string>;
   onToggleCh: (id: string) => void;
   onToggleAll: (ids: string[], add: boolean) => void;
+  onShowLinks: (ch: LocalChannel) => void;
 }) {
   const [open, setOpen] = useState(true);
   const allIds = channels.map((c) => c.id);
@@ -378,7 +414,7 @@ function OwnerGroup({ ownerName, channels, selected, onToggleCh, onToggleAll }: 
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingLeft: 20 }}>
           {channels.map((ch) => (
-            <ChannelRow key={ch.id} ch={ch} selected={selected.has(ch.id)} onToggle={() => onToggleCh(ch.id)} />
+            <ChannelRow key={ch.id} ch={ch} selected={selected.has(ch.id)} onToggle={() => onToggleCh(ch.id)} onShowLinks={() => onShowLinks(ch)} />
           ))}
         </div>
       )}
@@ -386,7 +422,7 @@ function OwnerGroup({ ownerName, channels, selected, onToggleCh, onToggleAll }: 
   );
 }
 
-function ChannelRow({ ch, selected, onToggle }: { ch: LocalChannel; selected: boolean; onToggle: () => void }) {
+function ChannelRow({ ch, selected, onToggle, onShowLinks }: { ch: LocalChannel; selected: boolean; onToggle: () => void; onShowLinks: () => void }) {
   const meta   = PLATFORM_META[ch.platform] ?? PLATFORM_META.other;
   const label  = ch.display_name || ch.input_ref || ch.canonical_id || ch.id;
   const pulled = ch.pulled === 1;
@@ -435,6 +471,13 @@ function ChannelRow({ ch, selected, onToggle }: { ch: LocalChannel; selected: bo
       }}>
         {ch.mapping_status === "mapped" ? "mapped" : "chưa map"}
       </span>
+      {ch.platform === "tiktok" && (ch.video_count ?? 0) > 0 && (
+        <button type="button" title="Xem link video đã lấy về máy" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onShowLinks(); }}
+                style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, flexShrink: 0, cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
+                         background: "var(--bg)", color: "var(--accent)", border: "1px solid var(--border)" }}>
+          🔗 {ch.video_count} link
+        </button>
+      )}
       <span title="Ngày kéo về" style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0, minWidth: 56, textAlign: "right" }}>{dateStr}</span>
     </label>
   );

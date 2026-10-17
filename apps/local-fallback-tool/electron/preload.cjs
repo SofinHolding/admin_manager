@@ -14,6 +14,14 @@ contextBridge.exposeInMainWorld("collector", {
   endpoints:     ()         => ipcRenderer.invoke("collector:endpoints"),
   /** Chạy thử từng endpoint an toàn bằng cấu hình hiện tại (system_api.py probe). */
   probe:         ()         => ipcRenderer.invoke("collector:probe"),
+  /** Kiểm tra từng YouTube API key / proxy còn sống không. kind: "youtube-keys" | "proxies"; items: chuỗi gốc. Trả { results:[{item,state,detail,ms,ip?}] } hoặc { error }. */
+  checkPool:     (kind, items) => ipcRenderer.invoke("pool:check", { kind, items }),
+  /** Thêm hàng loạt vào danh sách key/proxy (mỗi dòng một mục). Trả { items, added, duplicate, bad } hoặc { error }. */
+  mergePool:     (kind, existing, text) => ipcRenderer.invoke("pool:merge", { kind, existing, text }),
+  /** Thử mở Chrome/Edge cục bộ (ẩn) — dùng lấy cookie TikTok thay AdsPower. Trả { ok, path, version, via_proxy } | { ok:false, error }. */
+  checkBrowser:  (chrome_path, proxy) => ipcRenderer.invoke("browser:check", { chrome_path, proxy }),
+  /** Chọn đường dẫn chrome.exe / msedge.exe. Trả { ok, path }. */
+  pickBrowser:   ()         => ipcRenderer.invoke("browser:pick"),
   readStatus:    ()         => ipcRenderer.invoke("collector:status:read"),
   /** Lắng nghe sự kiện scheduler (auto_started / auto_stopped). */
   onScheduleEvent: (cb) => ipcRenderer.on("collector:schedule:event", (_ev, data) => cb(data)),
@@ -53,4 +61,16 @@ contextBridge.exposeInMainWorld("channels", {
   /** Gọi /v1/ops/* với JWT admin (KHÔNG dùng machine api_key). */
   apiCall:
     (path, token)                         => ipcRenderer.invoke("channels:api-call", { path, token }),
+  /** Lấy TẤT CẢ link video của một kênh TikTok về máy. Trả { ok, found, added, total, kind, via, export } hoặc { error }. */
+  fetchTikTokLinks:
+    (channel_id, url)                     => ipcRenderer.invoke("tiktok:fetch-links", { channel_id, url }),
+  /** Link video đã lưu của một kênh. */
+  listVideos:
+    (channel_id)                          => ipcRenderer.invoke("channels:videos:list", { channel_id }),
+  /** Mở thư mục chứa file link đã xuất. */
+  revealLinks:
+    (path)                                => ipcRenderer.invoke("links:reveal", { path }),
+  /** Lưu danh sách link ra file .txt (hộp thoại chọn nơi lưu). */
+  saveLinks:
+    (name, urls)                          => ipcRenderer.invoke("links:save", { name, urls }),
 });

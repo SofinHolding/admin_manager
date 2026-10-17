@@ -2,33 +2,24 @@
 """
 collect.py — Thu thập dữ liệu kênh cho Shared Collector (fallback_tool).
 
-Chạy liên tục: claim collect-job từ integration-service → phân loại nền tảng
-(YouTube/TikTok/Facebook) → lấy danh sách video mới nhất → check view từng video
-qua script subprocess của CheckviewV2 → push snapshot.
+Chạy liên tục: claim collect-job từ integration-service → thu số liệu kênh theo nền tảng (`channel_collect.py`) → push snapshot.
 
-Phương pháp:
-  - YouTube : YouTube Data API v3 (yêu cầu API key trong env)
-  - TikTok  : tikwm.com public REST API (không cần key)
-  - Facebook: httpx scrape + cookie (yêu cầu FB_COOKIE trong env)
+Phương pháp (chi tiết ở channel_collect.py):
+  - YouTube : YouTube Data API v3, xoay NHIỀU API key (không có key thì yt-dlp)
+  - TikTok  : liệt kê video bằng cookie phiên lấy từ Chrome/Edge cục bộ (không cần AdsPower) + số liệu từng video qua tikwm
+  - Facebook: link bài/reel + cookie Facebook
+  Proxy: danh sách nhiều proxy, xoay vòng; proxy lỗi nghỉ ít phút rồi được thử lại.
 
-Contract CheckviewV2 (subprocess stdout 1 dòng JSON):
-  { "status": "ok"|"error", "username": str, "views": int, "likes": int,
-    "comments": int, "shares": int, "error"?: str }
+Khoá API / proxy / cookie đọc từ file cấu hình của tool (`--settings-file`, mặc định .dev/collector-config.json), KHÔNG truyền qua dòng lệnh.
 
 Cách chạy:
-  python collect.py \\
-    --gateway http://192.168.1.70:8480 \\
-    --api-key mpk_<key_id>.<secret> \\
-    --checkview-dir D:/workspace/CheckviewV2/backend/checker \\
-    --youtube-api-key AIza...                  # (hoặc env YOUTUBE_API_KEY)
-    [--proxy socks5://127.0.0.1:1080]
-    [--poll-interval 30]
-    [--max-concurrent 3]
+  python collect.py --connection-file connection-<client_id>.json [--settings-file .dev/collector-config.json]
+                    [--poll-interval 30] [--max-concurrent 3]
 
 Tham chiếu:
   - docs/architecture/shared-collector-design-v1.md §3-4 (delegated ingestion)
-  - D:/workspace/CheckviewV2/backend/checker/check_*.py
-  - D:/workspace/youtube_video/app/sources/yt_common.py  (resolve channel_id)
+  - D:/workspace/CheckviewV2/backend/checker (nguồn tham chiếu của các bộ kiểm tra)
+  - D:/workspace/youtube_video/app/sources (nguồn tham chiếu của việc lấy cookie / liệt kê video)
 """
 from __future__ import annotations
 
@@ -37,17 +28,16 @@ import asyncio
 import json
 import logging
 import os
-import re
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import httpx
 
+import channel_collect
 import channels_db
+from channel_collect import Credentials, JobAbort
 from system_api import DEFAULT_GATEWAY, SystemApi, report_tz, use_utf8_stdio
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -63,11 +53,6 @@ log = logging.getLogger("collect")
 # ── Hằng số ───────────────────────────────────────────────────────────────────
 
 PLATFORMS = ("youtube", "tiktok", "facebook")
-TIKWM_API = "https://www.tikwm.com/api/"
-YT_API = "https://www.googleapis.com/youtube/v3"
-_UC_RE = re.compile(r"^UC[A-Za-z0-9_-]{10,}$")
-_CHANNEL_PATH_RE = re.compile(r"/channel/(UC[A-Za-z0-9_-]+)")
-_HANDLE_RE = re.compile(r"(?:/@|@)([A-Za-z0-9._-]+)")
 
 # ── Kết nối / ánh xạ dữ liệu (thuần, có test: tests/test_collect_push.py) ────────────────────
 
@@ -96,14 +81,6 @@ class EnqueuePlan:
 
 def today_vn() -> str:
     return datetime.now(report_tz()).date().isoformat()
-
-
-class JobAbort(Exception):
-    """Job không thể hoàn tất vì lý do nghiệp vụ (không phải lỗi hạ tầng): báo `fail` kèm lý do; `retryable=False` = đừng thử lại."""
-
-    def __init__(self, message: str, *, retryable: bool = True) -> None:
-        super().__init__(message)
-        self.retryable = retryable
 
 
 class ConnectionFileError(Exception):
@@ -202,178 +179,9 @@ class StatusTracker:
         except Exception:  # noqa: BLE001
             pass
 
-# ── CheckviewV2 subprocess caller ─────────────────────────────────────────────
-
-def check_view_subprocess(
-    checker_dir: str,
-    platform: str,
-    url: str,
-    proxy: str | None = None,
-    cookie: str | None = None,
-    timeout: int = 60,
-) -> dict[str, Any]:
-    """
-    Gọi check_{platform}.py từ CheckviewV2 qua subprocess.
-
-    Contract đầu ra (1 dòng JSON):
-      { "status": "ok"|"error", "views": int, "likes": int,
-        "comments": int, "shares": int, "username": str }
-    """
-    script = Path(checker_dir) / f"check_{platform}.py"
-    if not script.exists():
-        return {"status": "error", "error": f"checker not found: {script}"}
-
-    env = os.environ.copy()
-    if cookie:
-        env["COOKIE"] = cookie
-    if proxy:
-        env["PROXY"] = proxy
-
-    try:
-        result = subprocess.run(
-            [sys.executable, str(script), "--url", url, "--kind", platform],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout, env=env,
-        )
-        if not result.stdout.strip():
-            return {"status": "error", "error": result.stderr.strip()[:300] or "empty output"}
-        return json.loads(result.stdout.strip().splitlines()[-1])
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "error": f"timeout {timeout}s"}
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "error": str(exc)[:200]}
-
-# ── YouTube channel resolver (pattern từ youtube_video/yt_common.py) ──────────
-
-async def resolve_youtube_channel(
-    input_ref: str, youtube_api_key: str, http: httpx.AsyncClient,
-) -> tuple[str, str] | None:
-    """
-    Resolve URL/@handle/channel-id → (channel_id, channel_title).
-    Pattern từ D:/workspace/youtube_video/app/sources/yt_common.py::resolve_channel_id.
-    """
-    # Trường hợp 1: UC{...} trực tiếp
-    s = input_ref.strip().lstrip("@")
-    if _UC_RE.match(s):
-        return s, ""
-
-    # Trường hợp 2: URL chứa /channel/UC...
-    m = _CHANNEL_PATH_RE.search(input_ref)
-    if m:
-        return m.group(1), ""
-
-    # Trường hợp 3: @handle hoặc /@handle
-    handle_m = _HANDLE_RE.search(input_ref) or (re.match(r"^@?([A-Za-z0-9._-]{3,100})$", input_ref))
-    handle = handle_m.group(1) if handle_m else None
-
-    if not handle:
-        log.warning("YouTube: không parse được input_ref=%s", input_ref)
-        return None
-
-    try:
-        r = await http.get(
-            f"{YT_API}/channels",
-            params={
-                "part": "snippet",
-                "forHandle": f"@{handle}" if not handle.startswith("@") else handle,
-                "key": youtube_api_key,
-                "maxResults": 1,
-            },
-        )
-        r.raise_for_status()
-        items = r.json().get("items", [])
-        if not items:
-            return None
-        ch = items[0]
-        return ch["id"], ch["snippet"]["title"]
-    except Exception as exc:  # noqa: BLE001
-        log.error("YouTube channel lookup failed: %s", exc)
-        return None
-
-async def fetch_youtube_recent_videos(
-    channel_id: str, youtube_api_key: str, http: httpx.AsyncClient, max_items: int = 30,
-) -> list[dict]:
-    """
-    Lấy video mới nhất của kênh qua playlistItems (playlist UU{channel_id[2:]}).
-    Pattern từ youtube_video/app/sources/youtube_scan.py::list_all_videos.
-    """
-    playlist_id = "UU" + channel_id[2:]
-    videos = []
-    page_token: str | None = None
-
-    while len(videos) < max_items:
-        params: dict[str, Any] = {
-            "part": "snippet,contentDetails",
-            "playlistId": playlist_id,
-            "maxResults": min(50, max_items - len(videos)),
-            "key": youtube_api_key,
-        }
-        if page_token:
-            params["pageToken"] = page_token
-        try:
-            r = await http.get(f"{YT_API}/playlistItems", params=params)
-            r.raise_for_status()
-            data = r.json()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("YouTube playlistItems error: %s", exc)
-            break
-
-        for item in data.get("items", []):
-            snip = item.get("snippet", {})
-            vid_id = snip.get("resourceId", {}).get("videoId", "")
-            if vid_id:
-                videos.append({
-                    "video_id": vid_id,
-                    "title": snip.get("title", ""),
-                    "published_at": snip.get("publishedAt", ""),
-                    "url": f"https://www.youtube.com/watch?v={vid_id}",
-                })
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
-
-    return videos
-
-# ── TikTok channel video listing (pattern từ tikwm.com API) ──────────────────
-
-async def fetch_tiktok_recent_videos(
-    username: str, http: httpx.AsyncClient, proxy: str | None = None, max_items: int = 30,
-) -> list[dict]:
-    """
-    Lấy video mới nhất của user TikTok qua tikwm.com.
-    Không cần cookie — giới hạn ~1 req/s.
-    """
-    clean = username.lstrip("@")
-    proxies = {"all://": proxy} if proxy else None
-    try:
-        # tikwm không có direct "user videos" endpoint đơn giản
-        # → dùng trang feed của user qua scrape nhẹ
-        client = httpx.AsyncClient(proxies=proxies, timeout=15) if proxies else http
-        r = await client.post(TIKWM_API, data={"url": f"https://www.tiktok.com/@{clean}", "hd": "0"})
-        r.raise_for_status()
-        d = r.json()
-        if d.get("code") != 0:
-            log.warning("TikTok tikwm error: %s", d.get("msg"))
-            return []
-        # tikwm trả về thông tin user, không phải video list → trả về placeholder
-        author = d.get("data", {}).get("author", {})
-        return [{"username": author.get("unique_id", clean), "platform": "tiktok", "raw": d["data"]}]
-    except Exception as exc:  # noqa: BLE001
-        log.warning("TikTok fetch error for @%s: %s", clean, exc)
-        return []
-
 # ── Job processor ─────────────────────────────────────────────────────────────
 
-async def process_job(
-    job: dict,
-    client: SystemApi,
-    checker_dir: str,
-    youtube_api_key: str,
-    fb_cookie: str | None,
-    proxy: str | None,
-    http: httpx.AsyncClient,
-    tracker: StatusTracker,
-) -> None:
+async def process_job(job: dict, client: SystemApi, creds: Credentials, tracker: StatusTracker) -> None:
     # ClaimedJob schema: job_id, platform, payload, resource (ResourceRef)
     job_id = job.get("job_id") or job.get("id", "")
     platform = job.get("platform", "")
@@ -392,65 +200,8 @@ async def process_job(
     tracker.job_started(job_id, platform, channel_id, channel_name, owner)
 
     try:
-        # ── 1. Resolve kênh → lấy danh sách video ───────────────────────────
-        items: list[dict] = []
-        # Chỉ số của chính kênh (followers/videos_posted/likes) — adapter nào lấy được thì điền, rỗng = không gửi.
-        channel_stats: dict = {}
-
-        if platform == "youtube":
-            resolved = await resolve_youtube_channel(input_ref, youtube_api_key, http)
-            if not resolved:
-                raise JobAbort(f"Cannot resolve YouTube channel: {input_ref}", retryable=False)
-            yt_channel_id, channel_title = resolved   # id kênh trên YouTube; KHÔNG ghi đè `channel_id` (khoá kênh của hệ thống)
-            log.info("YouTube channel_id=%s title=%s", yt_channel_id, channel_title)
-
-            videos = await fetch_youtube_recent_videos(yt_channel_id, youtube_api_key, http)
-            log.info("Fetched %d videos for channel %s", len(videos), yt_channel_id)
-
-            # ── 2. Check view cho từng video ─────────────────────────────────
-            for vid in videos[:10]:  # giới hạn 10 video đầu mỗi lần
-                result = check_view_subprocess(
-                    checker_dir, "youtube", vid["url"], proxy=proxy,
-                )
-                items.append({
-                    "external_id": vid["video_id"],
-                    "title": vid["title"],
-                    "published_at": vid["published_at"],
-                    "url": vid["url"],
-                    "views": result.get("views", 0),
-                    "likes": result.get("likes", 0),
-                    "comments": result.get("comments", 0),
-                    "check_status": result.get("status", "error"),
-                })
-                await asyncio.sleep(0.5)  # throttle
-
-        elif platform == "tiktok":
-            vids = await fetch_tiktok_recent_videos(input_ref, http, proxy)
-            for vid in vids[:10]:
-                url = vid.get("url") or f"https://www.tiktok.com/@{input_ref.lstrip('@')}"
-                result = check_view_subprocess(checker_dir, "tiktok", url, proxy=proxy)
-                items.append({
-                    "external_id": vid.get("video_id", ""),
-                    "views": result.get("views", 0),
-                    "likes": result.get("likes", 0),
-                    "comments": result.get("comments", 0),
-                    "check_status": result.get("status", "error"),
-                })
-
-        elif platform == "facebook":
-            result = check_view_subprocess(
-                checker_dir, "facebook", input_ref, proxy=proxy, cookie=fb_cookie,
-            )
-            items.append({
-                "external_id": input_ref,
-                "views": result.get("views", 0),
-                "likes": result.get("likes", 0),
-                "comments": result.get("comments", 0),
-                "check_status": result.get("status", "error"),
-            })
-
-        else:
-            raise JobAbort(f"Unsupported platform: {platform}", retryable=False)
+        # items: số liệu từng video; channel_stats: chỉ số của chính kênh (followers/videos_posted/...) nếu nền tảng cho lấy.
+        items, channel_stats = await asyncio.to_thread(channel_collect.collect_channel, platform, input_ref, creds)
 
         # ── 3. Push snapshot (delegated ingestion) ───────────────────────────
         # Chỉ đẩy số liệu ĐO ĐƯỢC. Kênh không có số liệu hợp lệ nào => job FAIL có lý do (không im lặng, không đẩy 0 giả).
@@ -477,12 +228,8 @@ async def process_job(
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 async def run_loop(args: argparse.Namespace) -> None:
-    youtube_api_key = args.youtube_api_key or os.environ.get("YOUTUBE_API_KEY", "")
-    fb_cookie = args.fb_cookie or os.environ.get("FB_COOKIE", "")
-    proxy = args.proxy or os.environ.get("PROXY", "") or None
-
+    creds = channel_collect.load_credentials(args.settings_file)
     client = SystemApi(args.gateway, args.api_key)
-    http = httpx.AsyncClient(timeout=20.0)
     sem = asyncio.Semaphore(args.max_concurrent)
     tracker = StatusTracker(args.status_file or "")
 
@@ -514,7 +261,7 @@ async def run_loop(args: argparse.Namespace) -> None:
 
     async def _process(job: dict) -> None:
         async with sem:
-            await process_job(job, client, args.checkview_dir, youtube_api_key, fb_cookie, proxy, http, tracker)
+            await process_job(job, client, creds, tracker)
 
     plan = EnqueuePlan()
     warned_empty = False
@@ -553,7 +300,6 @@ async def run_loop(args: argparse.Namespace) -> None:
                 await asyncio.sleep(args.poll_interval)
     finally:
         await client.aclose()
-        await http.aclose()
 
 
 def main() -> None:
@@ -565,14 +311,8 @@ def main() -> None:
     ap.add_argument("--gateway", default=os.environ.get("GATEWAY_URL", ""))
     ap.add_argument("--api-key", default=os.environ.get("MACHINE_API_KEY", ""),
                     help="Machine API key (mpk_<key_id>.<secret>)")
-    ap.add_argument("--checkview-dir",
-                    default=os.environ.get("CHECKVIEW_DIR", r"D:\workspace\CheckviewV2\backend\checker"),
-                    help="Thư mục chứa check_*.py của CheckviewV2")
-    ap.add_argument("--youtube-api-key", default=os.environ.get("YOUTUBE_API_KEY", ""))
-    ap.add_argument("--fb-cookie", default=os.environ.get("FB_COOKIE", ""),
-                    help="Facebook cookie (c_user=...; xs=...)")
-    ap.add_argument("--proxy", default=os.environ.get("PROXY", ""),
-                    help="Proxy URL: socks5://host:port hoặc http://host:port")
+    ap.add_argument("--settings-file", default=os.environ.get("COLLECTOR_SETTINGS_FILE", str(channel_collect.DEFAULT_SETTINGS)),
+                    help="File cấu hình của tool: youtube_api_keys[], proxies[], fb_cookie, chrome_path")
     ap.add_argument("--poll-interval", type=int, default=30, help="Giây chờ khi không có job")
     ap.add_argument("--max-concurrent", type=int, default=3, help="Số job chạy song song")
     ap.add_argument("--platforms", type=lambda s: [p.strip() for p in s.split(",") if p.strip()],

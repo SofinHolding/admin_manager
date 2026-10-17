@@ -46,8 +46,16 @@
       "dist/**",
       "electron/**",
       "collect.py",
+      "channel_collect.py",
       "channels_db.py",
       "system_api.py",
+      "pools.py",
+      "health.py",
+      "tiktok_links.py",
+      "browser_cookie.py",
+      "proxy_relay.py",
+      "checkers/**",
+      "requirements.txt",
       "system-endpoints.json"
     ]
   },

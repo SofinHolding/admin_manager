@@ -1,6 +1,6 @@
 // Electron main process — Channel Collector desktop shell.
 // Quản lý subprocess collect.py, scheduler hẹn giờ, config và log.
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -8,7 +8,11 @@ const fs = require("fs");
 const ROOT_DIR    = path.join(__dirname, "../../..");
 const COLLECT_PY    = path.join(__dirname, "..", "collect.py");
 const CHANNELS_DB_PY = path.join(__dirname, "..", "channels_db.py");
+const HEALTH_PY      = path.join(__dirname, "..", "health.py");
+const BROWSER_PY     = path.join(__dirname, "..", "browser_cookie.py");
+const TIKTOK_LINKS_PY = path.join(__dirname, "..", "tiktok_links.py");
 const CONFIG_PATH   = path.join(ROOT_DIR, ".dev", "collector-config.json");
+const VIDEO_LINKS_DIR = path.join(ROOT_DIR, ".dev", "video-links");
 const LOG_PATH      = path.join(ROOT_DIR, ".dev", "collector.log");
 const STATUS_PATH   = path.join(ROOT_DIR, ".dev", "collector-status.json");
 const LOG_TAIL_LINES = 200;
@@ -44,10 +48,8 @@ function buildCollectorArgs(cfg, platformsOverride) {
   const args = [COLLECT_PY];
   args.push("--gateway", gatewayOf(cfg));
   if (cfg.api_key)         args.push("--api-key",         cfg.api_key);
-  if (cfg.checkview_dir)   args.push("--checkview-dir",   cfg.checkview_dir);
-  if (cfg.youtube_api_key) args.push("--youtube-api-key", cfg.youtube_api_key);
-  if (cfg.fb_cookie)       args.push("--fb-cookie",       cfg.fb_cookie);
-  if (cfg.proxy)           args.push("--proxy",           cfg.proxy);
+  // Khoá YouTube / proxy / cookie đọc từ file cấu hình (không đưa lên dòng lệnh: lộ trong danh sách tiến trình).
+  args.push("--settings-file", CONFIG_PATH);
   if (cfg.poll_interval)   args.push("--poll-interval",   String(cfg.poll_interval));
   if (cfg.max_concurrent)  args.push("--max-concurrent",  String(cfg.max_concurrent));
   args.push("--status-file", STATUS_PATH);
@@ -193,13 +195,16 @@ ipcMain.handle("collector:config:read", () => {
     facebook: { ...defP, enabled: false },
   };
   const merge = (key) => ({ ...defaultPlatforms[key], ...(data.platforms?.[key] || {}) });
+  // Danh sách nhiều mục; giá trị đơn của bản cũ (youtube_api_key / proxy) được gộp vào danh sách.
+  const pool = (list, legacy) => [...new Set([...(Array.isArray(list) ? list : []), ...(typeof legacy === "string" ? [legacy] : [])]
+    .map((s) => String(s).trim()).filter(Boolean))];
   return {
     gateway:         data.gateway          || SYSTEM.default_gateway,
     api_key:         data.api_key          || "",
-    youtube_api_key: data.youtube_api_key  || "",
-    checkview_dir:   data.checkview_dir    || "",
+    youtube_api_keys: pool(data.youtube_api_keys, data.youtube_api_key),
+    proxies:         pool(data.proxies, data.proxy),
+    chrome_path:     data.chrome_path      || "",
     fb_cookie:       data.fb_cookie        || "",
-    proxy:           data.proxy            || "",
     poll_interval:   data.poll_interval    ?? 30,
     max_concurrent:  data.max_concurrent   ?? 3,
     platforms: { youtube: merge("youtube"), tiktok: merge("tiktok"), facebook: merge("facebook") },
@@ -208,6 +213,10 @@ ipcMain.handle("collector:config:read", () => {
 
 ipcMain.handle("collector:config:write", (_event, cfg) => {
   const merged = { ...readConfigFile(), ...cfg };
+  // Danh sách mới thay thế giá trị đơn cũ: nếu không xoá, mục đã xoá trong giao diện sẽ sống lại từ khoá cũ.
+  if (Array.isArray(cfg?.youtube_api_keys)) delete merged.youtube_api_key;
+  if (Array.isArray(cfg?.proxies)) delete merged.proxy;
+  delete merged.checkview_dir;   // không còn dùng: bộ kiểm tra đã nằm trong tool
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
   return { ok: true };
@@ -275,6 +284,73 @@ function runSystemApi(command) {
 
 /** Chạy thử từng endpoint an toàn. */
 ipcMain.handle("collector:probe", () => runSystemApi("probe"));
+
+/** Chạy một script Python ngắn hạn: dữ liệu vào qua stdin (key/mật khẩu proxy không lên dòng lệnh), một dòng JSON ra stdout; lỗi => `{ error }`. */
+function runPyJson(script, args, payload, timeoutMs) {
+  return new Promise((resolve) => {
+    const pythonBin = process.platform === "win32" ? "python" : "python3";
+    const child = spawn(pythonBin, [script, ...args], { windowsHide: true, stdio: "pipe", env: PY_ENV, cwd: path.dirname(script) });
+    const out = [], err = [];
+    const timer = setTimeout(() => { child.kill(); }, timeoutMs);
+    child.stdout.on("data", (d) => out.push(d));
+    child.stderr.on("data", (d) => err.push(d));
+    child.on("error", (e) => { clearTimeout(timer); resolve({ error: `Không chạy được Python: ${e.message}` }); });
+    child.on("close", () => {
+      clearTimeout(timer);
+      const lines = Buffer.concat(out).toString("utf-8").trim().split(/\r?\n/);
+      try { resolve(JSON.parse(lines[lines.length - 1])); }
+      catch { resolve({ error: Buffer.concat(err).toString("utf-8").trim().slice(-300) || `${path.basename(script)} không trả kết quả (có thể quá thời gian)` }); }
+    });
+    child.stdin.end(JSON.stringify(payload ?? {}), "utf-8");
+  });
+}
+
+/** Kiểm tra từng YouTube API key / proxy còn sống không (kind: "youtube-keys" | "proxies"; items: chuỗi gốc). */
+ipcMain.handle("pool:check", (_event, { kind, items }) => {
+  if (kind !== "youtube-keys" && kind !== "proxies") return { error: "Loại danh sách không hợp lệ" };
+  return runPyJson(HEALTH_PY, [kind], { items: Array.isArray(items) ? items : [] }, 180_000);
+});
+
+/** Thêm hàng loạt (mỗi dòng một mục) vào danh sách: phân tích + bỏ trùng bằng đúng quy tắc của collector (pools.py). */
+ipcMain.handle("pool:merge", (_event, { kind, existing, text }) => {
+  if (kind !== "youtube-keys" && kind !== "proxies") return { error: "Loại danh sách không hợp lệ" };
+  return runPyJson(HEALTH_PY, ["merge", kind], { existing: Array.isArray(existing) ? existing : [], text: String(text || "") }, 20_000);
+});
+
+/** Thử mở Chrome/Edge cục bộ (chạy ẩn) rồi đóng — dùng để lấy cookie TikTok thay cho AdsPower. */
+ipcMain.handle("browser:check", (_event, { chrome_path, proxy }) =>
+  runPyJson(BROWSER_PY, ["check"], { chrome_path: chrome_path || "", proxy: proxy || "" }, 60_000));
+
+ipcMain.handle("browser:pick", async () => {
+  const pick = await dialog.showOpenDialog(mainWindow, {
+    title: "Chọn chrome.exe hoặc msedge.exe", properties: ["openFile"],
+    filters: process.platform === "win32" ? [{ name: "Trình duyệt", extensions: ["exe"] }] : [],
+  });
+  return pick.canceled || !pick.filePaths[0] ? { ok: false } : { ok: true, path: pick.filePaths[0] };
+});
+
+/** Lấy TẤT CẢ link video của một kênh TikTok về máy (lưu DB cục bộ + file .txt). Có thể mất vài phút với kênh lớn. */
+ipcMain.handle("tiktok:fetch-links", (_event, { channel_id, url }) =>
+  runPyJson(TIKTOK_LINKS_PY, ["fetch"], { channel_id, url }, 40 * 60_000));
+
+/** Mở thư mục chứa file link đã xuất (chỉ trong thư mục video-links của tool). */
+ipcMain.handle("links:reveal", (_event, { path: file }) => {
+  const resolved = path.resolve(String(file || ""));
+  if (!resolved.startsWith(VIDEO_LINKS_DIR + path.sep) || !fs.existsSync(resolved)) return { ok: false, error: "Không tìm thấy file" };
+  shell.showItemInFolder(resolved);
+  return { ok: true };
+});
+
+/** Lưu danh sách link ra file .txt người dùng chọn (mỗi link một dòng). */
+ipcMain.handle("links:save", async (_event, { name, urls }) => {
+  const lines = Array.isArray(urls) ? urls.map(String).filter(Boolean) : [];
+  const safe = String(name || "tiktok").replace(/[^\w.@-]+/g, "_").slice(0, 80) || "tiktok";
+  const pick = await dialog.showSaveDialog(mainWindow, { title: "Lưu danh sách link video", defaultPath: `${safe}.txt`, filters: [{ name: "Text", extensions: ["txt"] }] });
+  if (pick.canceled || !pick.filePath) return { ok: false, canceled: true };
+  try { fs.writeFileSync(pick.filePath, lines.join("\n") + (lines.length ? "\n" : ""), "utf-8"); }
+  catch (e) { return { ok: false, error: `Không ghi được file: ${e.message}` }; }
+  return { ok: true, path: pick.filePath };
+});
 
 ipcMain.handle("collector:status:read", () => {
   try { return JSON.parse(fs.readFileSync(STATUS_PATH, "utf-8")); }
@@ -357,6 +433,9 @@ ipcMain.handle("channels:platform:counts", () =>
 
 ipcMain.handle("channels:set-enabled", (_event, { ids, enabled }) =>
   callChannelsDb({ action: "set_enabled", ids, enabled }));
+
+ipcMain.handle("channels:videos:list", (_event, { channel_id }) =>
+  callChannelsDb({ action: "list_channel_videos", channel_id }));
 
 /**
  * Đăng nhập lấy JWT dùng cho /v1/ops/* (require_ops: admin/dash_admin).

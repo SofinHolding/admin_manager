@@ -30,8 +30,8 @@ npm run electron:dev   # vite (cổng 5176) + electron song song, cửa sổ loa
 npm run electron:build   # vite build (base: './') rồi electron-builder đóng gói portable .exe
 ```
 
-`collect.py` được đóng gói kèm theo (`build.files` trong `package.json`); máy chạy ứng dụng vẫn
-cần Python (và các dependency của `collect.py`, vd. `httpx`) cài sẵn trong PATH.
+`collect.py` và các module Python đi kèm được đóng gói (`build.files` trong `package.json`); máy chạy ứng dụng cần Python trong PATH và đã
+`pip install -r requirements.txt` (httpx[socks], curl_cffi, yt-dlp, websockets, beautifulsoup4).
 
 ## Địa chỉ máy chủ nhúng sẵn và ánh xạ endpoint
 
@@ -80,15 +80,50 @@ Thiết kế đầy đủ: `docs/architecture/shared-collector-schedule-v1.md`. 
 Khi Admin cấp key cho công cụ dùng chung (trang Admin → Công cụ dùng chung), giao diện cho tải
 `connection-<client_id>.json` (`format: "manager-connection/1"`, chứa `gateway` + `api_key`; **là secret**, chỉ có lúc cấp/xoay).
 
-- CLI: `python collect.py --connection-file connection-<client_id>.json --checkview-dir <thư mục check_*.py>`
+- CLI: `python collect.py --connection-file connection-<client_id>.json [--settings-file .dev/collector-config.json]`
 - Electron: tab Thu thập → Cấu hình → **Nạp file kết nối…** (tự điền Gateway URL + API Key).
 
 Collector hỏi server `GET /v1/integrations/platforms` để biết nền tảng key được dùng, chỉ xử lý giao với nền tảng có adapter
 (`youtube`, `tiktok`, `facebook`). Mỗi job đẩy lên **đúng kênh + nền tảng của chính job** (`resource.external_id`, `job.platform`)
 bằng snapshot `delta` có `expected_counts`; mọi bước được kiểm lỗi (không thành công giả). Key cần scope `jobs:claim:system` để nhận job của mọi user.
-Adapter TikTok hiện là placeholder (chưa liệt kê được video) nên job TikTok sẽ `fail` kèm lý do cho tới khi hoàn thiện.
+Khoá YouTube, proxy, cookie Facebook, đường dẫn Chrome được collector đọc từ file cấu hình (`--settings-file`), KHÔNG truyền qua dòng lệnh.
 
 Định dạng payload collector phải gửi (snapshot delta, job complete/fail/heartbeat, ràng buộc `X-Delegated-Job`): `docs/api/integration-tool-changes-2026-10-16.md` §4.
+
+## Bộ kiểm tra theo nền tảng (chuyển từ CheckviewV2)
+
+`channel_collect.py` thu số liệu một kênh; các bộ kiểm tra nằm trong `checkers/` (không còn gọi subprocess `check_*.py` của CheckviewV2):
+
+| Nền tảng | Cách làm |
+|---|---|
+| YouTube | YouTube Data API v3, xoay **nhiều key** (key hết quota nghỉ 6 giờ, dùng key kế); không có key thì yt-dlp. Lấy 30 video mới nhất + `followers`/`videos_posted` của kênh. |
+| TikTok | Liệt kê video mới nhất bằng cookie phiên của Chrome/Edge cục bộ (`tiktok_links.py`), số liệu từng video (views/likes/comments/shares/region/ngày) qua tikwm `/api/`. |
+| Facebook | Chỉ link **một bài/reel/video** (cookie Facebook, `checkers/facebook_scraper` chép từ CheckviewV2 commit `74026c1`, xem `NOTICE.md`). Trang/profile không liệt kê được => job fail kèm lý do, không thử lại. |
+
+Proxy: danh sách nhiều proxy xoay vòng (`channel_collect._with_proxy`); lỗi do proxy/mạng thì proxy đó nghỉ 5 phút và dùng proxy kế, lỗi của riêng video thì giữ nguyên proxy.
+
+## Cấu hình nhiều YouTube key / nhiều proxy
+
+Tab Thu thập → Cấu hình: mỗi ô nhận **nhiều dòng, mỗi dòng một mục** (key `AIza…`; proxy dạng `scheme://user:pass@host:port`, `user:pass@host:port`,
+`host:port`, `host:port:user:pass`; scheme `http|https|socks4|socks5|socks5h`). Phân tích + bỏ trùng chạy ở Python (`pools.py`) để cùng quy tắc với collector;
+dòng không hợp lệ ở lại ô nhập để sửa. Mỗi dòng trong danh sách có trạng thái (chưa kiểm tra / sống / hết quota / chết / chưa rõ), nút **Kiểm tra tất cả / đã chọn**
+(`health.py`: key dò bằng `videos.list part=id` = 1 đơn vị quota; proxy đi qua ipify/Cloudflare trace và hiện IP ra), **✕** xoá từng mục, **Xóa đã chọn**, **Xóa mục chết**.
+Danh sách chỉ đổi trong cấu hình đang soạn đến khi bấm **Lưu cấu hình**. Key hiển thị đã che (`AIzaAB…WXYZ`), mật khẩu proxy hiển thị `***`; lỗi không bao giờ chứa key/mật khẩu.
+Cấu hình cũ một giá trị (`youtube_api_key`, `proxy`) được gộp vào danh sách khi đọc và bị bỏ khi lưu.
+
+## Lấy toàn bộ link video của kênh TikTok (không cần AdsPower)
+
+Tab Người dùng & Kênh: chọn kênh TikTok **đã kéo** → **🔗 Lấy toàn bộ link video**. Link lưu trong DB cục bộ (`channel_videos`), xuất file `.dev/video-links/<kênh>.txt`
+(mới nhất trước), xem/sao chép/lưu `.txt` ở nút `🔗 N link` trên dòng kênh.
+
+Cookie TikTok lấy từ **Chrome/Edge cài sẵn trên máy**, không cần AdsPower: `browser_cookie.py` mở trình duyệt chạy ẩn (hồ sơ tạm, cổng gỡ lỗi ngẫu nhiên), điều hướng
+tiktok.com, đọc cookie bằng CDP `Network.getAllCookies`, đóng trình duyệt. Chrome không hỗ trợ proxy SOCKS5/HTTP có mật khẩu nên `proxy_relay.py` dựng relay cục bộ
+không mật khẩu tự xác thực với proxy thật — nhờ đó **cookie lấy được ĐI QUA đúng proxy đang cài** (cùng IP với lúc liệt kê video, điều kiện để TikTok chấp nhận phiên).
+Sau đó yt-dlp liệt kê kênh (cùng cookie + User-Agent + proxy, TLS `chrome-136`), phân loại lỗi: kênh trống / riêng tư / đáng làm mới. Phiên lưu theo từng proxy (`.dev/tiktok-session.json`); lỗi
+khi phiên còn mới (< 10 phút) = lỗi do IP/proxy nên đổi proxy chứ không mở lại trình duyệt, phiên cũ thì làm mới đúng một lần.
+
+Giới hạn đã đo: TikTok chặn liệt kê video (WAF Slardar + API trả rỗng) với IP/hồ sơ trình duyệt "sạch" không proxy tốt — yt-dlp báo `Unable to extract secondary user ID`.
+Khi đó tool báo rõ và gợi ý thêm proxy (nên dùng proxy dân cư). tikwm `/api/user/posts` bị Cloudflare chặn nên KHÔNG dùng được để liệt kê kênh.
 
 ## Test
 

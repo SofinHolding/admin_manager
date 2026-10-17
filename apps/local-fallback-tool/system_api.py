@@ -119,6 +119,9 @@ def to_report_date(value: Any, region: str | None = None, *, fallback: datetime 
     - Không đọc được: ngày của `fallback` (thời điểm đo, mặc định bây giờ) theo giờ Việt Nam."""
     if isinstance(value, str) and _DATE_ONLY.match(value.strip()):
         return value.strip()
+    if isinstance(value, str) and re.fullmatch(r"\d{8}", value.strip()):   # `YYYYMMDD` (vd upload_date của yt-dlp), không phải epoch
+        s = value.strip()
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
     dt = _instant(value, region) or fallback or datetime.now(timezone.utc)
     return dt.astimezone(report_tz()).date().isoformat()
 

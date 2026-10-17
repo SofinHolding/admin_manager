@@ -61,6 +61,18 @@ CREATE TABLE IF NOT EXISTS local_channels (
 
 CREATE INDEX IF NOT EXISTS idx_lc_owner    ON local_channels (owner_id);
 CREATE INDEX IF NOT EXISTS idx_lc_platform ON local_channels (platform);
+
+-- Link video của từng kênh đã lấy về máy (vd toàn bộ video của kênh TikTok). Xoá cùng kênh khi kênh rời danh sách.
+CREATE TABLE IF NOT EXISTS channel_videos (
+  channel_id    TEXT NOT NULL,
+  video_id      TEXT NOT NULL,
+  url           TEXT NOT NULL,
+  title         TEXT NOT NULL DEFAULT '',
+  published_at  TEXT NOT NULL DEFAULT '',
+  views         INTEGER,
+  fetched_at    TEXT NOT NULL,
+  PRIMARY KEY (channel_id, video_id)
+);
 """
 
 CURRENT_SCHEMA_VERSION = 2
@@ -189,6 +201,7 @@ def act_sync_shared(conn: sqlite3.Connection, cmd: dict) -> dict:
     removed_channels = conn.execute(f"DELETE FROM local_channels WHERE id NOT IN ({_marks(keep_c)})", keep_c).rowcount
     conn.execute(f"DELETE FROM local_channels WHERE owner_id NOT IN ({_marks(keep_u)})", keep_u)
     conn.execute(f"DELETE FROM fetched_users WHERE id NOT IN ({_marks(keep_u)})", keep_u)
+    conn.execute("DELETE FROM channel_videos WHERE channel_id NOT IN (SELECT id FROM local_channels)")
     conn.commit()
     return {"added_users": added_users, "removed_users": len(existing_users - keep_users),
             "added_channels": added, "updated_channels": updated, "removed_channels": removed_channels}
@@ -268,7 +281,8 @@ def act_list_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
         like = f"%{search}%"
         params.extend([like, like, like])
 
-    sql = "SELECT * FROM local_channels WHERE " + " AND ".join(where)
+    sql = ("SELECT c.*, (SELECT COUNT(*) FROM channel_videos v WHERE v.channel_id = c.id) AS video_count "
+           "FROM local_channels c WHERE ") + " AND ".join(where)
     sql += " ORDER BY owner_username COLLATE NOCASE, platform, display_name COLLATE NOCASE"
     return {"channels": [dict(r) for r in conn.execute(sql, params).fetchall()]}
 
@@ -302,6 +316,48 @@ def act_set_enabled(conn: sqlite3.Connection, cmd: dict) -> dict:
     return {"updated": n}
 
 
+def act_save_channel_videos(conn: sqlite3.Connection, cmd: dict) -> dict:
+    """Lưu link video của MỘT kênh (upsert theo `(channel_id, video_id)`): `videos=[{video_id, url, title?, published_at?, views?}]`.
+    Thông tin đã có không bị xoá bằng giá trị rỗng của lần lấy sau."""
+    channel_id = str(cmd.get("channel_id") or "")
+    if not conn.execute("SELECT 1 FROM local_channels WHERE id=?", (channel_id,)).fetchone():
+        raise ValueError("Không tìm thấy kênh trong DB cục bộ")
+    now = _now()
+    existing = {r[0] for r in conn.execute("SELECT video_id FROM channel_videos WHERE channel_id=?", (channel_id,))}
+    added = updated = 0
+    for v in cmd.get("videos", []):
+        vid, url = str(v.get("video_id") or "").strip(), str(v.get("url") or "").strip()
+        if not vid or not url:
+            continue
+        views = v.get("views") if isinstance(v.get("views"), int) and not isinstance(v.get("views"), bool) else None
+        conn.execute("""
+            INSERT INTO channel_videos (channel_id, video_id, url, title, published_at, views, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(channel_id, video_id) DO UPDATE SET
+              url=excluded.url,
+              title=CASE WHEN excluded.title != '' THEN excluded.title ELSE channel_videos.title END,
+              published_at=CASE WHEN excluded.published_at != '' THEN excluded.published_at ELSE channel_videos.published_at END,
+              views=COALESCE(excluded.views, channel_videos.views),
+              fetched_at=excluded.fetched_at
+        """, (channel_id, vid, url, str(v.get("title") or ""), str(v.get("published_at") or ""), views, now))
+        if vid in existing:
+            updated += 1
+        else:
+            added += 1
+    conn.commit()
+    total = conn.execute("SELECT COUNT(*) FROM channel_videos WHERE channel_id=?", (channel_id,)).fetchone()[0]
+    return {"added": added, "updated": updated, "total": total}
+
+
+def act_list_channel_videos(conn: sqlite3.Connection, cmd: dict) -> dict:
+    """Link video đã lưu của một kênh, mới đăng trước."""
+    rows = conn.execute("""
+        SELECT video_id, url, title, published_at, views, fetched_at FROM channel_videos WHERE channel_id=?
+        ORDER BY published_at DESC, fetched_at DESC, video_id
+    """, (str(cmd.get("channel_id") or ""),)).fetchall()
+    return {"videos": [dict(r) for r in rows]}
+
+
 # ── Dùng bởi collect.py (không phải action của Electron) ──────────────────────────────────────────────────────
 
 def pulled_targets(platforms: list[str]) -> list[dict]:
@@ -330,6 +386,8 @@ _ACTIONS: dict[str, Any] = {
     "list_channels":   act_list_channels,
     "platform_counts": act_platform_counts,
     "set_enabled":     act_set_enabled,
+    "save_channel_videos": act_save_channel_videos,
+    "list_channel_videos": act_list_channel_videos,
 }
 
 

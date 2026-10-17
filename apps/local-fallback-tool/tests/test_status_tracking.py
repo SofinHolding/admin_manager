@@ -8,7 +8,6 @@ import json
 import sys
 from pathlib import Path
 
-import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import collect  # noqa: E402
@@ -26,8 +25,7 @@ def _run_job(job: dict, status_file: Path) -> dict:
     tracker = collect.StatusTracker(str(status_file))
 
     async def go():
-        async with httpx.AsyncClient() as http:
-            await collect.process_job(job, _FakeClient(), "", "", None, None, http, tracker)
+        await collect.process_job(job, _FakeClient(), collect.Credentials(), tracker)
 
     asyncio.run(go())
     return json.loads(status_file.read_text(encoding="utf-8"))

@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import SYSTEM from "../../system-endpoints.json";
+import PoolEditor from "../components/PoolEditor";
 
 // ── Kiểu ─────────────────────────────────────────────────────────────────────
 
@@ -18,10 +19,10 @@ interface PlatformCfg {
 interface CollectorConfig {
   gateway:         string;
   api_key:         string;
-  youtube_api_key: string;
-  checkview_dir:   string;
+  youtube_api_keys: string[];   // nhiều key, xoay vòng khi một key hết quota
+  proxies:         string[];    // nhiều proxy, xoay vòng khi một proxy lỗi
+  chrome_path:     string;      // Chrome/Edge lấy cookie TikTok; rỗng = tự tìm
   fb_cookie:       string;
-  proxy:           string;
   poll_interval:   number;
   max_concurrent:  number;
   platforms: { youtube: PlatformCfg; tiktok: PlatformCfg; facebook: PlatformCfg };
@@ -80,8 +81,8 @@ type PlatformKey = "youtube" | "tiktok" | "facebook";
 const DEF_PLAT: PlatformCfg = { enabled: true, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
 
 const DEFAULT_CONFIG: CollectorConfig = {
-  gateway: "", api_key: "", youtube_api_key: "", checkview_dir: "",
-  fb_cookie: "", proxy: "", poll_interval: 30, max_concurrent: 3,
+  gateway: "", api_key: "", youtube_api_keys: [], proxies: [], chrome_path: "",
+  fb_cookie: "", poll_interval: 30, max_concurrent: 3,
   platforms: {
     youtube:  { ...DEF_PLAT },
     tiktok:   { ...DEF_PLAT },
@@ -152,6 +153,8 @@ export default function CollectorPage() {
   const [dirty,     setDirty]     = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [saveMsg,   setSaveMsg]   = useState("");
+  const [browserMsg, setBrowserMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [browserBusy, setBrowserBusy] = useState(false);
 
   // Connection
   const [health,         setHealth]         = useState<"unknown" | "ok" | "fail">("unknown");
@@ -315,6 +318,25 @@ export default function CollectorPage() {
   const setField = <K extends keyof CollectorConfig>(k: K, v: CollectorConfig[K]) => {
     setConfig(c => ({ ...c, [k]: v }));
     setDirty(true);
+  };
+
+  const pickBrowser = async () => {
+    const r = await bridge().pickBrowser();
+    if (r.ok && r.path) setField("chrome_path", r.path);
+  };
+
+  const testBrowser = async () => {
+    setBrowserBusy(true);
+    setBrowserMsg(null);
+    try {
+      const r = await bridge().checkBrowser(config.chrome_path);
+      setBrowserMsg(r.ok ? { text: `Mở được ${r.version} (${r.path}) — dùng được để lấy cookie TikTok, không cần AdsPower.`, ok: true }
+                         : { text: r.error ?? "Không mở được trình duyệt", ok: false });
+    } catch (e) {
+      setBrowserMsg({ text: e instanceof Error ? e.message : String(e), ok: false });
+    } finally {
+      setBrowserBusy(false);
+    }
   };
 
   const addScheduleTime = (p: PlatformKey) => {
@@ -609,10 +631,10 @@ export default function CollectorPage() {
                   : <span style={{ color: "var(--amber)" }}>API key chưa cấu hình.</span>
                 }
                 {" "}
-                {config.checkview_dir
-                  ? "CheckView OK."
-                  : <span style={{ color: "var(--amber)" }}>Thiếu CheckView Dir.</span>
-                }
+                <span style={{ color: config.youtube_api_keys.length ? "var(--muted)" : "var(--amber)" }}>
+                  {config.youtube_api_keys.length} key YouTube
+                </span>
+                {" · "}{config.proxies.length} proxy.
                 {dirty && <span style={{ color: "var(--amber)" }}> · Chưa lưu.</span>}
               </p>
               <button onClick={() => setTab("config")}
@@ -998,17 +1020,17 @@ export default function CollectorPage() {
 
                 <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 14 }}>Credentials nền tảng</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-                  <div>
-                    <CfgField label="YouTube API Key">
-                      <input value={config.youtube_api_key} onChange={e => setField("youtube_api_key", e.target.value)}
-                             placeholder="AIza…" style={{ ...inputCss, height: 32 }} />
-                    </CfgField>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <PoolEditor kind="youtube-keys" title="YouTube API Key" items={config.youtube_api_keys}
+                                onChange={(v) => setField("youtube_api_keys", v)} disabled={!isElectron}
+                                placeholder={"AIza…\nAIza…\n(mỗi dòng một key)"}
+                                hint="Nhiều key được xoay vòng: key hết quota hôm nay tự nghỉ, dùng key kế. Không có key nào thì YouTube chạy bằng yt-dlp (chậm, dễ bị chặn)." />
                   </div>
-                  <div>
-                    <CfgField label="Proxy (tùy chọn)">
-                      <input value={config.proxy} onChange={e => setField("proxy", e.target.value)}
-                             placeholder="socks5://127.0.0.1:1080" style={{ ...inputCss, height: 32 }} />
-                    </CfgField>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <PoolEditor kind="proxies" title="Proxy" items={config.proxies}
+                                onChange={(v) => setField("proxies", v)} disabled={!isElectron}
+                                placeholder={"socks5://user:pass@host:1080\nhost:port:user:pass\nhttp://host:3128\n(mỗi dòng một proxy)"}
+                                hint="Dùng cho lấy cookie/link TikTok, kiểm tra Facebook, yt-dlp. Proxy lỗi tự nghỉ vài phút rồi thử lại. Không có proxy thì đi bằng IP máy này." />
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <CfgField label="Facebook Cookie">
@@ -1038,12 +1060,26 @@ export default function CollectorPage() {
                              style={{ ...inputCss, height: 32, textAlign: "right" }} />
                     </CfgField>
                   </div>
-                  <div>
-                    <CfgField label="CheckView Dir">
-                      <input value={config.checkview_dir} onChange={e => setField("checkview_dir", e.target.value)}
-                             placeholder="D:/workspace/…" style={{ ...inputCss, height: 32 }} />
-                    </CfgField>
-                  </div>
+                </div>
+
+                <div style={{ marginTop: 14 }}>
+                  <CfgField label="Trình duyệt lấy cookie TikTok (không cần AdsPower)">
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input value={config.chrome_path} onChange={e => setField("chrome_path", e.target.value)}
+                             placeholder="Để trống = tự tìm Chrome/Edge trên máy" style={{ ...inputCss, height: 32 }} />
+                      <button type="button" onClick={pickBrowser} disabled={!isElectron} style={{ ...btnCss("ghost", !isElectron), height: 32 }}>Chọn…</button>
+                      <button type="button" onClick={testBrowser} disabled={!isElectron || browserBusy}
+                              style={{ ...btnCss("ghost", !isElectron || browserBusy), height: 32, whiteSpace: "nowrap" }}>
+                        {browserBusy ? "Đang mở…" : "Kiểm tra trình duyệt"}
+                      </button>
+                    </div>
+                    {browserMsg && (
+                      <p style={{ fontSize: 11, margin: "4px 0 0", color: browserMsg.ok ? "var(--green)" : "var(--red)" }}>{browserMsg.text}</p>
+                    )}
+                    <p style={{ fontSize: 10, color: "var(--muted)", margin: "3px 0 0" }}>
+                      Tool tự mở Chrome/Edge chạy ẩn (hồ sơ tạm, đi qua proxy ở trên) để lấy cookie TikTok rồi đóng ngay.
+                    </p>
+                  </CfgField>
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
@@ -1182,6 +1218,12 @@ declare global {
       endpoints:       () => Promise<{ default_gateway: string; gateway: string; endpoints: SystemEndpoint[] }>;
       probe:           () => Promise<{ gateway: string; results: SystemProbeResult[] } | { error: string }>;
       readStatus:      () => Promise<CollectorStatus | null>;
+      checkPool:       (kind: "youtube-keys" | "proxies", items: string[]) => Promise<
+        { results: { item: string; state: "alive" | "quota" | "dead" | "error"; detail: string; ms: number; ip?: string }[] } | { error: string }>;
+      mergePool:       (kind: "youtube-keys" | "proxies", existing: string[], text: string) => Promise<
+        { items: string[]; added: number; duplicate: number; bad: string[] } | { error: string }>;
+      checkBrowser:    (chrome_path: string, proxy?: string) => Promise<{ ok: boolean; path?: string; version?: string; via_proxy?: boolean; error?: string }>;
+      pickBrowser:     () => Promise<{ ok: boolean; path?: string }>;
       onScheduleEvent: (cb: (ev: { type: string; platforms?: string[]; time?: string }) => void) => void;
     };
   }

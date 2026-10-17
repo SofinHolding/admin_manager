@@ -187,8 +187,8 @@ class _Api:
 
 
 def _args() -> argparse.Namespace:
-    return argparse.Namespace(youtube_api_key="", fb_cookie="", proxy="", gateway="http://gw", api_key="mpk_a.b", max_concurrent=2,
-                              status_file="", platforms=None, poll_interval=0, checkview_dir="")
+    return argparse.Namespace(settings_file="", gateway="http://gw", api_key="mpk_a.b", max_concurrent=2,
+                              status_file="", platforms=None, poll_interval=0)
 
 
 def _run(monkeypatch, pulled_by_call: list[list[str]]) -> _Api:
