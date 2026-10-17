@@ -75,7 +75,7 @@ def resource_to_legacy(row: dict) -> dict:
         "input_ref": ext.get("input_ref", row["external_id"]),
         "username": data.get("username") or "", "url": data.get("url") or "",
         "display_name": data.get("display_name") or "", "country": country_text(data),
-        "origin": row["origin"], "mapping_status": ext.get("mapping_status", "unmapped"),
+        "origin": row["origin"], "mapping_status": row.get("effective_mapping_status") or ext.get("mapping_status", "unmapped"),
         "execution_mode": MODE_TO_LEGACY.get(row["execution_mode"], row["execution_mode"]),
         "verification_status": ext.get("verification_status", "unverified"),
         "enabled": row["state"] == "active",

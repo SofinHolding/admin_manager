@@ -114,7 +114,10 @@ def select_platforms(allowed: list[str], narrowed: list[str] | None) -> list[str
 # ── Status tracker ────────────────────────────────────────────────────────────
 
 class StatusTracker:
-    """Ghi trạng thái collector ra file JSON (thread-safe; asyncio single-thread)."""
+    """Ghi trạng thái collector ra file JSON (thread-safe; asyncio single-thread).
+
+    `stats`/`recent_jobs` là của PHIÊN này; `channels` (lần thu gần nhất của từng kênh) được GIỮ qua các phiên — mỗi lần "Chạy ngay"
+    thường chỉ chạm vài kênh, nên nếu xoá thì các kênh còn lại bị hiện "chưa thu" dù đã thu hôm trước."""
     def __init__(self, status_file: str) -> None:
         import threading
         self._file = status_file
@@ -123,10 +126,18 @@ class StatusTracker:
             "session_start": datetime.now(timezone.utc).isoformat(),
             "stats": {"claimed": 0, "done": 0, "failed": 0},
             "recent_jobs": [],
-            "channels": {},
+            "channels": self._load_channels(status_file),
         }
         if status_file:
             self._flush()
+
+    @staticmethod
+    def _load_channels(status_file: str) -> dict:
+        try:
+            prior = json.loads(Path(status_file).read_text(encoding="utf-8")).get("channels") if status_file else None
+        except (OSError, ValueError, AttributeError):
+            return {}
+        return prior if isinstance(prior, dict) else {}
 
     def job_started(self, job_id: str, platform: str, channel_id: str, channel_name: str, owner: str) -> None:
         if not self._file: return
@@ -145,7 +156,8 @@ class StatusTracker:
             key = f"{platform}/{channel_id}"
             ch = self._data["channels"].get(key, {"total_ok": 0, "total_fail": 0, "last_error": None, "last_error_at": None})
             ch.update({"channel": channel_name, "channel_id": channel_id, "platform": platform, "owner": owner,
-                "total_ok": ch["total_ok"] + 1, "last_ok": datetime.now(timezone.utc).isoformat()})
+                "total_ok": ch.get("total_ok", 0) + 1, "last_ok": datetime.now(timezone.utc).isoformat(),
+                "last_items": items, "last_error": None, "last_error_at": None})
             self._data["channels"][key] = ch
             self._upsert({"job_id": job_id, "platform": platform, "channel": channel_name,
                 "channel_id": channel_id, "owner": owner, "status": "done",

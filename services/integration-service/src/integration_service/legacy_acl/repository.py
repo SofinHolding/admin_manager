@@ -11,6 +11,7 @@ from datetime import datetime
 import asyncpg
 
 from integration_service.legacy_acl.mapper import MODE_TO_CANONICAL
+from integration_service.mapping import EFFECTIVE_MAPPING_SQL
 
 LEGACY_RESOURCE = "NOT r.removed AND r.origin <> 'tool'"
 
@@ -99,12 +100,12 @@ async def find_by_key(conn: asyncpg.Connection, owner: str, platform: str, resou
 
 
 _LIST_RESOURCES = (
-    "SELECT r.* FROM resources r WHERE " + LEGACY_RESOURCE + " "
+    "SELECT r.*, " + EFFECTIVE_MAPPING_SQL + " AS effective_mapping_status FROM resources r WHERE " + LEGACY_RESOURCE + " "
     "AND ($1::text IS NULL OR r.owner_account_id = $1) "
     "AND ($2::text = '' OR r.platform = $2) "
     "AND ($3::text = '' OR COALESCE(r.data -> 'country' ->> 'name', r.data -> 'country' ->> 'code', '') = $3) "
     "AND ($4::text = '' OR r.origin = $4) "
-    "AND ($5::text = '' OR COALESCE(r.data -> 'extensions' -> 'legacy' ->> 'mapping_status', 'unmapped') = $5) "
+    "AND ($5::text = '' OR " + EFFECTIVE_MAPPING_SQL + " = $5) "
     "AND ($6::text = '' OR COALESCE(r.data -> 'extensions' -> 'legacy' ->> 'verification_status', 'unverified') = $6) "
     "AND ($7::text = '' OR r.execution_mode = $7) "
     "AND ($8::boolean IS NULL OR (r.state = 'active') = $8) "

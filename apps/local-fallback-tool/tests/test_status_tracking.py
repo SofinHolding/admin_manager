@@ -80,3 +80,17 @@ def test_unexpected_errors_still_log_the_traceback(tmp_path, monkeypatch, caplog
     with caplog.at_level("ERROR", logger="collect"):
         _run_job(_JOB, tmp_path / "s.json")
     assert caplog.records[0].exc_info is not None
+
+
+def test_per_channel_status_survives_a_new_session_and_a_success_clears_the_old_error(tmp_path):
+    f = tmp_path / "status.json"
+    a = collect.StatusTracker(str(f))
+    a.job_done("j1", "tiktok", "ch_a", "A", "o", 5, 10)
+    a.job_failed("j2", "tiktok", "ch_b", "B", "o", "boom", 10)
+    b = collect.StatusTracker(str(f))   # phiên mới (vd bấm "Chạy ngay" lần nữa) chỉ chạm kênh B
+    b.job_done("j3", "tiktok", "ch_b", "B", "o", 2, 10)
+    st = json.loads(f.read_text(encoding="utf-8"))
+    assert st["stats"] == {"claimed": 0, "done": 1, "failed": 0} and [j["job_id"] for j in st["recent_jobs"]] == ["j3"]
+    assert st["channels"]["tiktok/ch_a"]["last_ok"] and st["channels"]["tiktok/ch_a"]["last_items"] == 5
+    ch_b = st["channels"]["tiktok/ch_b"]
+    assert ch_b["last_error"] is None and ch_b["last_items"] == 2 and ch_b["total_fail"] == 1 and ch_b["total_ok"] == 1

@@ -152,8 +152,16 @@ Tab Thu thập có nút **▶ Chạy ngay** ở đầu trang (mọi kênh đã k
 Nó chạy `collect.py --once [--resource-ids …]`: xin job cho kênh được chọn, xử lý hết rồi **tự thoát** (khác **Bắt đầu** = chạy liên tục theo lịch). Cần máy chủ có
 `POST /v1/integrations/jobs/enqueue` (commit `daff94a`); máy chủ cũ trả 405 và log báo "cần deploy integration-service bản mới".
 
-Cột trạng thái "Chưa thu (phiên này)" của tab Kênh & người dùng đọc từ file trạng thái của collector (`.dev/collector-status.json`, số OK/lỗi của các job collector đã xử lý), còn
-danh sách kênh đọc từ DB cục bộ như tab Người dùng & Kênh — hai nguồn khác nhau nên kênh đã kéo vẫn hiện "Chưa thu" cho tới khi collector xử lý job của kênh đó.
+Hai tab liệt kê kênh (**Người dùng & Kênh** và **Thu thập → Kênh & người dùng**) dùng chung thành phần `ChannelDataBadges`, nên hiện cùng một thông tin:
+
+- **Đã / Chưa liên kết số liệu** — cùng từ ngữ với website. Server tự suy ra: kênh có video/chỉ số (chưa bị xoá) ⇒ "đã liên kết", không còn là cờ gõ tay.
+- **📊 N video · lần thu cuối** — số video kênh đã có trên website (`content_count`, `last_collected_at` của `GET /v1/integrations/resources`), lưu ở `local_channels.server_video_count/last_collected_at`.
+  Làm tươi khi Fetch, khi mở tab Kênh & người dùng và ngay sau mỗi lần "Chạy ngay" xong (`channels:refresh-stats`: chỉ cập nhật kênh đã có, không thêm/xoá).
+- **🔗 N link** — link video đã lấy về máy (YouTube/TikTok), bấm để xem.
+
+Trạng thái thu (✓OK / ✗lỗi / lần gần nhất / lỗi cuối) đọc từ `.dev/collector-status.json` và được **giữ qua các phiên** (chỉ bộ đếm phiên và danh sách job gần đây bị đặt lại);
+một lần thu thành công xoá lỗi cũ. Kênh chưa từng được thu trên máy này hiện "Chưa thu" (hoặc "Đã có số liệu trên web" nếu server đã có dữ liệu của kênh).
+
 ## Test
 
 ```powershell

@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import VideoLinksDialog from "../components/VideoLinksDialog";
+import ChannelDataBadges from "../components/ChannelDataBadges";
 
 // ── Platform metadata ─────────────────────────────────────────────────────────
 
@@ -463,21 +464,7 @@ function ChannelRow({ ch, selected, onToggle, onShowLinks }: { ch: LocalChannel;
         }}>
         {pulled ? "✓ Đã kéo" : "Chưa kéo"}
       </span>
-      <span style={{
-        fontSize: 10, padding: "1px 5px", borderRadius: 3, flexShrink: 0,
-        background: ch.mapping_status === "mapped" ? "rgba(22,163,74,.1)" : "var(--bg)",
-        color: ch.mapping_status === "mapped" ? "var(--green)" : "var(--muted)",
-        border: `1px solid ${ch.mapping_status === "mapped" ? "rgba(22,163,74,.2)" : "var(--border)"}`,
-      }}>
-        {ch.mapping_status === "mapped" ? "mapped" : "chưa map"}
-      </span>
-      {["youtube", "tiktok"].includes(ch.platform) && (ch.video_count ?? 0) > 0 && (
-        <button type="button" title="Xem link video đã lấy về máy" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onShowLinks(); }}
-                style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, flexShrink: 0, cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
-                         background: "var(--bg)", color: "var(--accent)", border: "1px solid var(--border)" }}>
-          🔗 {ch.video_count} link
-        </button>
-      )}
+      <ChannelDataBadges ch={ch} onShowLinks={onShowLinks} />
       <span title="Ngày kéo về" style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0, minWidth: 56, textAlign: "right" }}>{dateStr}</span>
     </label>
   );

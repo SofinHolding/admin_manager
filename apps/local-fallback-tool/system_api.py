@@ -217,7 +217,8 @@ def shared_view(items: list[dict]) -> dict:
             "resource_type": r.get("resource_type", ""), "canonical_external_id": r.get("external_id", ""),
             "input_ref": r.get("username") or r.get("external_id", ""), "display_name": r.get("display_name", ""),
             "url": r.get("url", ""), "mapping_status": r.get("mapping_status", ""),
-            "execution_mode": mode, "enabled": r.get("enabled", True)})
+            "execution_mode": mode, "enabled": r.get("enabled", True),
+            "content_count": int(r.get("content_count") or 0), "last_collected_at": r.get("last_collected_at") or ""})
     personal_only = [oid for oid in skipped_personal if oid not in owners]
     return {"owners": sorted(owners.values(), key=lambda o: o["username"].lower()), "channels": channels,
             "skipped": {"personal_tool_owners": len(personal_only), "personal_tool_channels": sum(skipped_personal.values()),

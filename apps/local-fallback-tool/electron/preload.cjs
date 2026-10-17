@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld("channels", {
   /** Fetch: kéo user/kênh dùng tool dùng chung từ website vào DB cục bộ (kênh mới = chưa kéo). Trả thống kê + `skipped`, hoặc { error }. */
   sync:
     ()                            => ipcRenderer.invoke("channels:sync"),
+  /** Làm tươi số video/lần thu cuối/đã liên kết trên server cho kênh đã có (không thêm/xoá kênh). Trả { updated } hoặc { error }. */
+  refreshStats:
+    ()                            => ipcRenderer.invoke("channels:refresh-stats"),
   /** Đọc tất cả user kèm channel_count / pulled_count từ DB. */
   listUsers:
     ()                            => ipcRenderer.invoke("channels:users:list"),

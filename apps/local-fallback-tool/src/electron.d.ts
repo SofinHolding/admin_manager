@@ -22,7 +22,9 @@ interface LocalChannel {
   pulled_at: string;
   imported_at: string;
   updated_at: string;
-  video_count?: number;   // số link video đã lấy về máy (TikTok)
+  video_count?: number;   // số link video đã lấy về máy (TikTok/YouTube)
+  server_video_count?: number;   // số video/bài đã có trên website cho kênh này (từ server, làm tươi khi Fetch / sau mỗi lần thu)
+  last_collected_at?: string;    // ISO — lần số liệu mới nhất của kênh đến server ('' = chưa có)
 }
 
 interface VideoLink {
@@ -48,6 +50,7 @@ declare interface Window {
   channels?: {
     init:           () => Promise<{ ok: boolean; db_path: string; user_count: number; channel_count: number }>;
     sync:           () => Promise<SyncResult | { error: string }>;
+    refreshStats:   () => Promise<{ updated: number } | { error: string }>;
     listUsers:      () => Promise<{ users: DbUser[] }>;
     pull:           (ids: string[]) => Promise<{ pulled: number; already: number; unknown: number }>;
     unpull:         (ids: string[]) => Promise<{ unpulled: number }>;

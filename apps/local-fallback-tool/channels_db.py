@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS local_channels (
   canonical_id    TEXT NOT NULL DEFAULT '',
   url             TEXT NOT NULL DEFAULT '',
   mapping_status  TEXT NOT NULL DEFAULT '',
+  server_video_count INTEGER NOT NULL DEFAULT 0,
+  last_collected_at  TEXT NOT NULL DEFAULT '',
   enabled         INTEGER NOT NULL DEFAULT 1,
   pulled          INTEGER NOT NULL DEFAULT 0,
   pulled_at       TEXT NOT NULL DEFAULT '',
@@ -75,7 +77,7 @@ CREATE TABLE IF NOT EXISTS channel_videos (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 KNOWN_PLATFORMS = frozenset({"youtube", "tiktok", "facebook"})
 
 
@@ -100,16 +102,19 @@ def _marks(items: list) -> str:
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """v1 → v2: thêm `pulled`/`pulled_at`. v1 chưa có khái niệm "đã kéo" (mọi kênh của user được nạp cùng lúc) nên kênh cũ vào v2 ở trạng
-    thái CHƯA KÉO — người vận hành tự chọn kênh nào kéo."""
+    """v1 → v2: thêm `pulled`/`pulled_at` (kênh cũ vào ở trạng thái CHƯA KÉO — người vận hành tự chọn kênh nào kéo).
+    v2 → v3: thêm `server_video_count`/`last_collected_at` (số liệu server đã có cho kênh; làm tươi khi Fetch/đồng bộ)."""
     version = (conn.execute("SELECT version FROM schema_version").fetchone() or [None])[0]
     if version is None:
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (CURRENT_SCHEMA_VERSION,))
-    elif version < 2:
+    elif version < CURRENT_SCHEMA_VERSION:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(local_channels)")}
         if "pulled" not in cols:
             conn.execute("ALTER TABLE local_channels ADD COLUMN pulled INTEGER NOT NULL DEFAULT 0")
             conn.execute("ALTER TABLE local_channels ADD COLUMN pulled_at TEXT NOT NULL DEFAULT ''")
+        if "server_video_count" not in cols:
+            conn.execute("ALTER TABLE local_channels ADD COLUMN server_video_count INTEGER NOT NULL DEFAULT 0")
+            conn.execute("ALTER TABLE local_channels ADD COLUMN last_collected_at TEXT NOT NULL DEFAULT ''")
         conn.execute("UPDATE schema_version SET version=?", (CURRENT_SCHEMA_VERSION,))
     conn.commit()
 
@@ -179,12 +184,12 @@ def act_sync_shared(conn: sqlite3.Connection, cmd: dict) -> dict:
             _classify_platform(ch.get("platform", "")), str(ch.get("resource_type") or "channel"),
             str(ch.get("display_name") or ""), str(ch.get("input_ref") or ""),
             str(ch.get("canonical_external_id") or ""), str(ch.get("url") or ""),
-            str(ch.get("mapping_status") or ""),
+            str(ch.get("mapping_status") or ""), int(ch.get("content_count") or 0), str(ch.get("last_collected_at") or ""),
         )
         if cid in existing_channels:
             conn.execute("""
                 UPDATE local_channels SET owner_id=?, owner_username=?, platform=?, resource_type=?,
-                  display_name=?, input_ref=?, canonical_id=?, url=?, mapping_status=?, updated_at=?
+                  display_name=?, input_ref=?, canonical_id=?, url=?, mapping_status=?, server_video_count=?, last_collected_at=?, updated_at=?
                 WHERE id=?
             """, (*row, now, cid))
             updated += 1
@@ -192,8 +197,8 @@ def act_sync_shared(conn: sqlite3.Connection, cmd: dict) -> dict:
             conn.execute("""
                 INSERT INTO local_channels (
                   id, owner_id, owner_username, platform, resource_type, display_name, input_ref, canonical_id,
-                  url, mapping_status, enabled, pulled, pulled_at, imported_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?, ?)
+                  url, mapping_status, server_video_count, last_collected_at, enabled, pulled, pulled_at, imported_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?, ?)
             """, (cid, *row, 1 if ch.get("enabled", True) else 0, now, now))
             added += 1
 
@@ -244,6 +249,20 @@ def act_list_users(conn: sqlite3.Connection, _cmd: dict) -> dict:
         ORDER BY u.username COLLATE NOCASE
     """).fetchall()
     return {"users": [dict(r) for r in rows]}
+
+
+def act_update_server_stats(conn: sqlite3.Connection, cmd: dict) -> dict:
+    """Làm tươi số liệu server (`server_video_count`, `last_collected_at`, `mapping_status`) cho kênh ĐÃ CÓ trong DB — không thêm/xoá
+    kênh hay user (khác `sync_shared`), nên an toàn để tự chạy sau mỗi lần thu: `channels=[{id, content_count, last_collected_at, mapping_status}]`."""
+    now = _now()
+    updated = 0
+    for ch in cmd.get("channels", []):
+        updated += conn.execute(
+            "UPDATE local_channels SET server_video_count=?, last_collected_at=?, mapping_status=?, updated_at=? WHERE id=?",
+            (int(ch.get("content_count") or 0), str(ch.get("last_collected_at") or ""), str(ch.get("mapping_status") or ""),
+             now, str(ch.get("id") or ""))).rowcount
+    conn.commit()
+    return {"updated": updated}
 
 
 def act_list_channels(conn: sqlite3.Connection, cmd: dict) -> dict:
@@ -388,6 +407,7 @@ _ACTIONS: dict[str, Any] = {
     "set_enabled":     act_set_enabled,
     "save_channel_videos": act_save_channel_videos,
     "list_channel_videos": act_list_channel_videos,
+    "update_server_stats": act_update_server_stats,
 }
 
 

@@ -117,5 +117,19 @@ def test_v1_database_is_migrated_with_existing_channels_left_unpulled(tmp_path, 
     conn = channels_db._get_conn()
     row = channels_db.act_list_channels(conn, {})["channels"][0]
     assert row["pulled"] == 0 and row["pulled_at"] == ""
-    assert channels_db.act_init(conn, {})["schema_version"] == 2
+    assert channels_db.act_init(conn, {})["schema_version"] == channels_db.CURRENT_SCHEMA_VERSION
     channels_db._get_conn()                                                                      # chạy lại không lỗi (idempotent)
+
+
+def test_server_counts_are_stored_on_fetch_and_refreshed_without_adding_or_removing_channels(tmp_path, monkeypatch):
+    run = _db(tmp_path, monkeypatch)
+    run("sync_shared", users=_users("u1"), channels=[_ch("c1", content_count=7, last_collected_at="2026-10-17T01:00:00+00:00", mapping_status="mapped"), _ch("c2")])
+    got = _by_id(run)
+    assert got["c1"]["server_video_count"] == 7 and got["c1"]["last_collected_at"].startswith("2026-10-17") and got["c1"]["mapping_status"] == "mapped"
+    assert got["c2"]["server_video_count"] == 0 and got["c2"]["last_collected_at"] == ""
+    out = run("update_server_stats", channels=[{"id": "c2", "content_count": 3, "last_collected_at": "2026-10-18T00:00:00+00:00", "mapping_status": "mapped"},
+                                               {"id": "gone", "content_count": 9}])
+    assert out == {"updated": 1}   # kênh lạ bị bỏ qua, không được thêm
+    got = _by_id(run)
+    assert set(got) == {"c1", "c2"} and got["c2"]["server_video_count"] == 3 and got["c2"]["mapping_status"] == "mapped"
+    assert got["c1"]["server_video_count"] == 7   # không đụng kênh không có trong lệnh

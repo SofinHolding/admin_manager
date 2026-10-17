@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import SYSTEM from "../../system-endpoints.json";
 import PoolEditor from "../components/PoolEditor";
+import ChannelDataBadges from "../components/ChannelDataBadges";
+import VideoLinksDialog from "../components/VideoLinksDialog";
 
 // ── Kiểu ─────────────────────────────────────────────────────────────────────
 
@@ -235,7 +237,7 @@ export default function CollectorPage() {
   // Collector vừa dừng (hết lượt "Chạy ngay" hoặc bị dừng): đọc lần cuối để số OK/lỗi và log mới nhất hiện ra.
   const wasRunning = useRef(false);
   useEffect(() => {
-    if (wasRunning.current && !running) { refreshLog(); refreshCStatus(); }
+    if (wasRunning.current && !running) { refreshLog(); refreshCStatus(); setReloadTick((n) => n + 1); }
     wasRunning.current = running;
   }, [running, refreshLog, refreshCStatus]);
 
@@ -391,6 +393,9 @@ export default function CollectorPage() {
   const [ownerNames, setOwnerNames] = useState<Record<string, string>>({});
   const [pulledLoaded, setPulledLoaded] = useState(false);
 
+  const [reloadTick, setReloadTick] = useState(0);
+  const [linksOf, setLinksOf] = useState<LocalChannel | null>(null);
+
   useEffect(() => {
     if (tab !== "channels" || !window.channels) return;
     let alive = true;
@@ -404,16 +409,17 @@ export default function CollectorPage() {
         setPulledLoaded(true);
       } catch { /* DB chưa sẵn sàng: giữ danh sách cũ */ }
     };
-    void load();
+    // Làm tươi số liệu server (video trên web / lần thu cuối / đã liên kết) rồi mới đọc DB; lỗi mạng thì vẫn hiện số đã lưu.
+    void (async () => { try { await window.channels!.refreshStats(); } catch { /* offline */ } await load(); })();
     const id = setInterval(load, 5000);
     return () => { alive = false; clearInterval(id); };
-  }, [tab]);
+  }, [tab, reloadTick]);
 
   const stats = cStatus?.channels ?? {};
   const shortId = (id: string) => (id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-8)}` : id || "unknown");
   const allChannels: ChannelRowData[] = pulled.map((c) => ({
     key: `${c.platform}/${c.id}`, id: c.id, name: c.display_name || c.input_ref || c.id, platform: c.platform,
-    owner: c.owner_username || shortId(c.owner_id), stat: stats[`${c.platform}/${c.id}`], outside: false,
+    owner: c.owner_username || shortId(c.owner_id), stat: stats[`${c.platform}/${c.id}`], outside: false, local: c,
   }));
   const pulledKeys = new Set(allChannels.map((c) => c.key));
   // Collector vẫn nhận job của kênh chưa kéo (server chưa lọc job theo kênh): hiện riêng, không giấu.
@@ -837,7 +843,8 @@ export default function CollectorPage() {
                 ) : (
                   <>
                     {Object.entries(byOwner).map(([owner, chs]) => (
-                      <ChannelOwnerBlock key={owner} owner={owner} chs={chs} onRun={(id) => handleRunNow([id])} runDisabled={!isElectron || running || starting} />
+                      <ChannelOwnerBlock key={owner} owner={owner} chs={chs} onRun={(id) => handleRunNow([id])} runDisabled={!isElectron || running || starting}
+                        onShowLinks={setLinksOf} />
                     ))}
                     {outsideChannels.length > 0 && (
                       <ChannelOwnerBlock owner="Ngoài danh sách đã kéo" chs={outsideChannels}
@@ -1089,6 +1096,7 @@ export default function CollectorPage() {
 
         </main>
       </div>
+      {linksOf && <VideoLinksDialog channel={linksOf} onClose={() => setLinksOf(null)} />}
     </div>
   );
 }
@@ -1143,12 +1151,13 @@ function CfgField({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-interface ChannelRowData { key: string; id?: string; name: string; platform: string; owner: string; stat?: ChannelStat; outside: boolean }
+interface ChannelRowData { key: string; id?: string; name: string; platform: string; owner: string; stat?: ChannelStat; outside: boolean; local?: LocalChannel }
 
-/** Một nhóm kênh theo chủ sở hữu: tên kênh, số lần OK/lỗi, lần gần nhất, lỗi cuối. Kênh chưa có job chạy xong trong phiên này hiện "Chưa thu (phiên này)" —
- *  số liệu này đọc từ file trạng thái của collector, KHÁC danh sách kênh (đọc từ DB cục bộ). */
-function ChannelOwnerBlock({ owner, chs, note, onRun, runDisabled }: {
+/** Một nhóm kênh theo chủ sở hữu: tên kênh, số lần OK/lỗi, lần gần nhất, lỗi cuối (đọc từ file trạng thái của collector, giữ qua các phiên) cùng
+ *  số liệu kênh từ DB cục bộ (đã liên kết, số video trên web, link đã lấy) — cùng thành phần với tab "Người dùng & Kênh". */
+function ChannelOwnerBlock({ owner, chs, note, onRun, runDisabled, onShowLinks }: {
   owner: string; chs: ChannelRowData[]; note?: string; onRun?: (id: string) => void; runDisabled?: boolean;
+  onShowLinks?: (c: LocalChannel) => void;
 }) {
   return (
     <div style={{ marginTop: 12 }}>
@@ -1183,8 +1192,11 @@ function ChannelOwnerBlock({ owner, chs, note, onRun, runDisabled }: {
                 )}
               </>
             ) : (
-              <span title="Collector chưa xử lý job nào của kênh này trong phiên hiện tại" style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>Chưa thu (phiên này)</span>
+              <span title="Collector chưa thu kênh này lần nào trên máy này (trạng thái được giữ qua các phiên)" style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>
+                {ch.local && (ch.local.server_video_count ?? 0) > 0 ? "Đã có số liệu trên web" : "Chưa thu"}
+              </span>
             )}
+            {ch.local && <ChannelDataBadges ch={ch.local} onShowLinks={onShowLinks ? () => onShowLinks(ch.local as LocalChannel) : undefined} />}
             {ch.id && onRun && (
               <button type="button" onClick={() => onRun(ch.id as string)} disabled={runDisabled} title="Chạy ngay riêng kênh này"
                       style={{ ...btnCss("ghost", runDisabled), height: 22, fontSize: 10, padding: "0 7px", flexShrink: 0 }}>▶ Chạy ngay</button>

@@ -408,6 +408,13 @@ ipcMain.handle("channels:sync", async () => {
   return { ...res, skipped: shared.skipped };
 });
 
+/** Làm tươi số liệu server (số video, lần thu cuối, đã liên kết) cho kênh đã có — KHÔNG thêm/xoá user/kênh nên an toàn tự chạy sau mỗi lần thu. */
+ipcMain.handle("channels:refresh-stats", async () => {
+  const shared = await runSystemApi("shared");
+  if (shared.error) return { error: shared.error };
+  return callChannelsDb({ action: "update_server_stats", channels: shared.channels });
+});
+
 ipcMain.handle("channels:users:list", () =>
   callChannelsDb({ action: "list_users" }));
 
