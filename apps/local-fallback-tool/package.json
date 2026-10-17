@@ -45,7 +45,10 @@
     "files": [
       "dist/**",
       "electron/**",
-      "collect.py"
+      "collect.py",
+      "channels_db.py",
+      "system_api.py",
+      "system-endpoints.json"
     ]
   },
   "allowScripts": {

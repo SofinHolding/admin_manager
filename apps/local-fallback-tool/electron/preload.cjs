@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld("collector", {
   /** Chọn file kết nối Admin cấp (gateway + api_key) và ghi vào cấu hình. */
   importConnection: ()      => ipcRenderer.invoke("collector:import-connection"),
   health:        ()         => ipcRenderer.invoke("collector:health"),
+  /** Danh sách endpoint hệ thống đã ánh xạ + gateway đang dùng (system-endpoints.json). */
+  endpoints:     ()         => ipcRenderer.invoke("collector:endpoints"),
+  /** Chạy thử từng endpoint an toàn bằng cấu hình hiện tại (system_api.py probe). */
+  probe:         ()         => ipcRenderer.invoke("collector:probe"),
   apiGet:        (apiPath)  => ipcRenderer.invoke("collector:api:get", apiPath),
   readStatus:    ()         => ipcRenderer.invoke("collector:status:read"),
   /** Lắng nghe sự kiện scheduler (auto_started / auto_stopped). */

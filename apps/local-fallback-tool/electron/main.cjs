@@ -13,6 +13,12 @@ const LOG_PATH      = path.join(ROOT_DIR, ".dev", "collector.log");
 const STATUS_PATH   = path.join(ROOT_DIR, ".dev", "collector-status.json");
 const LOG_TAIL_LINES = 200;
 
+// Địa chỉ máy chủ nhúng sẵn + danh sách endpoint hệ thống: nguồn sự thật duy nhất, dùng chung với system_api.py.
+const SYSTEM = require("../system-endpoints.json");
+const SYSTEM_API_PY = path.join(__dirname, "..", "system_api.py");
+/** Gateway đang dùng: cấu hình người dùng (file kết nối / nhập tay) nếu có, không thì địa chỉ nhúng sẵn. */
+const gatewayOf = (cfg) => String((cfg && cfg.gateway) || SYSTEM.default_gateway).replace(/\/$/, "");
+
 /** @type {import('child_process').ChildProcess|null} */
 let collectorProcess = null;
 /** @type {BrowserWindow|null} */
@@ -33,7 +39,7 @@ function killCollector() {
 
 function buildCollectorArgs(cfg, platformsOverride) {
   const args = [COLLECT_PY];
-  if (cfg.gateway)         args.push("--gateway",         cfg.gateway);
+  args.push("--gateway", gatewayOf(cfg));
   if (cfg.api_key)         args.push("--api-key",         cfg.api_key);
   if (cfg.checkview_dir)   args.push("--checkview-dir",   cfg.checkview_dir);
   if (cfg.youtube_api_key) args.push("--youtube-api-key", cfg.youtube_api_key);
@@ -184,7 +190,7 @@ ipcMain.handle("collector:config:read", () => {
   };
   const merge = (key) => ({ ...defaultPlatforms[key], ...(data.platforms?.[key] || {}) });
   return {
-    gateway:         data.gateway          || "",
+    gateway:         data.gateway          || SYSTEM.default_gateway,
     api_key:         data.api_key          || "",
     youtube_api_key: data.youtube_api_key  || "",
     checkview_dir:   data.checkview_dir    || "",
@@ -229,14 +235,38 @@ ipcMain.handle("collector:import-connection", async () => {
   return { ok: true, gateway: parsed.gateway };
 });
 
+/** Kiểm tra gateway còn sống bằng endpoint API thật (`health` trong system-endpoints.json), không phải trang web:
+ *  `/health/ready` ở cổng web trả HTML 200 nên từng báo "khoẻ" cả khi API chết. */
 ipcMain.handle("collector:health", async () => {
-  const cfg = readConfigFile();
-  if (!cfg.gateway) return { ok: false, reason: "Chưa cấu hình Gateway URL" };
+  const base = gatewayOf(readConfigFile());
+  const ep = SYSTEM.endpoints.find((e) => e.name === "health");
   try {
-    const res = await fetch(`${cfg.gateway.replace(/\/$/, "")}/health/ready`, { signal: AbortSignal.timeout(4000) });
+    const res = await fetch(`${base}${ep.path}`, { signal: AbortSignal.timeout(4000) });
+    const body = await res.json().catch(() => null);
+    if (!body || body.ok !== true) return { ok: false, status: res.status, reason: "Địa chỉ này không phải API của hệ thống" };
     return { ok: res.ok, status: res.status };
   } catch (e) { return { ok: false, reason: e.message }; }
 });
+
+ipcMain.handle("collector:endpoints", () => ({ default_gateway: SYSTEM.default_gateway, gateway: gatewayOf(readConfigFile()),
+                                                endpoints: SYSTEM.endpoints }));
+
+/** Chạy thử từng endpoint an toàn qua system_api.py (key đi qua stdin, không lên dòng lệnh). */
+ipcMain.handle("collector:probe", () => new Promise((resolve) => {
+  const cfg = readConfigFile();
+  const pythonBin = process.platform === "win32" ? "python" : "python3";
+  const child = spawn(pythonBin, [SYSTEM_API_PY, "probe"], { windowsHide: true, stdio: "pipe" });
+  const out = [], err = [];
+  child.stdout.on("data", (d) => out.push(d));
+  child.stderr.on("data", (d) => err.push(d));
+  child.on("error", (e) => resolve({ error: `Không chạy được Python: ${e.message}` }));
+  child.on("close", () => {
+    const text = Buffer.concat(out).toString("utf-8").trim();
+    try { resolve(JSON.parse(text)); }
+    catch { resolve({ error: Buffer.concat(err).toString("utf-8").trim().slice(-300) || "system_api.py không trả kết quả" }); }
+  });
+  child.stdin.end(JSON.stringify({ gateway: gatewayOf(cfg), api_key: cfg.api_key || "" }), "utf-8");
+}));
 
 /** installation_id đã bind cho api_key hiện tại (device binding: mọi request máy ngoài /handshake phải gửi X-Installation-Id). */
 let machineInstallation = null; // { apiKey: string, installationId: string }
@@ -266,8 +296,8 @@ async function machineInstallationId(cfg, base) {
 
 ipcMain.handle("collector:api:get", async (_event, apiPath) => {
   const cfg = readConfigFile();
-  if (!cfg.gateway || !cfg.api_key) return { error: "Chưa cấu hình gateway / api_key" };
-  const base = cfg.gateway.replace(/\/$/, "");
+  if (!cfg.api_key) return { error: "Chưa cấu hình api_key" };
+  const base = gatewayOf(cfg);
   try {
     const installationId = await machineInstallationId(cfg, base);
     const res = await fetch(`${base}${apiPath}`, {
@@ -356,8 +386,7 @@ ipcMain.handle("channels:set-enabled", (_event, { ids, enabled }) =>
  * Dùng gateway URL từ collector-config hoặc url được truyền vào.
  */
 ipcMain.handle("channels:login", async (_event, { url, username, password }) => {
-  const base = (url || readConfigFile().gateway || "").replace(/\/$/, "");
-  if (!base) return { ok: false, error: "Chưa cấu hình Gateway URL (tab Thu thập → Cấu hình)" };
+  const base = (url || gatewayOf(readConfigFile())).replace(/\/$/, "");
   try {
     const res = await fetch(`${base}/v1/auth/login`, {
       method: "POST",
@@ -377,8 +406,7 @@ ipcMain.handle("channels:login", async (_event, { url, username, password }) => 
  * Gọi /v1/ops/* bằng user JWT (khác với collector:api:get dùng machine api_key).
  */
 ipcMain.handle("channels:api-call", async (_event, { path, token }) => {
-  const base = readConfigFile().gateway?.replace(/\/$/, "") || "";
-  if (!base) return { error: "Chưa cấu hình Gateway URL (tab Thu thập → Cấu hình)" };
+  const base = gatewayOf(readConfigFile());
   if (!token) return { error: "Chưa đăng nhập — cần JWT admin" };
   try {
     const res = await fetch(`${base}${path}`, {

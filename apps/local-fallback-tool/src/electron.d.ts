@@ -35,6 +35,15 @@ interface ApiInventoryItem {
   enabled?: boolean | number;
 }
 
+interface SystemEndpoint {
+  name: string; method: string; path: string; scope: string | null; auth: boolean; probe: "safe" | "skip"; summary: string;
+}
+
+interface SystemProbeResult {
+  name: string; method: string; path: string; scope: string | null; summary: string;
+  status: "ok" | "fail" | "skipped"; http: number | null; ms: number | null; detail: string;
+}
+
 declare interface Window {
   channels?: {
     init:           () => Promise<{ ok: boolean; db_path: string; user_count: number; channel_count: number }>;

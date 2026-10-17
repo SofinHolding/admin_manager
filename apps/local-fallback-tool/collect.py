@@ -17,7 +17,7 @@ Contract CheckviewV2 (subprocess stdout 1 dòng JSON):
 
 Cách chạy:
   python collect.py \\
-    --gateway http://127.0.0.1:57595 \\
+    --gateway http://192.168.1.70:8480 \\
     --api-key mpk_<key_id>.<secret> \\
     --checkview-dir D:/workspace/CheckviewV2/backend/checker \\
     --youtube-api-key AIza...                  # (hoặc env YOUTUBE_API_KEY)
@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -47,6 +46,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+from system_api import DEFAULT_GATEWAY, SystemApi
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -70,10 +71,6 @@ _HANDLE_RE = re.compile(r"(?:/@|@)([A-Za-z0-9._-]+)")
 # ── Kết nối / ánh xạ dữ liệu (thuần, có test: tests/test_collect_push.py) ────────────────────
 
 CONNECTION_FORMAT = "manager-connection/1"
-
-
-class PushError(Exception):
-    """Đẩy số liệu lên thất bại: job phải fail kèm lý do, không được coi là hoàn tất."""
 
 
 class JobAbort(Exception):
@@ -110,61 +107,6 @@ def select_platforms(allowed: list[str], narrowed: list[str] | None) -> list[str
     """Nền tảng collector xử lý = key được phép ∩ collector có adapter (∩ --platforms nếu có). Giữ thứ tự `PLATFORMS`."""
     return [p for p in PLATFORMS if p in allowed and (not narrowed or p in narrowed)]
 
-
-def _published_date(published_at: str | None, fallback: datetime) -> str:
-    if published_at:
-        try:
-            return datetime.fromisoformat(published_at.replace("Z", "+00:00")).astimezone(timezone.utc).date().isoformat()
-        except ValueError:
-            pass
-    return fallback.date().isoformat()
-
-
-# Chỉ số của KÊNH (cấu trúc đã thiết kế sẵn, adapter nền tảng điền khi lấy được). Khoá = Metric Registry:
-#   followers = số người theo dõi, videos_posted = tổng số video, likes = tổng lượt thích của kênh.
-# Giá trị là SỐ TUYỆT ĐỐI tại thời điểm đo; server ghi theo ngày (daily_metrics) nên có lịch sử theo ngày.
-CHANNEL_METRIC_KEYS = ("followers", "videos_posted", "likes")
-
-
-def build_content_items(resource_ext: str, items: list[dict], now: datetime, platform: str | None = None) -> list[dict]:
-    """Số liệu đo được -> `content` của hợp đồng ingest, gắn `resource_external_id` của KÊNH trong job.
-
-    `views/likes/comments/shares` -> metrics `views/reactions/comments/shares` (khoá canonical của Metric Registry).
-    `title/duration_seconds/cover_url` (nếu adapter có) -> `extensions.<platform>` để hiển thị/tra cứu sau này.
-    Bản ghi thiếu external_id bị bỏ (không đoán). Trùng external_id: bản sau thắng. Số âm/không phải số nguyên bị bỏ.
-    """
-    out: dict[str, dict] = {}
-    for it in items:
-        ext = str(it.get("external_id") or "").strip()
-        if not ext:
-            continue
-        if len(ext) > 200:
-            ext = "h_" + hashlib.sha1(ext.encode("utf-8")).hexdigest()
-        metrics = {key: int(it[src]) for key, src in (("views", "views"), ("reactions", "likes"), ("comments", "comments"),
-                                                       ("shares", "shares"))
-                   if isinstance(it.get(src), (int, float)) and not isinstance(it.get(src), bool) and it[src] >= 0}
-        row = {"external_id": ext, "resource_external_id": resource_ext,
-               "published_date": _published_date(it.get("published_at"), now), "metrics": metrics,
-               "observed_at": now.isoformat()}
-        if it.get("url"):
-            row["url"] = str(it["url"])[:500]
-        extra = {k: (str(it[k])[:300] if k != "duration_seconds" else it[k])
-                 for k in ("title", "duration_seconds", "cover_url")
-                 if it.get(k) not in (None, "") and (k != "duration_seconds" or isinstance(it[k], int))}
-        if extra and platform:
-            row["extensions"] = {platform: extra}
-        out[ext] = row
-    return list(out.values())
-
-
-def build_channel_metrics(resource_ext: str, stats: dict | None, now: datetime) -> list[dict]:
-    """Chỉ số của kênh -> MỘT bản ghi `metrics` (khoá `(kênh, ngày UTC)`); rỗng nếu adapter không có chỉ số nào hợp lệ."""
-    metrics = {k: int(stats[k]) for k in CHANNEL_METRIC_KEYS
-               if stats and isinstance(stats.get(k), (int, float)) and not isinstance(stats.get(k), bool) and stats[k] >= 0}
-    if not metrics:
-        return []
-    return [{"resource_external_id": resource_ext, "date": now.date().isoformat(), "metrics": metrics,
-             "observed_at": now.isoformat()}]
 
 # ── Status tracker ────────────────────────────────────────────────────────────
 
@@ -234,143 +176,6 @@ class StatusTracker:
             Path(self._file).write_text(json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:  # noqa: BLE001
             pass
-
-# ── Integration-service client ────────────────────────────────────────────────
-
-class IntegrationClient:
-    """Thin HTTP client giao tiếp với integration-service qua machine credential."""
-
-    def __init__(self, gateway: str, api_key: str, timeout: float = 20.0) -> None:
-        self._http = httpx.AsyncClient(
-            base_url=gateway,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=timeout,
-        )
-        self.installation_id: str | None = None
-
-    async def aclose(self) -> None:
-        await self._http.aclose()
-
-    async def handshake(self, platforms: list[str]) -> str:
-        """Khai báo installation với integration-service → lấy installation_id.
-
-        Phải gọi một lần khi khởi động (trước claim_jobs). Idempotent: gọi lại
-        cùng device_id sẽ cập nhật last_seen_at, không tạo mới.
-        """
-        import socket
-        r = await self._http.post(
-            "/v1/integrations/handshake",
-            json={
-                "installation": {
-                    "device_id": f"shared-collector-{socket.gethostname()}",
-                    "hostname": socket.gethostname(),
-                    "os": "windows",
-                    "app_version": "collect.py/1.0",
-                },
-                "platforms": platforms,
-                "capabilities": ["data.collect"],
-            },
-        )
-        r.raise_for_status()
-        self.installation_id = r.json()["data"]["installation_id"]
-        # Bắt buộc trên MỌI request khác /handshake kể từ device binding (thiết kế tool-key 2026-10-14):
-        # credential chưa gửi X-Installation-Id khớp installation đã bind => 403 CREDENTIAL_NOT_ACTIVATED/INSTALLATION_MISMATCH.
-        self._http.headers["X-Installation-Id"] = self.installation_id
-        log.info("Handshake OK — installation_id=%s", self.installation_id)
-        return self.installation_id
-
-    async def claim_jobs(self, platforms: list[str], limit: int = 10) -> list[dict]:
-        """Claim collect-jobs từ hàng đợi.
-
-        Chỉ nhận jobs của resources execution_mode=fallback_local — đảm bảo tự nhiên:
-        _rewrite() đã cancel pending-job khi mode != fallback_local, _ensure_collect_job()
-        chỉ tạo job khi mode=fallback_local. Không cần filter thêm ở đây.
-        """
-        if not self.installation_id:
-            raise RuntimeError("Chưa handshake — gọi handshake() trước")
-        r = await self._http.post(
-            "/v1/integrations/jobs/claim",
-            json={
-                "installation_id": self.installation_id,
-                "platforms": platforms,
-                "capabilities": ["data.collect"],
-                "limit": min(limit, 20),
-                "lease_seconds": 300,
-            },
-        )
-        if r.status_code == 204:
-            return []
-        r.raise_for_status()
-        data = r.json().get("data", {})
-        return data.get("jobs", []) if isinstance(data, dict) else []
-
-    async def allowed_platforms(self) -> list[str]:
-        """Khoá nền tảng key này được phép gửi (giao của `allowed_platforms` và Platform Registry đang bật)."""
-        r = await self._http.get("/v1/integrations/platforms")
-        r.raise_for_status()
-        return [p["key"] for p in r.json().get("data", [])]
-
-    async def _checked(self, r: httpx.Response, what: str) -> dict:
-        """Mọi bước đẩy dữ liệu PHẢI được kiểm: lỗi HTTP hay `rejections` đều làm job thất bại (không mất số liệu im lặng)."""
-        if r.status_code >= 400:
-            raise PushError(f"{what}: HTTP {r.status_code} {r.text[:300]}")
-        return r.json().get("data") or {}
-
-    async def push_snapshot(self, job: dict, items: list[dict], channel_stats: dict | None = None) -> dict:
-        """Đẩy số liệu của MỘT kênh (job) lên dashboard bằng ingest ủy quyền.
-
-        Gồm: danh sách video của kênh (`content`, mỗi video kèm metrics) và — nếu adapter lấy được — chỉ số của chính kênh
-        (`metrics` theo ngày: followers/videos_posted/likes). Mapping: `platform` và `resource_external_id` lấy từ chính job
-        (resource do user nhập, đã gắn nền tảng) — không phải id Tool tự dò. Snapshot `delta` + `expected_counts`: server kiểm
-        đủ số bản ghi mới commit, thiếu thì lỗi.
-        """
-        job_id, platform = job["job_id"], job["platform"]
-        resource_ext = (job.get("resource") or {}).get("external_id")
-        if not job_id or not platform or not resource_ext:
-            raise PushError("job thiếu job_id/platform/resource.external_id — không thể ánh xạ kênh")
-        now = datetime.now(timezone.utc)
-        content = build_content_items(resource_ext, items, now, platform)
-        channel = build_channel_metrics(resource_ext, channel_stats, now)
-        if not content and not channel:
-            raise PushError("không có bản ghi hợp lệ để đẩy")
-        hdr = {"X-Delegated-Job": job_id}
-        attempt = job.get("attempt") or 1
-        expected = {k: len(v) for k, v in (("content", content), ("metrics", channel)) if v}
-        snap = await self._checked(await self._http.post(
-            "/v1/integrations/snapshots", headers={**hdr, "Idempotency-Key": f"collect-{job_id}-{attempt}"},
-            json={"platform": platform, "snapshot_type": "delta", "observed_at": now.isoformat(),
-                  "report_timezone": "UTC", "expected_counts": expected}), "tạo snapshot")
-        sid = snap["snapshot_id"]
-        for kind, rows in (("metrics", channel), ("content", content)):
-            for i in range(0, len(rows), 500):
-                res = await self._checked(await self._http.post(
-                    f"/v1/integrations/snapshots/{sid}/{kind}", headers=hdr, json={"items": rows[i:i + 500]}),
-                    f"gửi {kind}")
-                if res.get("rejected"):
-                    raise PushError(f"server từ chối {res['rejected']} bản ghi {kind}: {res.get('rejections', [])[:3]}")
-        return await self._checked(await self._http.post(
-            f"/v1/integrations/snapshots/{sid}/commit", headers=hdr, json={}), "commit")
-
-    async def complete_job(self, job: dict, result: dict | None = None) -> None:
-        """Báo job xong. Dữ liệu đã commit trước đó nên lỗi ở bước này chỉ cảnh báo (job sẽ hết lease và được xử lý lại,
-        upsert theo khoá tự nhiên nên không nhân đôi số liệu)."""
-        r = await self._http.post(f"/v1/integrations/jobs/{job['job_id']}/complete",
-                                  json={"result": result or {}, "lease_token": job.get("lease_token")})
-        if r.status_code >= 400:
-            log.warning("complete job=%s thất bại: HTTP %s %s", job["job_id"], r.status_code, r.text[:200])
-
-    async def fail_job(self, job: dict, reason: str, *, retryable: bool = True) -> None:
-        r = await self._http.post(
-            f"/v1/integrations/jobs/{job['job_id']}/fail",
-            json={"error_code": "COLLECT_FAILED", "message": reason[:500], "retryable": retryable,
-                  "lease_token": job.get("lease_token")},
-        )
-        if r.status_code >= 400:
-            log.warning("fail job=%s không ghi được: HTTP %s %s", job["job_id"], r.status_code, r.text[:200])
-
-    async def heartbeat(self, job: dict) -> None:
-        await self._http.post(f"/v1/integrations/jobs/{job['job_id']}/heartbeat",
-                              json={"lease_seconds": 300, "lease_token": job.get("lease_token")})
 
 # ── CheckviewV2 subprocess caller ─────────────────────────────────────────────
 
@@ -536,7 +341,7 @@ async def fetch_tiktok_recent_videos(
 
 async def process_job(
     job: dict,
-    client: IntegrationClient,
+    client: SystemApi,
     checker_dir: str,
     youtube_api_key: str,
     fb_cookie: str | None,
@@ -650,7 +455,7 @@ async def run_loop(args: argparse.Namespace) -> None:
     fb_cookie = args.fb_cookie or os.environ.get("FB_COOKIE", "")
     proxy = args.proxy or os.environ.get("PROXY", "") or None
 
-    client = IntegrationClient(args.gateway, args.api_key)
+    client = SystemApi(args.gateway, args.api_key)
     http = httpx.AsyncClient(timeout=20.0)
     sem = asyncio.Semaphore(args.max_concurrent)
     tracker = StatusTracker(args.status_file or "")
@@ -738,7 +543,7 @@ def main() -> None:
             print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)
         args.gateway, args.api_key = conn["gateway"], conn["api_key"]
-    args.gateway = args.gateway or "http://127.0.0.1:57595"
+    args.gateway = args.gateway or DEFAULT_GATEWAY
 
     if not args.api_key:
         print("ERROR: cần --connection-file hoặc --api-key/MACHINE_API_KEY", file=sys.stderr)

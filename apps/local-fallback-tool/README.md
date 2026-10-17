@@ -13,6 +13,9 @@ không cần đăng nhập, không gọi `admin-server`.
 - `src/pages/CollectorPage.tsx` — UI duy nhất: status dot, form cấu hình, start/stop, log panel
   polling 2 giây.
 - `src/electron.d.ts` — khai báo kiểu `Window.collector` dùng trong renderer.
+- `system-endpoints.json` — NGUỒN SỰ THẬT về địa chỉ máy chủ nhúng sẵn (`default_gateway`) và mọi endpoint hệ thống mà tool dùng.
+- `system_api.py` — `SystemApi`: client duy nhất gọi hệ thống (collect.py và kiểm tra kết nối đều đi qua đây) + `probe`.
+- `src/pages/SystemApiPage.tsx` — tab "API hệ thống": liệt kê endpoint đã ánh xạ, nút "Kiểm tra kết nối".
 
 ## Chạy dev
 
@@ -29,6 +32,20 @@ npm run electron:build   # vite build (base: './') rồi electron-builder đóng
 
 `collect.py` được đóng gói kèm theo (`build.files` trong `package.json`); máy chạy ứng dụng vẫn
 cần Python (và các dependency của `collect.py`, vd. `httpx`) cài sẵn trong PATH.
+
+## Địa chỉ máy chủ nhúng sẵn và ánh xạ endpoint
+
+Tool mang sẵn địa chỉ hệ thống hiện tại `http://192.168.1.70:8480` (`default_gateway` trong `system-endpoints.json`; chỉ dùng được khi máy
+chạy tool cùng mạng LAN với máy chủ). Không cần nhập Gateway URL: chỉ cần **API key** (xin ở Admin → Công cụ dùng chung, key bind 1 máy). Nạp
+file kết nối hoặc nhập tay Gateway URL thì địa chỉ đó thắng địa chỉ nhúng sẵn. Đổi địa chỉ nhúng sẵn = sửa MỘT chỗ là `system-endpoints.json`.
+
+Mọi endpoint mặt phẳng MÁY của `integration-service` đã được ánh xạ trong `system-endpoints.json` (handshake, platforms, resources,
+resource-owners, snapshots + resources/content/events/metrics/commit/status, jobs claim/heartbeat/complete/fail, workers register/heartbeat,
+resources/batch) cộng `GET /v1/health`. `tests/test_system_api.py` so danh sách này với `guide/catalog.py` của server: server thêm/đổi/bỏ endpoint
+mà tool chưa theo kịp thì test đỏ.
+
+Tab **API hệ thống** (hoặc CLI `echo '{"api_key":"mpk_..."}' | python system_api.py probe`) chạy thử từng endpoint an toàn (đọc / idempotent)
+và báo OK/Lỗi/Bỏ qua từng cái; endpoint ghi hoặc đổi trạng thái job không bao giờ bị chạy thử.
 
 ## Kết nối bằng file Admin cấp
 
@@ -48,7 +65,7 @@ Adapter TikTok hiện là placeholder (chưa liệt kê được video) nên job
 ## Test
 
 ```powershell
-python -m pytest tests -q   # logic đẩy số liệu, file kết nối (không cần mạng/DB)
+python -m pytest tests -q   # logic đẩy số liệu, ánh xạ endpoint, file kết nối (không cần mạng/DB)
 ```
 
 ## Ghi chú

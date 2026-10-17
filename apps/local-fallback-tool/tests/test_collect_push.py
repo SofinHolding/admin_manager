@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import collect  # noqa: E402
+import system_api  # noqa: E402
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
 JOB = {"job_id": "job_1", "platform": "youtube", "attempt": 2,
@@ -20,7 +21,7 @@ JOB = {"job_id": "job_1", "platform": "youtube", "attempt": 2,
 
 
 def test_content_is_keyed_to_the_jobs_resource_not_to_what_the_tool_discovered():
-    rows = collect.build_content_items("chan-user-entered", [
+    rows = system_api.build_content_items("chan-user-entered", [
         {"external_id": "vid1", "views": 10, "likes": 2, "comments": 1, "published_at": "2026-10-01T08:00:00Z",
          "url": "https://y/1"}], NOW)
     assert rows == [{"external_id": "vid1", "resource_external_id": "chan-user-entered", "published_date": "2026-10-01",
@@ -29,7 +30,7 @@ def test_content_is_keyed_to_the_jobs_resource_not_to_what_the_tool_discovered()
 
 
 def test_unmeasured_negative_and_idless_values_are_not_invented():
-    rows = collect.build_content_items("r", [
+    rows = system_api.build_content_items("r", [
         {"external_id": "", "views": 5},
         {"external_id": "a", "views": -1, "likes": None, "comments": 3},
         {"external_id": "a", "views": 7},
@@ -38,22 +39,22 @@ def test_unmeasured_negative_and_idless_values_are_not_invented():
 
 
 def test_long_external_id_is_hashed_to_fit_contract():
-    rows = collect.build_content_items("r", [{"external_id": "https://x/" + "a" * 300, "views": 1}], NOW)
+    rows = system_api.build_content_items("r", [{"external_id": "https://x/" + "a" * 300, "views": 1}], NOW)
     assert len(rows[0]["external_id"]) <= 200 and rows[0]["external_id"].startswith("h_")
 
 
 def test_video_details_go_to_the_platform_extension_and_shares_to_metrics():
-    rows = collect.build_content_items("r", [{"external_id": "v", "views": 1, "shares": 4, "title": "T", "duration_seconds": 9,
+    rows = system_api.build_content_items("r", [{"external_id": "v", "views": 1, "shares": 4, "title": "T", "duration_seconds": 9,
                                               "cover_url": ""}], NOW, "tiktok")
     assert rows[0]["metrics"] == {"views": 1, "shares": 4}
     assert rows[0]["extensions"] == {"tiktok": {"title": "T", "duration_seconds": 9}}      # rỗng/thiếu thì không gửi
 
 
 def test_channel_metrics_are_one_row_per_day_and_never_invented():
-    rows = collect.build_channel_metrics("chan", {"followers": 12, "videos_posted": 0, "likes": -1, "junk": 5}, NOW)
+    rows = system_api.build_channel_metrics("chan", {"followers": 12, "videos_posted": 0, "likes": -1, "junk": 5}, NOW)
     assert rows == [{"resource_external_id": "chan", "date": "2026-10-15", "metrics": {"followers": 12, "videos_posted": 0},
                      "observed_at": NOW.isoformat()}]
-    assert collect.build_channel_metrics("chan", {}, NOW) == [] and collect.build_channel_metrics("chan", None, NOW) == []
+    assert system_api.build_channel_metrics("chan", {}, NOW) == [] and system_api.build_channel_metrics("chan", None, NOW) == []
 
 
 def test_platforms_are_allowed_keys_that_have_an_adapter():
@@ -78,8 +79,8 @@ def test_connection_file_validation(tmp_path):
         collect.load_connection_file(str(tmp_path / "missing.json"))
 
 
-def _client(handler) -> collect.IntegrationClient:
-    c = collect.IntegrationClient("http://gw", "mpk_a.b")
+def _client(handler) -> system_api.SystemApi:
+    c = system_api.SystemApi("http://gw", "mpk_a.b")
     c._http = httpx.AsyncClient(base_url="http://gw", transport=httpx.MockTransport(handler))
     return c
 
@@ -116,7 +117,7 @@ def test_any_failed_step_raises_instead_of_reporting_success(fail_at):
             return httpx.Response(201, json={"data": {"snapshot_id": "snp_1"}})
         return httpx.Response(200, json={"data": {"received": 1, "rejected": 0}})
 
-    with pytest.raises(collect.PushError):
+    with pytest.raises(system_api.PushError):
         asyncio.run(_client(handler).push_snapshot(JOB, [{"external_id": "v1", "views": 3}]))
 
 
@@ -126,12 +127,12 @@ def test_server_rejections_are_not_silent():
             return httpx.Response(201, json={"data": {"snapshot_id": "snp_1"}})
         return httpx.Response(200, json={"data": {"received": 1, "rejected": 1, "rejections": [{"code": "RESOURCE_UNKNOWN"}]}})
 
-    with pytest.raises(collect.PushError, match="từ chối"):
+    with pytest.raises(system_api.PushError, match="từ chối"):
         asyncio.run(_client(handler).push_snapshot(JOB, [{"external_id": "v1", "views": 3}]))
 
 
 def test_job_without_resource_cannot_be_mapped():
-    with pytest.raises(collect.PushError):
+    with pytest.raises(system_api.PushError):
         asyncio.run(_client(lambda r: httpx.Response(500)).push_snapshot(
             {"job_id": "j", "platform": "youtube", "resource": None}, [{"external_id": "v", "views": 1}]))
 
