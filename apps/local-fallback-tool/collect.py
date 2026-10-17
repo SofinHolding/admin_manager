@@ -141,7 +141,7 @@ class StatusTracker:
             self._data["stats"]["done"] += 1
             key = f"{platform}/{channel_id}"
             ch = self._data["channels"].get(key, {"total_ok": 0, "total_fail": 0, "last_error": None, "last_error_at": None})
-            ch.update({"channel": channel_name, "platform": platform, "owner": owner,
+            ch.update({"channel": channel_name, "channel_id": channel_id, "platform": platform, "owner": owner,
                 "total_ok": ch["total_ok"] + 1, "last_ok": datetime.now(timezone.utc).isoformat()})
             self._data["channels"][key] = ch
             self._upsert({"job_id": job_id, "platform": platform, "channel": channel_name,
@@ -156,7 +156,7 @@ class StatusTracker:
             self._data["stats"]["failed"] += 1
             key = f"{platform}/{channel_id}"
             ch = self._data["channels"].get(key, {"total_ok": 0, "total_fail": 0, "last_ok": None})
-            ch.update({"channel": channel_name, "platform": platform, "owner": owner,
+            ch.update({"channel": channel_name, "channel_id": channel_id, "platform": platform, "owner": owner,
                 "total_fail": ch.get("total_fail", 0) + 1, "last_error": error,
                 "last_error_at": datetime.now(timezone.utc).isoformat()})
             self._data["channels"][key] = ch
@@ -355,7 +355,8 @@ async def process_job(
     resource = job.get("resource") or {}
     input_ref = (resource.get("input_ref") or resource.get("external_id") or
                  job.get("resource_input_ref") or job.get("input_ref", ""))
-    resource_id = resource.get("id") or job.get("resource_id", "")
+    # Job do server trả `resource.resource_id` (không phải `id`). Đây là khoá của kênh xuyên suốt: tracker, giao diện, DB cục bộ.
+    resource_id = resource.get("resource_id") or resource.get("id") or job.get("resource_id", "")
     owner = (job.get("owner_account_id") or resource.get("owner_account_id") or
              job.get("account_id") or "")
     channel_name = resource.get("display_name") or resource.get("name") or input_ref
@@ -375,11 +376,11 @@ async def process_job(
             resolved = await resolve_youtube_channel(input_ref, youtube_api_key, http)
             if not resolved:
                 raise JobAbort(f"Cannot resolve YouTube channel: {input_ref}", retryable=False)
-            channel_id, channel_title = resolved
-            log.info("YouTube channel_id=%s title=%s", channel_id, channel_title)
+            yt_channel_id, channel_title = resolved   # id kênh trên YouTube; KHÔNG ghi đè `channel_id` (khoá kênh của hệ thống)
+            log.info("YouTube channel_id=%s title=%s", yt_channel_id, channel_title)
 
-            videos = await fetch_youtube_recent_videos(channel_id, youtube_api_key, http)
-            log.info("Fetched %d videos for channel %s", len(videos), channel_id)
+            videos = await fetch_youtube_recent_videos(yt_channel_id, youtube_api_key, http)
+            log.info("Fetched %d videos for channel %s", len(videos), yt_channel_id)
 
             # ── 2. Check view cho từng video ─────────────────────────────────
             for vid in videos[:10]:  # giới hạn 10 video đầu mỗi lần

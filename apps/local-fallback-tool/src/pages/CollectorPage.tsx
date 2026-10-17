@@ -42,6 +42,7 @@ interface RecentJob {
 
 interface ChannelStat {
   channel:       string;
+  channel_id?:   string;   // resource_id của hệ thống — khớp kênh đã kéo trong DB cục bộ
   platform:      string;
   owner:         string;
   total_ok:      number;
@@ -362,21 +363,54 @@ export default function CollectorPage() {
 
   // ── Channels tab data ─────────────────────────────────────────────────────────
 
-  const allChannels = Object.values(cStatus?.channels ?? {});
+  // Kênh ĐÃ KÉO (DB cục bộ, tab "Người dùng & Kênh") là nguồn chính; số liệu thu thập (OK/lỗi) từ file trạng thái của collector
+  // chồng lên theo khoá `${platform}/${resource_id}`. Trước đây tab này chỉ đọc file trạng thái nên kênh đã kéo không hiện
+  // cho tới khi job của nó chạy xong.
+  const [pulled, setPulled] = useState<LocalChannel[]>([]);
+  const [ownerNames, setOwnerNames] = useState<Record<string, string>>({});
+  const [pulledLoaded, setPulledLoaded] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "channels" || !window.channels) return;
+    let alive = true;
+    const load = async () => {
+      try {
+        await window.channels!.init();
+        const [c, u] = await Promise.all([window.channels!.listChannels({ pulled_filter: "pulled" }), window.channels!.listUsers()]);
+        if (!alive) return;
+        setPulled(c.channels ?? []);
+        setOwnerNames(Object.fromEntries((u.users ?? []).map((x) => [x.id, x.username])));
+        setPulledLoaded(true);
+      } catch { /* DB chưa sẵn sàng: giữ danh sách cũ */ }
+    };
+    void load();
+    const id = setInterval(load, 5000);
+    return () => { alive = false; clearInterval(id); };
+  }, [tab]);
+
+  const stats = cStatus?.channels ?? {};
+  const shortId = (id: string) => (id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-8)}` : id || "unknown");
+  const allChannels: ChannelRowData[] = pulled.map((c) => ({
+    key: `${c.platform}/${c.id}`, name: c.display_name || c.input_ref || c.id, platform: c.platform,
+    owner: c.owner_username || shortId(c.owner_id), stat: stats[`${c.platform}/${c.id}`], outside: false,
+  }));
+  const pulledKeys = new Set(allChannels.map((c) => c.key));
+  // Collector vẫn nhận job của kênh chưa kéo (server chưa lọc job theo kênh): hiện riêng, không giấu.
+  Object.entries(stats).forEach(([key, s]) => {
+    if (!pulledKeys.has(key)) allChannels.push({ key, name: s.channel || s.platform, platform: s.platform, owner: ownerNames[s.owner] ?? shortId(s.owner), stat: s, outside: true });
+  });
 
   const filteredChannels = allChannels.filter(ch => {
     if (filterPlat !== "all" && ch.platform !== filterPlat) return false;
-    if (filterStatus === "ok"   && ch.total_ok === 0)   return false;
-    if (filterStatus === "fail" && ch.total_fail === 0) return false;
+    if (filterStatus === "ok"   && !(ch.stat && ch.stat.total_ok > 0))   return false;
+    if (filterStatus === "fail" && !(ch.stat && ch.stat.total_fail > 0)) return false;
     return true;
   });
 
-  // Group by owner
-  const byOwner: Record<string, ChannelStat[]> = {};
-  filteredChannels.forEach(ch => {
-    const key = ch.owner || "unknown";
-    (byOwner[key] ??= []).push(ch);
-  });
+  // Group by owner (kênh ngoài danh sách đã kéo xếp nhóm riêng ở cuối)
+  const byOwner: Record<string, ChannelRowData[]> = {};
+  filteredChannels.filter(ch => !ch.outside).forEach(ch => { (byOwner[ch.owner] ??= []).push(ch); });
+  const outsideChannels = filteredChannels.filter(ch => ch.outside);
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -710,12 +744,10 @@ export default function CollectorPage() {
                 background: "#fffbeb", border: "1px solid #fde68a", fontSize: 11, color: "#92400e",
                 display: "flex", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 3 }}>Dữ liệu kênh trong phiên này</div>
+                  <div style={{ fontWeight: 600, marginBottom: 3 }}>Kênh đã kéo về tool</div>
                   <div style={{ lineHeight: 1.6 }}>
-                    Collector claim job của tài khoản gắn với machine key này.
-                    Sau khi bắt đầu thu thập, mỗi kênh được xử lý sẽ xuất hiện ở đây — bao gồm thông tin owner, platform, số lần OK/lỗi.
-                    <br />
-                    <strong>Xem toàn bộ người dùng &amp; kênh trên hệ thống:</strong> vào Manager Web → trang Admin.
+                    Danh sách này là các kênh bạn đã kéo ở tab <strong>Người dùng &amp; Kênh</strong> (tool giữ kết nối để đẩy dữ liệu lên).
+                    Số lần OK / lỗi của từng kênh xuất hiện sau khi collector xử lý job của kênh đó.
                   </div>
                 </div>
                 {config.gateway && (
@@ -758,27 +790,16 @@ export default function CollectorPage() {
 
               <div style={{ flex: 1, overflowY: "auto", padding: "0 14px 12px" }}>
                 {allChannels.length === 0 ? (
-                  /* Chưa có data: hướng dẫn rõ ràng */
                   <div style={{ marginTop: 28, padding: "20px 24px", borderRadius: 8,
                     background: "var(--surface)", border: "1px solid var(--border)", textAlign: "center" }}>
                     <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
-                      {running ? "Đang thu thập…" : "Chưa có dữ liệu kênh"}
+                      {pulledLoaded ? "Chưa kéo kênh nào" : "Đang tải…"}
                     </div>
-                    {running ? (
-                      <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 12px" }}>
-                        Collector đang chờ job. Dữ liệu kênh sẽ xuất hiện sau khi job đầu tiên được xử lý xong.
+                    {pulledLoaded && (
+                      <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>
+                        Sang tab <strong>Người dùng &amp; Kênh</strong>, bấm <strong>Fetch</strong> rồi chọn kênh và <strong>Kéo</strong>.<br />
+                        Kênh đã kéo sẽ hiện ở đây, kể cả khi collector chưa chạy.
                       </p>
-                    ) : (
-                      <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 14px" }}>
-                        Bấm <strong>Bắt đầu</strong> để collector nhận job từ VPS và bắt đầu thu thập dữ liệu kênh.<br />
-                        Mỗi kênh được xử lý sẽ hiện ở đây với trạng thái OK / Lỗi và thông tin người dùng sở hữu.
-                      </p>
-                    )}
-                    {!running && (
-                      <button onClick={handleStart} disabled={!isElectron || starting}
-                              style={{ ...btnCss("primary", !isElectron || starting), height: 32, padding: "0 20px" }}>
-                        {starting ? "Đang khởi động…" : "Bắt đầu thu thập"}
-                      </button>
                     )}
                   </div>
                 ) : filteredChannels.length === 0 ? (
@@ -786,53 +807,15 @@ export default function CollectorPage() {
                     Không có kênh nào khớp bộ lọc.
                   </div>
                 ) : (
-                  Object.entries(byOwner).map(([owner, chs]) => (
-                    <div key={owner} style={{ marginTop: 12 }}>
-                      {/* Owner header */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6,
-                        paddingBottom: 4, borderBottom: "1px solid var(--border)" }}>
-                        <span style={{ fontSize: 13 }}>👤</span>
-                        <span style={{ fontSize: 12, fontWeight: 600, fontFamily: "monospace" }}>
-                          {owner.length > 20 ? `${owner.slice(0, 8)}…${owner.slice(-8)}` : owner}
-                        </span>
-                        <span style={{ fontSize: 11, color: "var(--muted)" }}>({chs.length} kênh)</span>
-                      </div>
-                      {/* Channel rows */}
-                      {chs.map((ch, i) => {
-                        const platMeta = PLATFORMS.find(p => p.key === ch.platform);
-                        return (
-                          <div key={i} style={{
-                            display: "flex", alignItems: "center", gap: 8,
-                            padding: "5px 8px", borderRadius: 5, marginBottom: 2,
-                            background: ch.total_fail > 0 ? "#fff5f5" : "var(--surface)",
-                            border: `1px solid ${ch.total_fail > 0 ? "#fecaca" : "var(--border)"}`,
-                          }}>
-                            <span style={{ fontSize: 12, color: platMeta?.color, flexShrink: 0, width: 14, textAlign: "center" }}>
-                              {platMeta?.icon}
-                            </span>
-                            <span style={{ flex: 1, fontSize: 12, fontWeight: 500, overflow: "hidden",
-                              textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {ch.channel || ch.platform}
-                            </span>
-                            <span style={{ fontSize: 11, color: "var(--green)", flexShrink: 0 }}>✓{ch.total_ok}</span>
-                            <span style={{ fontSize: 11, color: ch.total_fail > 0 ? "var(--red)" : "var(--muted)", flexShrink: 0 }}>
-                              ✗{ch.total_fail}
-                            </span>
-                            <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>
-                              {fmtTime(ch.last_ok || ch.last_error_at)}
-                            </span>
-                            {ch.last_error && (
-                              <span style={{ fontSize: 10, color: "var(--red)", maxWidth: 120,
-                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                                flexShrink: 0 }} title={ch.last_error}>
-                                {ch.last_error.slice(0, 30)}…
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))
+                  <>
+                    {Object.entries(byOwner).map(([owner, chs]) => (
+                      <ChannelOwnerBlock key={owner} owner={owner} chs={chs} />
+                    ))}
+                    {outsideChannels.length > 0 && (
+                      <ChannelOwnerBlock owner="Ngoài danh sách đã kéo" chs={outsideChannels}
+                        note="Collector vẫn nhận job của các kênh này (server chưa lọc job theo kênh đã kéo)." />
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1122,6 +1105,52 @@ function CfgField({ label, children }: { label: string; children: React.ReactNod
     <div>
       <div style={{ fontSize: 10, fontWeight: 600, color: "var(--muted)", marginBottom: 3 }}>{label}</div>
       {children}
+    </div>
+  );
+}
+
+interface ChannelRowData { key: string; name: string; platform: string; owner: string; stat?: ChannelStat; outside: boolean }
+
+/** Một nhóm kênh theo chủ sở hữu: tên kênh, số lần OK/lỗi, lần gần nhất, lỗi cuối. Kênh chưa có job chạy xong hiện "Chờ thu thập". */
+function ChannelOwnerBlock({ owner, chs, note }: { owner: string; chs: ChannelRowData[]; note?: string }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid var(--border)" }}>
+        <span style={{ fontSize: 13 }}>👤</span>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>{owner}</span>
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>({chs.length} kênh)</span>
+      </div>
+      {note && <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 6 }}>{note}</div>}
+      {chs.map((ch) => {
+        const platMeta = PLATFORMS.find(p => p.key === ch.platform);
+        const s = ch.stat;
+        const failed = !!s && s.total_fail > 0;
+        return (
+          <div key={ch.key} style={{
+            display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 5, marginBottom: 2,
+            background: failed ? "#fff5f5" : "var(--surface)", border: `1px solid ${failed ? "#fecaca" : "var(--border)"}`,
+          }}>
+            <span style={{ fontSize: 12, color: platMeta?.color, flexShrink: 0, width: 14, textAlign: "center" }}>{platMeta?.icon}</span>
+            <span style={{ flex: 1, fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ch.name}>
+              {ch.name}
+            </span>
+            {s ? (
+              <>
+                <span style={{ fontSize: 11, color: "var(--green)", flexShrink: 0 }}>✓{s.total_ok}</span>
+                <span style={{ fontSize: 11, color: failed ? "var(--red)" : "var(--muted)", flexShrink: 0 }}>✗{s.total_fail}</span>
+                <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>{fmtTime(s.last_ok || s.last_error_at)}</span>
+                {s.last_error && (
+                  <span style={{ fontSize: 10, color: "var(--red)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0 }} title={s.last_error}>
+                    {s.last_error.slice(0, 40)}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>Chờ thu thập</span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
