@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install -r tests/arch/requirements.txt fastapi httpx
+      - run: pip install -r tests/arch/requirements.txt fastapi httpx cryptography
       - run: cd tests/arch && python -m pytest -q -rs
       - run: cd tests/contract && python -m pytest -q -rs
 
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install fastapi "uvicorn[standard]" httpx pytest pydantic
+      - run: pip install fastapi "uvicorn[standard]" httpx pytest pydantic cryptography
       - run: cd tests/integration && python -m pytest -q
 
   e2e:
