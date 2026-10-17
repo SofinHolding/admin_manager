@@ -88,6 +88,7 @@ JOB_CLAIM = {"jobs": [{"job_id": _JOB, "owner_account_id": _ACC, "kind": "resour
                                     "url": None}}], "server_time": _T}
 JOB_TRANSITION = {"job_id": _JOB, "status": "done", "attempts": 1, "max_attempts": 3, "run_after": None,
                   "lease_until": None, "completed_at": _T, "replayed": False}
+JOB_ENQUEUE = {"created": 2, "already_active": 1, "skipped": [{"resource_id": "res_khong_ton_tai", "reason": "NOT_FOUND"}]}
 WORKER_REGISTER = {"registration_id": "wkr_9c1f0a7e3b5d4c2a8e6f1d0b9a7c5e3f", "heartbeat_interval_s": 30}
 WORKER_HEARTBEAT = {"ok": True, "next_heartbeat_in_s": 30}
 

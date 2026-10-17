@@ -97,8 +97,9 @@ function tickSchedule() {
   if (collectorProcess) return;
 
   const cfg = readConfigFile();
-  const now = new Date();
-  const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  // Mốc giờ của lịch tính theo GIỜ VIỆT NAM (report_timezone cố định), không phụ thuộc múi giờ của máy chạy tool.
+  const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: SYSTEM.report_timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+    .format(new Date());
 
   const toStart = ["youtube", "tiktok", "facebook"].filter((p) => {
     const pc = cfg.platforms?.[p];
@@ -185,11 +186,11 @@ ipcMain.handle("collector:log", () => {
 
 ipcMain.handle("collector:config:read", () => {
   const data = readConfigFile();
-  const defP = { enabled: true, interval: 30, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
+  const defP = { enabled: true, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
   const defaultPlatforms = {
     youtube:  { ...defP },
-    tiktok:   { ...defP, interval: 60 },
-    facebook: { ...defP, enabled: false, interval: 120 },
+    tiktok:   { ...defP },
+    facebook: { ...defP, enabled: false },
   };
   const merge = (key) => ({ ...defaultPlatforms[key], ...(data.platforms?.[key] || {}) });
   return {

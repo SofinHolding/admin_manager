@@ -25,7 +25,7 @@ from integration_service.feed import repository as outbox
 from integration_service.ingest import merge, schemas, validate
 from integration_service.jobs import repository as jobs_repo
 from integration_service.jobs import schemas as job_schemas
-from integration_service.jobs.service import JobService
+from integration_service.jobs.service import COLLECT_JOB_CAPABILITY, COLLECT_JOB_KIND, COLLECT_JOB_PRIORITY, JobService
 from integration_service.legacy_acl import mapper, repository
 from integration_service.legacy_acl.errors import LegacyError
 from integration_service.platforms import repository as registry
@@ -35,9 +35,6 @@ from integration_service.security import iso, new_id
 LINK_CODE_TTL = timedelta(minutes=15)
 _NOTHING = "Không có gì để cập nhật"
 CAP_MANUAL_CHANNEL_MGMT = "capability:manual_channel_mgmt"   # identity_service/permissions/capabilities.py
-COLLECT_JOB_KIND = "collect"                  # kind job cho Shared Collector (PHASE 3), khác resource.sync (Run Queue)
-COLLECT_JOB_CAPABILITY = "data.collect"       # Shared Collector claim với capabilities=["data.collect"]
-COLLECT_JOB_PRIORITY = 50                     # kênh mới thêm tay ưu tiên hơn job mặc định (priority=0)
 
 
 class LegacyService:

@@ -47,7 +47,8 @@ from typing import Any
 
 import httpx
 
-from system_api import DEFAULT_GATEWAY, SystemApi, use_utf8_stdio
+import channels_db
+from system_api import DEFAULT_GATEWAY, SystemApi, report_tz, use_utf8_stdio
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -71,6 +72,30 @@ _HANDLE_RE = re.compile(r"(?:/@|@)([A-Za-z0-9._-]+)")
 # ── Kết nối / ánh xạ dữ liệu (thuần, có test: tests/test_collect_push.py) ────────────────────
 
 CONNECTION_FORMAT = "manager-connection/1"
+
+
+class EnqueuePlan:
+    """Khi nào xin server tạo job thu thập cho kênh đã kéo.
+
+    Mỗi kênh đã kéo được xin job MỘT lần mỗi ngày (giờ Việt Nam) trong suốt thời gian collector chạy: ngay khi collector khởi động
+    (mỗi mốc giờ của lịch = một đợt), khi sang ngày mới nếu collector chạy xuyên đêm, và khi người vận hành kéo thêm kênh giữa phiên.
+    Server không tự tạo lại job sau khi job xong nên không có bước này thì kênh chỉ được thu đúng một lần."""
+
+    def __init__(self) -> None:
+        self._day = ""
+        self._done: set[str] = set()
+
+    def due(self, pulled_ids: list[str], today: str) -> list[str]:
+        if today != self._day:
+            self._day, self._done = today, set()
+        return [i for i in pulled_ids if i not in self._done]
+
+    def mark(self, ids: list[str]) -> None:
+        self._done.update(ids)
+
+
+def today_vn() -> str:
+    return datetime.now(report_tz()).date().isoformat()
 
 
 class JobAbort(Exception):
@@ -491,10 +516,29 @@ async def run_loop(args: argparse.Namespace) -> None:
         async with sem:
             await process_job(job, client, args.checkview_dir, youtube_api_key, fb_cookie, proxy, http, tracker)
 
+    plan = EnqueuePlan()
+    warned_empty = False
     try:
         while True:
             try:
-                jobs = await client.claim_jobs(active_platforms, limit=args.max_concurrent * 2)
+                # Chỉ làm việc với kênh ĐÃ KÉO và đang bật (đọc lại mỗi vòng: kéo thêm / tắt kênh có hiệu lực ngay).
+                ids = [t["id"] for t in channels_db.pulled_targets(active_platforms)]
+                if not ids:
+                    if not warned_empty:
+                        log.warning("Chưa có kênh nào được kéo (hoặc đều đang tắt) — collector chờ. Kéo kênh ở tab Người dùng & Kênh")
+                        warned_empty = True
+                    await asyncio.sleep(args.poll_interval)
+                    continue
+                warned_empty = False
+                due = plan.due(ids, today_vn())
+                if due:
+                    res = await client.enqueue_jobs(due)
+                    plan.mark(due)
+                    log.info("Đợt thu thập %s: xin job cho %d kênh (mới %d, đang có sẵn %d, bỏ qua %d)", today_vn(), len(due),
+                             res["created"], res["already_active"], len(res["skipped"]))
+                    if res["skipped"]:
+                        log.warning("Kênh bị bỏ qua: %s", ", ".join(f"{s['resource_id']}={s['reason']}" for s in res["skipped"][:10]))
+                jobs = await client.claim_jobs(active_platforms, limit=args.max_concurrent * 2, resource_ids=ids)
                 if jobs:
                     log.info("Claimed %d jobs", len(jobs))
                     await asyncio.gather(*[_process(j) for j in jobs], return_exceptions=True)
@@ -502,7 +546,7 @@ async def run_loop(args: argparse.Namespace) -> None:
                     log.debug("No jobs available, sleeping %ds", args.poll_interval)
                     await asyncio.sleep(args.poll_interval)
             except httpx.HTTPStatusError as exc:
-                log.error("HTTP error claiming jobs: %s %s", exc.response.status_code, exc.response.text[:200])
+                log.error("HTTP error: %s %s", exc.response.status_code, exc.response.text[:200])
                 await asyncio.sleep(args.poll_interval)
             except Exception as exc:  # noqa: BLE001
                 log.exception("Unexpected error in main loop: %s", exc)

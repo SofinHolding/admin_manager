@@ -48,7 +48,8 @@ def test_frozen_openapi_has_every_endpoint_required_by_the_integration_api(spec)
                 ("get", "/v1/integrations/snapshots/{snapshot_id}"), ("get", "/v1/integrations/audit"),
                 ("put", "/v1/integrations/admin/platforms/{key}"), ("put", "/v1/integrations/admin/metrics/{key}"),
                 # Phase 2b: jobs (Fallback Tool + user-plane)
-                ("post", "/v1/integrations/jobs/claim"), ("post", "/v1/integrations/jobs/{job_id}/complete"),
+                ("post", "/v1/integrations/jobs/claim"), ("post", "/v1/integrations/jobs/enqueue"),
+                ("post", "/v1/integrations/jobs/{job_id}/complete"),
                 ("post", "/v1/integrations/jobs/{job_id}/fail"), ("post", "/v1/integrations/jobs/{job_id}/heartbeat"),
                 ("post", "/v1/integrations/jobs"), ("get", "/v1/integrations/jobs"),
                 ("get", "/v1/integrations/jobs/{job_id}"), ("post", "/v1/integrations/jobs/{job_id}/cancel"),

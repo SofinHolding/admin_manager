@@ -16,12 +16,14 @@ import hashlib
 import json
 import logging
 import socket
+import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -50,13 +52,75 @@ def load_catalog(path: Path = ENDPOINTS_FILE) -> dict:
 
 # ── Ánh xạ số liệu đo được -> hợp đồng ingest (thuần, có test: tests/test_system_api.py) ─────────────────────────────
 
-def _published_date(published_at: str | None, fallback: datetime) -> str:
-    if published_at:
+# ── Ngày theo múi giờ báo cáo ─────────────────────────────────────────────────────────────────────────────
+#
+# Mọi ngày gửi lên (`published_date` của bài, `date` của chỉ số kênh) tính theo `report_timezone` CỐ ĐỊNH của tool = giờ Việt Nam, để
+# khớp ngày người dùng thấy trên dashboard. Server từ chối đổi múi giờ giữa các snapshot của cùng Tool (`TIMEZONE_CHANGED`), nên giá
+# trị nằm trong system-endpoints.json, không cho cấu hình riêng từng máy.
+
+# Quốc gia chỉ có MỘT múi giờ: dùng khi nguồn trả giờ địa phương KHÔNG kèm offset ("2026-10-17 03:00:00"). Quốc gia nhiều múi giờ
+# hoặc không có trong bảng => hiểu là UTC (không đoán).
+REGION_TZ = {
+    "VN": "Asia/Ho_Chi_Minh", "KR": "Asia/Seoul", "JP": "Asia/Tokyo", "TH": "Asia/Bangkok", "SG": "Asia/Singapore",
+    "MY": "Asia/Kuala_Lumpur", "PH": "Asia/Manila", "TW": "Asia/Taipei", "HK": "Asia/Hong_Kong", "IN": "Asia/Kolkata",
+    "PK": "Asia/Karachi", "BD": "Asia/Dhaka", "NG": "Africa/Lagos", "EG": "Africa/Cairo", "KE": "Africa/Nairobi",
+}
+_DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _load_tz(name: str) -> tzinfo:
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:   # Windows không có CSDL múi giờ nếu thiếu gói `tzdata`
+        if name == "Asia/Ho_Chi_Minh":
+            return timezone(timedelta(hours=7), "ICT")   # Việt Nam UTC+7 cố định, không có giờ mùa hè
+        if name == "UTC":
+            return timezone.utc
+        raise
+
+
+def report_tz() -> tzinfo:
+    return _load_tz(CATALOG["report_timezone"])
+
+
+def _instant(value: Any, region: str | None) -> datetime | None:
+    """Một mốc thời gian lấy từ nền tảng -> datetime có múi giờ; None nếu không đọc được."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) or (isinstance(value, str) and value.strip().isdigit()):
+        n = float(value)
+        n = n / 1000 if n > 1e11 else n          # mili-giây
         try:
-            return datetime.fromisoformat(published_at.replace("Z", "+00:00")).astimezone(timezone.utc).date().isoformat()
+            return datetime.fromtimestamp(n, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, str) and value.strip():
+        try:
+            dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
         except ValueError:
-            pass
-    return fallback.date().isoformat()
+            return None
+        if dt.tzinfo is None:                    # giờ địa phương của nguồn: dùng múi giờ của quốc gia nếu chỉ có một
+            name = REGION_TZ.get((region or "").strip().upper())
+            try:
+                dt = dt.replace(tzinfo=_load_tz(name) if name else timezone.utc)
+            except ZoneInfoNotFoundError:
+                dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    return None
+
+
+def to_report_date(value: Any, region: str | None = None, *, fallback: datetime | None = None) -> str:
+    """Ngày `YYYY-MM-DD` theo giờ Việt Nam của một mốc thời gian lấy từ nền tảng.
+
+    - Số (epoch giây hoặc mili-giây) hoặc chuỗi số, ISO có offset/`Z`: mốc TUYỆT ĐỐI => đổi thẳng sang giờ Việt Nam. `region` không ảnh hưởng
+      (vd TikTok `create_time` epoch + `region: KR`: 03:00 sáng 17/10 giờ Hàn = 01:00 17/10 giờ Việt Nam).
+    - ISO KHÔNG offset: giờ địa phương của nguồn => hiểu theo múi giờ của `region` (nếu quốc gia chỉ có một múi giờ), không rõ thì UTC.
+    - Chỉ có ngày (`2026-10-17`): giữ nguyên, không có giờ để quy đổi.
+    - Không đọc được: ngày của `fallback` (thời điểm đo, mặc định bây giờ) theo giờ Việt Nam."""
+    if isinstance(value, str) and _DATE_ONLY.match(value.strip()):
+        return value.strip()
+    dt = _instant(value, region) or fallback or datetime.now(timezone.utc)
+    return dt.astimezone(report_tz()).date().isoformat()
 
 
 # Chỉ số của KÊNH (cấu trúc đã thiết kế sẵn, adapter nền tảng điền khi lấy được). Khoá = Metric Registry:
@@ -83,13 +147,16 @@ def build_content_items(resource_ext: str, items: list[dict], now: datetime, pla
                                                        ("shares", "shares"))
                    if isinstance(it.get(src), (int, float)) and not isinstance(it.get(src), bool) and it[src] >= 0}
         row = {"external_id": ext, "resource_external_id": resource_ext,
-               "published_date": _published_date(it.get("published_at"), now), "metrics": metrics,
+               "published_date": to_report_date(it.get("published_at"), it.get("region"), fallback=now), "metrics": metrics,
                "observed_at": now.isoformat()}
         if it.get("url"):
             row["url"] = str(it["url"])[:500]
         extra = {k: (str(it[k])[:300] if k != "duration_seconds" else it[k])
                  for k in ("title", "duration_seconds", "cover_url")
                  if it.get(k) not in (None, "") and (k != "duration_seconds" or isinstance(it[k], int))}
+        region = str(it.get("region") or "").strip().upper()[:8]   # quốc gia của bài (nguồn trả kèm), để hiển thị/tra cứu
+        if region:
+            extra["region"] = region
         if extra and platform:
             row["extensions"] = {platform: extra}
         out[ext] = row
@@ -97,12 +164,12 @@ def build_content_items(resource_ext: str, items: list[dict], now: datetime, pla
 
 
 def build_channel_metrics(resource_ext: str, stats: dict | None, now: datetime) -> list[dict]:
-    """Chỉ số của kênh -> MỘT bản ghi `metrics` (khoá `(kênh, ngày UTC)`); rỗng nếu adapter không có chỉ số nào hợp lệ."""
+    """Chỉ số của kênh -> MỘT bản ghi `metrics` (khoá `(kênh, ngày giờ Việt Nam)`); rỗng nếu adapter không có chỉ số nào hợp lệ."""
     metrics = {k: int(stats[k]) for k in CHANNEL_METRIC_KEYS
                if stats and isinstance(stats.get(k), (int, float)) and not isinstance(stats.get(k), bool) and stats[k] >= 0}
     if not metrics:
         return []
-    return [{"resource_external_id": resource_ext, "date": now.date().isoformat(), "metrics": metrics,
+    return [{"resource_external_id": resource_ext, "date": now.astimezone(report_tz()).date().isoformat(), "metrics": metrics,
              "observed_at": now.isoformat()}]
 
 
@@ -238,13 +305,29 @@ class SystemApi:
 
     # ── Job ──────────────────────────────────────────────────────────────────
 
-    async def claim_jobs(self, platforms: list[str], limit: int = 10) -> list[dict]:
-        """Claim collect-job. Chỉ trả job của resource execution_mode=fallback_local (server đã lọc)."""
+    async def enqueue_jobs(self, resource_ids: list[str]) -> dict:
+        """Xin server tạo job thu thập cho các kênh ĐÃ KÉO (một đợt thu thập). Server chỉ tự tạo MỘT job khi user thêm kênh,
+        nên đây là cách duy nhất để một kênh được thu lại mỗi ngày. Gọi lại an toàn (kênh đang có job thì không tạo thêm).
+        Trả `{created, already_active, skipped:[{resource_id, reason}]}`; chia lô ≤200 theo giới hạn của server."""
+        total = {"created": 0, "already_active": 0, "skipped": []}
+        for i in range(0, len(resource_ids), 200):
+            r = await self._call("jobs_enqueue", json_body={"resource_ids": resource_ids[i:i + 200]})
+            r.raise_for_status()
+            data = r.json().get("data", {})
+            total["created"] += data.get("created", 0)
+            total["already_active"] += data.get("already_active", 0)
+            total["skipped"] += data.get("skipped", [])
+        return total
+
+    async def claim_jobs(self, platforms: list[str], limit: int = 10, resource_ids: list[str] | None = None) -> list[dict]:
+        """Claim collect-job. `resource_ids` (không rỗng): chỉ nhận job của các kênh đó — tool chỉ chạy kênh ĐÃ KÉO."""
         if not self.installation_id:
             raise RuntimeError("Chưa handshake — gọi handshake() trước")
-        r = await self._call("jobs_claim", json_body={
-            "installation_id": self.installation_id, "platforms": platforms, "capabilities": ["data.collect"],
-            "limit": min(limit, 20), "lease_seconds": 300})
+        body = {"installation_id": self.installation_id, "platforms": platforms, "capabilities": ["data.collect"],
+                "limit": min(limit, 20), "lease_seconds": 300}
+        if resource_ids:
+            body["resource_ids"] = resource_ids[:500]
+        r = await self._call("jobs_claim", json_body=body)
         if r.status_code == 204:
             return []
         r.raise_for_status()
@@ -320,7 +403,7 @@ class SystemApi:
         snap = await self._checked(await self._call(
             "snapshot_create", headers={**hdr, "Idempotency-Key": f"collect-{job_id}-{attempt}"},
             json_body={"platform": platform, "snapshot_type": "delta", "observed_at": now.isoformat(),
-                       "report_timezone": "UTC", "expected_counts": expected}), "tạo snapshot")
+                       "report_timezone": CATALOG["report_timezone"], "expected_counts": expected}), "tạo snapshot")
         sid = snap["snapshot_id"]
         for kind, rows in (("metrics", channel), ("content", content)):
             await self.send_batch(sid, kind, rows, job_id)

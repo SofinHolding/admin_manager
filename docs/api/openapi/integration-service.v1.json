@@ -2114,6 +2114,27 @@
         "title": "Envelope[JobCreated]",
         "type": "object"
       },
+      "Envelope_JobEnqueueOut_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/JobEnqueueOut"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/OkMeta"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "Envelope[JobEnqueueOut]",
+        "type": "object"
+      },
       "Envelope_JobOut_": {
         "properties": {
           "data": {
@@ -2828,6 +2849,17 @@
             "maxItems": 20,
             "title": "Platforms",
             "type": "array"
+          },
+          "resource_ids": {
+            "description": "Chỉ nhận job của các resource này (rỗng = không lọc). Tool dùng chung truyền các kênh ĐÃ KÉO.",
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Resource Ids",
+            "type": "array"
           }
         },
         "required": [
@@ -3131,6 +3163,83 @@
           "completed_at"
         ],
         "title": "JobCreated",
+        "type": "object"
+      },
+      "JobEnqueueOut": {
+        "properties": {
+          "already_active": {
+            "title": "Already Active",
+            "type": "integer"
+          },
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/JobEnqueueSkip"
+            },
+            "title": "Skipped",
+            "type": "array"
+          }
+        },
+        "required": [
+          "created",
+          "already_active",
+          "skipped"
+        ],
+        "title": "JobEnqueueOut",
+        "type": "object"
+      },
+      "JobEnqueueRequest": {
+        "additionalProperties": false,
+        "description": "Tool dùng chung xin tạo job `collect` cho các kênh đã kéo (một đợt thu thập theo lịch của người vận hành).",
+        "example": {
+          "resource_ids": [
+            "res_0123456789abcdef0123456789abcdef"
+          ]
+        },
+        "properties": {
+          "resource_ids": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Resource Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "resource_ids"
+        ],
+        "title": "JobEnqueueRequest",
+        "type": "object"
+      },
+      "JobEnqueueSkip": {
+        "properties": {
+          "reason": {
+            "enum": [
+              "NOT_FOUND",
+              "NOT_ELIGIBLE",
+              "PLATFORM_NOT_ALLOWED",
+              "LIMIT_EXCEEDED"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "resource_id": {
+            "title": "Resource Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "reason"
+        ],
+        "title": "JobEnqueueSkip",
         "type": "object"
       },
       "JobFailRequest": {
@@ -9607,6 +9716,242 @@
           }
         ],
         "summary": "Claim job (Fallback Tool)",
+        "tags": [
+          "machine"
+        ]
+      }
+    },
+    "/v1/integrations/jobs/enqueue": {
+      "post": {
+        "description": "Scope `jobs:claim:system` + `client_kind=fallback_tool`. Tool dùng chung gọi mỗi đợt thu thập theo lịch của người vận hành để có job thu thập kênh ĐÃ KÉO (server chỉ tự tạo MỘT job khi user thêm kênh). Mỗi kênh: tạo job `collect` nếu chưa có job đang chờ/chạy (`already_active` — gọi lại an toàn); kênh không tồn tại / không ở `fallback_tool` hoặc đã tắt / nền tảng ngoài phạm vi / owner vượt hạn mức job được liệt kê ở `skipped` kèm lý do. Owner dữ liệu của job là chủ kênh (delegated ingestion), không phải client.",
+        "operationId": "enqueue_jobs_v1_integrations_jobs_enqueue_post",
+        "parameters": [
+          {
+            "description": "Phiên bản hợp đồng, vd 2026-10-01",
+            "in": "header",
+            "name": "x-contract-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Phiên bản hợp đồng, vd 2026-10-01",
+              "title": "X-Contract-Version"
+            }
+          },
+          {
+            "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
+            "in": "header",
+            "name": "x-installation-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "installation_id đã bind lúc handshake — bắt buộc ngoài /handshake",
+              "title": "X-Installation-Id"
+            }
+          },
+          {
+            "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "8-128 ký tự [A-Za-z0-9_.:-]; cho mọi POST/PUT ghi",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobEnqueueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "already_active": 1,
+                    "created": 2,
+                    "skipped": [
+                      {
+                        "reason": "NOT_FOUND",
+                        "resource_id": "res_khong_ton_tai"
+                      }
+                    ]
+                  },
+                  "meta": {
+                    "contract_version": "2026-10-01",
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_JobEnqueueOut_"
+                }
+              }
+            },
+            "description": "Kết quả theo đợt"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "CONTRACT_VERSION_UNSUPPORTED",
+                    "details": {},
+                    "message": "Chỉ hỗ trợ contract 2026-10-01"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Yêu cầu sai (vd CONTRACT_VERSION_UNSUPPORTED)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "AUTH_INVALID",
+                    "details": {},
+                    "message": "Thiếu hoặc sai API key"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "AUTH_INVALID / AUTH_REVOKED"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "SCOPE_DENIED",
+                    "details": {},
+                    "message": "Thiếu scope snapshots:write"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "SCOPE_DENIED / PLATFORM_NOT_ALLOWED / CLIENT_NOT_ACTIVE / EMAIL_NOT_VERIFIED"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RECORD_VALIDATION_FAILED",
+                    "details": {},
+                    "message": "Body không hợp lệ"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RECORD_VALIDATION_FAILED / REQUEST_VALIDATION_FAILED / SNAPSHOT_INCOMPLETE"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "RATE_LIMITED",
+                    "details": {},
+                    "message": "Vượt giới hạn request của client"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "RATE_LIMITED (kèm Retry-After)"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAVAILABLE",
+                    "details": {},
+                    "message": "Dịch vụ tạm thời không khả dụng"
+                  },
+                  "meta": {
+                    "request_id": "req_0123456789abcdef0123456789abcdef"
+                  },
+                  "ok": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "UNAVAILABLE (dependency tạm chết)"
+          }
+        },
+        "security": [
+          {
+            "MachineApiKey": []
+          }
+        ],
+        "summary": "Tạo job collect cho các kênh đã kéo (Fallback Tool)",
         "tags": [
           "machine"
         ]

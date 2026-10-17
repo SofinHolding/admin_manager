@@ -62,7 +62,8 @@ Token user không dùng được ở endpoint máy và ngược lại; service k
 |---|---|---|
 | `POST /v1/integrations/jobs` | USER (chủ resource; admin/dash_admin: mọi resource) | resource phải `execution_mode=fallback_tool`; owner = chủ resource (body không nhận `owner_*`); `dedupe_key` chống tạo trùng |
 | `GET /v1/integrations/jobs`, `GET /{id}`, `POST /{id}/cancel` | USER | user thường chỉ thấy/huỷ job của mình |
-| `POST /v1/integrations/jobs/claim` | MÁY `jobs:claim` | body `installation_id, platforms, capabilities, limit≤50, lease_seconds≤900` → `{jobs:[...], server_time}` |
+| `POST /v1/integrations/jobs/claim` | MÁY `jobs:claim` | body `installation_id, platforms, capabilities, limit≤50, lease_seconds≤900, resource_ids?` → `{jobs:[...], server_time}` |
+| `POST /v1/integrations/jobs/enqueue` | MÁY `jobs:claim:system` + `fallback_tool` | body `resource_ids` (1..200) → `{created, already_active, skipped:[{resource_id, reason}]}`; tạo job `collect` cho kênh đã kéo, owner dữ liệu = chủ kênh |
 | `POST /{id}/heartbeat` | MÁY `jobs:claim` | gia hạn lease của chính mình |
 | `POST /{id}/complete`, `POST /{id}/fail` | MÁY `jobs:complete` | `Idempotency-Key`; complete/fail lặp lại trả `replayed=true` |
 

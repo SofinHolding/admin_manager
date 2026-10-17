@@ -61,6 +61,20 @@ Mỗi kênh có hai trạng thái, lưu trong DB cục bộ (`channels_db.py`, c
   kéo lại được (nút chỉ sáng khi trong lựa chọn có kênh chưa kéo); tool giữ kết nối với kênh để đẩy dữ liệu lên. Với kênh đã kéo có thể
   Bật/Tắt cục bộ hoặc **Gỡ kết nối** (về lại chưa kéo). Fetch không đè trạng thái đã kéo lẫn cờ Bật/Tắt cục bộ.
 
+## Lịch thu thập, thời điểm đẩy và ngày báo cáo
+
+Thiết kế đầy đủ: `docs/architecture/shared-collector-schedule-v1.md`. Tóm tắt:
+
+- **Đẩy ngay từng link**: xong link nào đẩy lên website link đó (một job = một snapshot `delta`), không chờ hết đợt. Lịch **"Hẹn giờ tự động"** chỉ quyết
+  định khi nào collector chạy; mốc giờ và "Chạy trong N phút" tính theo **giờ Việt Nam**, không theo múi giờ của máy.
+- **Thu lại hằng ngày**: mỗi lần collector chạy (mỗi mốc giờ, hoặc khi bấm Bắt đầu) và mỗi khi sang ngày mới nếu chạy xuyên đêm, tool gọi
+  `POST /jobs/enqueue` cho các kênh **đã kéo và đang bật** (mỗi kênh một lần mỗi ngày), rồi chỉ nhận job của các kênh đó (`resource_ids`).
+  Không có kênh đã kéo thì collector chờ, không nhận job nào. Server chỉ tự tạo một job khi user thêm kênh nên không có bước này thì kênh chỉ thu một lần.
+- **Ngày theo giờ Việt Nam**: `report_timezone = Asia/Ho_Chi_Minh` cố định trong `system-endpoints.json`. `published_date` của bài và `date` của chỉ số kênh được
+  quy đổi theo giờ VN (`system_api.to_report_date`): epoch / ISO có offset đổi thẳng; giờ địa phương không offset dùng múi giờ của `region` nếu quốc gia
+  chỉ có một múi giờ (không thì coi là UTC). `region` của nguồn (vd TikTok `region: "KR"`) được lưu vào `extensions.<nền tảng>.region`.
+
+
 ## Kết nối bằng file Admin cấp
 
 Khi Admin cấp key cho công cụ dùng chung (trang Admin → Công cụ dùng chung), giao diện cho tải

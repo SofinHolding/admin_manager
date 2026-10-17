@@ -53,23 +53,26 @@ async def reclaim_expired(conn: asyncpg.Connection, now: datetime, *, limit: int
 
 
 async def claim(conn: asyncpg.Connection, *, owner: str, system: bool, platforms: list[str], capabilities: list[str],
-                limit: int, lease_seconds: int, client_id: str, installation_id: str, now: datetime) -> list[dict]:
+                limit: int, lease_seconds: int, client_id: str, installation_id: str, now: datetime,
+                resource_ids: list[str] | None = None) -> list[dict]:
     """Claim NGUYÊN TỬ: chọn + khoá + chuyển sang `leased` trong MỘT câu lệnh.
 
     * `FOR UPDATE SKIP LOCKED`: hai worker tranh nhau không bao giờ nhận cùng một job và không chặn nhau.
     * Ownership: không có scope hệ thống thì CHỈ job của chính owner.
+    * `resource_ids` (không rỗng): chỉ job của các resource đó — Tool dùng chung chỉ chạy kênh đã kéo.
     * Capability: job đòi capability nào thì installation phải có capability đó."""
     rows = await conn.fetch(
         "WITH picked AS ("
         "  SELECT id FROM jobs WHERE status = 'pending' AND run_after <= $1 AND platform = ANY($2::text[]) "
         "    AND ($3::boolean OR owner_account_id = $4) "
         "    AND (required_capability = '' OR required_capability = ANY($5::text[])) "
+        "    AND (cardinality($10::text[]) = 0 OR resource_id = ANY($10::text[])) "
         "  ORDER BY priority DESC, run_after, created_at, id LIMIT $6 FOR UPDATE SKIP LOCKED) "
         "UPDATE jobs j SET status = 'leased', attempts = j.attempts + 1, lease_until = $7, claimed_by_client = $8, "
         "claimed_by_installation = $9, lease_token = replace(gen_random_uuid()::text, '-', ''), updated_at = $1 "
         "FROM picked WHERE j.id = picked.id RETURNING j.*",
         now, platforms, system, owner, capabilities, limit, now + timedelta(seconds=lease_seconds), client_id,
-        installation_id)
+        installation_id, list(resource_ids or []))
     return sorted((dict(r) for r in rows), key=lambda r: (-r["priority"], r["run_after"], r["created_at"], r["id"]))
 
 

@@ -24,12 +24,15 @@ from integration_service.credentials.service import MachineContext
 from integration_service.db import Database
 from integration_service.errors import ApiProblem, Extra, conflict, forbidden, invalid, not_found
 from integration_service.installations import repository as installations
-from integration_service.jobs import repository
+from integration_service.jobs import repository, schemas
 from integration_service.platforms import repository as registry
 from integration_service.security import new_id
 
 FALLBACK_MODE = "fallback_tool"   # execution_mode canonical của resource chạy bằng Fallback Tool
 MAX_PAYLOAD_BYTES = 16 * 1024
+COLLECT_JOB_KIND = "collect"                  # kind job cho Shared Collector, khác resource.sync (Run Queue)
+COLLECT_JOB_CAPABILITY = "data.collect"       # Shared Collector claim với capabilities=["data.collect"]
+COLLECT_JOB_PRIORITY = 50                     # kênh thu hộ ưu tiên hơn job mặc định (priority=0)
 
 
 def _size(value: dict) -> int:
@@ -61,9 +64,9 @@ class JobService:
 
     # ── Mặt phẳng USER: tạo / xem / huỷ ─────────────────────────────────────────────
 
-    async def create(self, conn: asyncpg.Connection, principal: Principal, body, *, created_by: str | None = None,
+    async def create(self, conn: asyncpg.Connection, principal: Principal | None, body, *, created_by: str | None = None,
                      now: datetime | None = None, resource_id: str | None = None,
-                     resource_owner_id: str | None = None) -> tuple[dict, bool]:
+                     resource_owner_id: str | None = None, system: bool = False) -> tuple[dict, bool]:
         """(job, created). Resource phải thuộc user (admin: bất kỳ) và ở `execution_mode=fallback_tool`. Owner = chủ resource.
 
         `resource_owner_id` (PHASE 4, chỉ truyền cho job `kind='collect'`): owner dữ liệu cho delegated ingestion
@@ -71,7 +74,7 @@ class JobService:
         hành vi cũ, không hỗ trợ delegated ingestion."""
         now = now or self._now()
         res = await conn.fetchrow("SELECT * FROM resources WHERE id = $1", resource_id or body.resource_id)
-        if res is None or (res["owner_account_id"] != principal.sub and not principal.is_admin):
+        if res is None or (not system and (res["owner_account_id"] != principal.sub and not principal.is_admin)):
             raise not_found(ErrorCode.NOT_FOUND, "Không tìm thấy resource")   # không lộ resource của người khác
         if res["removed"] or res["state"] != "active" or res["execution_mode"] != FALLBACK_MODE:
             raise conflict(Extra.JOB_NOT_ELIGIBLE, "Resource chưa ở chế độ fallback_tool hoặc đang bị tắt/đã gỡ")
@@ -156,7 +159,7 @@ class JobService:
                 conn, owner=ctx.owner_account_id, system=SYSTEM_SCOPE in ctx.scopes, platforms=sorted(requested),
                 capabilities=capabilities, limit=body.limit,
                 lease_seconds=min(body.lease_seconds, self._settings.job_lease_max_s), client_id=ctx.client_id,
-                installation_id=body.installation_id, now=now)
+                installation_id=body.installation_id, now=now, resource_ids=list(body.resource_ids))
             summaries = await repository.resource_summaries(conn, [r["resource_id"] for r in rows if r["resource_id"]])
         jobs = []
         for r in rows:
@@ -172,6 +175,41 @@ class JobService:
                          "max_attempts": r["max_attempts"], "lease_until": r["lease_until"],
                          "lease_token": r["lease_token"], "resource": ref})
         return {"jobs": jobs, "server_time": now}
+
+    async def enqueue_collect(self, ctx: MachineContext, body) -> dict:
+        """Tool dùng chung xin tạo job `collect` cho các kênh ĐÃ KÉO — một đợt thu thập theo lịch của người vận hành.
+
+        Chỉ với scope `jobs:claim:system` (kênh thuộc user khác). Mỗi kênh: bỏ qua kèm lý do nếu không tồn tại / không ở
+        `fallback_tool` hoặc đã tắt / nền tảng ngoài phạm vi client / owner vượt hạn mức job. Đã có job pending/leased cho kênh
+        (`dedupe_key = collect:<resource>`) thì KHÔNG tạo thêm (`already_active`) — gọi lại an toàn. Owner dữ liệu của job là
+        chủ kênh (delegated ingestion), không phải client."""
+        now = self._now()
+        created = active = 0
+        skipped: list[dict] = []
+        async with self._db.transaction() as conn:
+            usable = set(ctx.allowed_platforms) & await registry.enabled_platforms(conn)
+            for rid in dict.fromkeys(body.resource_ids):
+                res = await conn.fetchrow("SELECT owner_account_id, platform FROM resources WHERE id = $1", rid)
+                if res is None:
+                    skipped.append({"resource_id": rid, "reason": "NOT_FOUND"})
+                    continue
+                if res["platform"] not in usable:
+                    skipped.append({"resource_id": rid, "reason": "PLATFORM_NOT_ALLOWED"})
+                    continue
+                try:
+                    async with conn.transaction():   # savepoint: một kênh lỗi không làm hỏng cả đợt
+                        _, is_new = await self.create(
+                            conn, None, schemas.JobCreate(
+                                resource_id=rid, kind=COLLECT_JOB_KIND, priority=COLLECT_JOB_PRIORITY,
+                                required_capability=COLLECT_JOB_CAPABILITY, dedupe_key=f"collect:{rid}"),
+                            created_by=ctx.client_id, now=now, resource_owner_id=res["owner_account_id"], system=True)
+                except ApiProblem as exc:
+                    reason = "NOT_ELIGIBLE" if exc.code == Extra.JOB_NOT_ELIGIBLE else "LIMIT_EXCEEDED"
+                    skipped.append({"resource_id": rid, "reason": reason})
+                    continue
+                created += is_new
+                active += not is_new
+        return {"created": created, "already_active": active, "skipped": skipped}
 
     @staticmethod
     def _visible_to_client(row: dict | None, ctx: MachineContext) -> dict:

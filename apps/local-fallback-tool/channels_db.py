@@ -302,6 +302,23 @@ def act_set_enabled(conn: sqlite3.Connection, cmd: dict) -> dict:
     return {"updated": n}
 
 
+# ── Dùng bởi collect.py (không phải action của Electron) ──────────────────────────────────────────────────────
+
+def pulled_targets(platforms: list[str]) -> list[dict]:
+    """Kênh ĐÃ KÉO và đang BẬT của các nền tảng cho trước: `[{id, platform}]`. Collector chỉ xin job / nhận job của các kênh này."""
+    if not platforms or not os.path.exists(DB_PATH):
+        return []
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            f"SELECT id, platform FROM local_channels WHERE pulled=1 AND enabled=1 AND resource_type != 'group' "
+            f"AND platform IN ({_marks(platforms)}) ORDER BY owner_username COLLATE NOCASE, display_name COLLATE NOCASE",
+            platforms).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
 _ACTIONS: dict[str, Any] = {

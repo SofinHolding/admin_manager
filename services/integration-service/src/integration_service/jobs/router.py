@@ -12,7 +12,7 @@ from integration_service import examples as ex
 from integration_service.api_models import Envelope
 from integration_service.credentials.service import MachineContext
 from integration_service.deps import get_container, machine, require_user, user_bearer
-from integration_service.errors import not_found
+from integration_service.errors import forbidden, not_found
 from integration_service.http_utils import error_responses, ok, ok_response
 from integration_service.jobs import schemas
 from integration_service.jobs.service import job_out
@@ -45,6 +45,25 @@ async def claim_jobs(request: Request, body: schemas.JobClaimRequest,
     async with c.audit.scope(request, "jobs.claim", **c.runner.audit_fields(ctx)) as extra:
         data = await c.jobs.claim(ctx, body)
         extra["detail"] = {"claimed": len(data["jobs"])}
+    return ok(data)
+
+
+@machine_router.post("/enqueue", summary="Tạo job collect cho các kênh đã kéo (Fallback Tool)",
+                     description=("Scope `jobs:claim:system` + `client_kind=fallback_tool`. Tool dùng chung gọi mỗi đợt thu thập theo lịch của "
+                                  "người vận hành để có job thu thập kênh ĐÃ KÉO (server chỉ tự tạo MỘT job khi user thêm kênh). Mỗi kênh: tạo "
+                                  "job `collect` nếu chưa có job đang chờ/chạy (`already_active` — gọi lại an toàn); kênh không tồn tại / không "
+                                  "ở `fallback_tool` hoặc đã tắt / nền tảng ngoài phạm vi / owner vượt hạn mức job được liệt kê ở `skipped` kèm "
+                                  "lý do. Owner dữ liệu của job là chủ kênh (delegated ingestion), không phải client."),
+                     responses={200: ok_response(Envelope[schemas.JobEnqueueOut], "Kết quả theo đợt", ex.JOB_ENQUEUE),
+                                **error_responses(400, 401, 403, 422, 429, 503)})
+async def enqueue_jobs(request: Request, body: schemas.JobEnqueueRequest,
+                       ctx: MachineContext = Depends(machine("jobs:claim:system"))):
+    if ctx.client_kind != "fallback_tool":
+        raise forbidden(ErrorCode.SCOPE_DENIED, "Chỉ fallback_tool mới tạo job thu thập hộ")
+    c = get_container(request)
+    async with c.audit.scope(request, "jobs.enqueue", **c.runner.audit_fields(ctx)) as extra:
+        data = await c.jobs.enqueue_collect(ctx, body)
+        extra["detail"] = {"created": data["created"], "already_active": data["already_active"], "skipped": len(data["skipped"])}
     return ok(data)
 
 

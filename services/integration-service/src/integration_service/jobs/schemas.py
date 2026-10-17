@@ -81,6 +81,9 @@ class JobClaimRequest(BaseModel):
     capabilities: list[Capability] = Field(default_factory=list, max_length=50)
     limit: Annotated[StrictInt, Field(ge=1, le=50)] = 20
     lease_seconds: Annotated[StrictInt, Field(ge=1, le=900)] = 300
+    resource_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=500,
+        description="Chỉ nhận job của các resource này (rỗng = không lọc). Tool dùng chung truyền các kênh ĐÃ KÉO.")
 
 
 class ClaimedJob(BaseModel):
@@ -99,6 +102,24 @@ class ClaimedJob(BaseModel):
 class JobClaimOut(BaseModel):
     jobs: list[ClaimedJob]
     server_time: datetime
+
+
+class JobEnqueueRequest(BaseModel):
+    """Tool dùng chung xin tạo job `collect` cho các kênh đã kéo (một đợt thu thập theo lịch của người vận hành)."""
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"example": {
+        "resource_ids": ["res_0123456789abcdef0123456789abcdef"]}})
+    resource_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] = Field(min_length=1, max_length=200)
+
+
+class JobEnqueueSkip(BaseModel):
+    resource_id: str
+    reason: Literal["NOT_FOUND", "NOT_ELIGIBLE", "PLATFORM_NOT_ALLOWED", "LIMIT_EXCEEDED"]
+
+
+class JobEnqueueOut(BaseModel):
+    created: int
+    already_active: int
+    skipped: list[JobEnqueueSkip]
 
 
 class JobCompleteRequest(BaseModel):

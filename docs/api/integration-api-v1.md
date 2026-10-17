@@ -57,7 +57,8 @@ Theo `ingest-data-contract-v1.md` §3 và contract api-first. Bắt buộc:
 | `POST /v1/integrations/snapshots/{id}/metrics` | `metrics:write` |
 | `POST /v1/integrations/snapshots/{id}/commit` | `snapshots:write` |
 | `GET  /v1/integrations/snapshots/{id}` | `snapshots:write` (trạng thái, đếm, rejections) |
-| `POST /v1/integrations/jobs/claim` · `/{id}/complete` · `/{id}/fail` | `jobs:claim` / `jobs:complete` (+ `jobs:claim:system` cho đa-owner) |
+| `POST /v1/integrations/jobs/claim` · `/{id}/complete` · `/{id}/fail` | `jobs:claim` / `jobs:complete` (+ `jobs:claim:system` cho đa-owner). `claim` nhận thêm `resource_ids` (tuỳ chọn): chỉ nhận job của các kênh đó |
+| `POST /v1/integrations/jobs/enqueue` | `jobs:claim:system` (chỉ `client_kind=fallback_tool`): xin tạo job `collect` cho các kênh ĐÃ KÉO (≤200/lần); kênh đã có job pending/leased → `already_active`; kênh không hợp lệ → `skipped[].reason` (`NOT_FOUND`/`NOT_ELIGIBLE`/`PLATFORM_NOT_ALLOWED`/`LIMIT_EXCEEDED`). Xem `docs/architecture/shared-collector-schedule-v1.md` |
 | `POST /v1/integrations/workers/register` · `/{worker_id}/heartbeat` | `jobs:claim` (chỉ `client_kind=fallback_tool`) — PHASE 4, chỉ in-memory (xem §4) |
 
 Hành vi bắt buộc (mỗi mục có test):

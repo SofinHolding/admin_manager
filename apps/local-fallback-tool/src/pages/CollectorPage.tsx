@@ -1,15 +1,15 @@
 /**
  * Channel Collector — điều khiển thu thập dữ liệu kênh (Electron desktop).
- * Luồng: claim collect-job → thu thập YT/TikTok/FB → push snapshot lên VPS.
+ * Luồng: kênh đã kéo → xin job theo lịch → thu thập YT/TikTok/FB → đẩy snapshot lên website NGAY sau từng link.
  */
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import SYSTEM from "../../system-endpoints.json";
 
 // ── Kiểu ─────────────────────────────────────────────────────────────────────
 
 interface PlatformCfg {
   enabled:              boolean;
-  interval:             number;
   schedule_enabled:     boolean;
   schedule_times:       string[];   // ["09:00", "15:00"]
   schedule_duration_min: number;
@@ -77,15 +77,15 @@ type PlatformKey = "youtube" | "tiktok" | "facebook";
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
-const DEF_PLAT: PlatformCfg = { enabled: true, interval: 30, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
+const DEF_PLAT: PlatformCfg = { enabled: true, schedule_enabled: false, schedule_times: [], schedule_duration_min: 60 };
 
 const DEFAULT_CONFIG: CollectorConfig = {
   gateway: "", api_key: "", youtube_api_key: "", checkview_dir: "",
   fb_cookie: "", proxy: "", poll_interval: 30, max_concurrent: 3,
   platforms: {
     youtube:  { ...DEF_PLAT },
-    tiktok:   { ...DEF_PLAT, interval: 60 },
-    facebook: { ...DEF_PLAT, enabled: false, interval: 120 },
+    tiktok:   { ...DEF_PLAT },
+    facebook: { ...DEF_PLAT, enabled: false },
   },
 };
 
@@ -105,16 +105,17 @@ function uptimeStr(startedAt: number | null): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
+/** Giờ hiện tại theo GIỜ VIỆT NAM (report_timezone cố định): lịch tự động tính theo giờ này, không theo múi giờ của máy chạy tool. */
 function nowHHMM(): string {
-  const n = new Date();
-  return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`;
+  return new Intl.DateTimeFormat("en-GB", { timeZone: SYSTEM.report_timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+    .format(new Date());
 }
 
 function minutesUntil(hhmm: string): number {
   const [th, tm] = hhmm.split(":").map(Number);
+  const [ch, cm] = nowHHMM().split(":").map(Number);
   const target = th * 60 + tm;
-  const n = new Date();
-  const cur = n.getHours() * 60 + n.getMinutes();
+  const cur = ch * 60 + cm;
   return target >= cur ? target - cur : 1440 - cur + target;
 }
 
@@ -205,8 +206,8 @@ export default function CollectorPage() {
         ...DEFAULT_CONFIG, ...cfg,
         platforms: {
           youtube:  { ...DEF_PLAT, ...(cfg.platforms?.youtube as Partial<PlatformCfg> | undefined) },
-          tiktok:   { ...DEF_PLAT, interval: 60, ...(cfg.platforms?.tiktok as Partial<PlatformCfg> | undefined) },
-          facebook: { ...DEF_PLAT, enabled: false, interval: 120, ...(cfg.platforms?.facebook as Partial<PlatformCfg> | undefined) },
+          tiktok:   { ...DEF_PLAT, ...(cfg.platforms?.tiktok as Partial<PlatformCfg> | undefined) },
+          facebook: { ...DEF_PLAT, enabled: false, ...(cfg.platforms?.facebook as Partial<PlatformCfg> | undefined) },
         },
       })
     );
@@ -538,14 +539,6 @@ export default function CollectorPage() {
 
                     {pc.enabled && (
                       <div style={{ padding: "0 10px 10px", borderTop: "1px solid var(--border-light)" }}>
-                        {/* Wait interval */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                          <span style={{ fontSize: 11, color: "var(--muted)", flex: 1 }}>Chờ khi trống</span>
-                          <input type="number" min={5} max={3600} value={pc.interval}
-                                 onChange={e => setPlatCfg(p.key, { interval: Number(e.target.value) })}
-                                 style={{ ...inputCss, width: 60, textAlign: "right" }} />
-                          <span style={{ fontSize: 11, color: "var(--muted)" }}>giây</span>
-                        </div>
 
                         {/* Schedule toggle */}
                         <label style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8, cursor: "pointer" }}>
@@ -813,7 +806,7 @@ export default function CollectorPage() {
                     ))}
                     {outsideChannels.length > 0 && (
                       <ChannelOwnerBlock owner="Ngoài danh sách đã kéo" chs={outsideChannels}
-                        note="Collector vẫn nhận job của các kênh này (server chưa lọc job theo kênh đã kéo)." />
+                        note="Đã thu ở phiên trước nhưng hiện không còn trong danh sách đã kéo (đã gỡ kết nối hoặc đang tắt). Collector không thu thêm các kênh này." />
                     )}
                   </>
                 )}
@@ -870,6 +863,18 @@ export default function CollectorPage() {
                     : "Chưa có lịch tự động. Bật Hẹn giờ trong từng nền tảng ở bảng trái."}
                 </div>
               )}
+
+              {/* Cách hoạt động — thiết kế thời điểm đẩy dữ liệu */}
+              <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 8, fontSize: 11, lineHeight: 1.65,
+                background: "rgba(59,91,219,.05)", border: "1px solid rgba(59,91,219,.18)", color: "var(--text)" }}>
+                <div style={{ fontWeight: 700, marginBottom: 3 }}>Cách hoạt động</div>
+                <ul style={{ margin: 0, paddingLeft: 16 }}>
+                  <li>Mốc giờ tính theo <b>giờ Việt Nam</b> ({SYSTEM.report_timezone}), không theo múi giờ của máy này.</li>
+                  <li>Đến mốc giờ, tool bật collector, xin server tạo job thu thập cho các <b>kênh đã kéo</b> của nền tảng đó (mỗi kênh một lần mỗi ngày), rồi thu thập lần lượt từng link.</li>
+                  <li>Xong <b>link nào đẩy ngay link đó</b> lên website, không chờ hết đợt. Số liệu ghi đè theo (kênh, video); ngày đăng và ngày chỉ số kênh tính theo giờ Việt Nam.</li>
+                  <li>Hết "Chạy trong N phút" collector dừng; link chưa kịp thu sẽ được thu ở mốc kế tiếp. Kênh mới kéo thêm khi collector đang chạy được thu ngay trong phiên đó.</li>
+                </ul>
+              </div>
 
               {/* Timeline hôm nay */}
               {schedEntries.length > 0 && (

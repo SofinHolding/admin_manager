@@ -1,6 +1,7 @@
 {
   "format": "manager-tool-endpoints/1",
   "default_gateway": "http://192.168.1.70:8480",
+  "report_timezone": "Asia/Ho_Chi_Minh",
   "note": "Nguồn sự thật DUY NHẤT về địa chỉ máy chủ nhúng sẵn và các endpoint hệ thống mà tool dùng. system_api.py (Python) và electron/main.cjs đều đọc file này. Danh sách mặt phẳng MÁY phải khớp services/integration-service/src/integration_service/guide/catalog.py (tests/test_system_api.py kiểm).",
   "endpoints": [
     {"name": "health", "method": "GET", "path": "/v1/health", "scope": null, "auth": false, "probe": "safe",
@@ -31,6 +32,8 @@
      "summary": "Trạng thái snapshot"},
     {"name": "jobs_claim", "method": "POST", "path": "/v1/integrations/jobs/claim", "scope": "jobs:claim", "auth": true, "probe": "skip",
      "summary": "Nhận job thu thập (đổi trạng thái job nên không dò thử)"},
+    {"name": "jobs_enqueue", "method": "POST", "path": "/v1/integrations/jobs/enqueue", "scope": "jobs:claim:system", "auth": true, "probe": "skip",
+     "summary": "Xin tạo job thu thập cho kênh đã kéo (mỗi đợt theo lịch; tạo job nên không dò thử)"},
     {"name": "job_heartbeat", "method": "POST", "path": "/v1/integrations/jobs/{job_id}/heartbeat", "scope": "jobs:claim", "auth": true, "probe": "skip",
      "summary": "Gia hạn lease job"},
     {"name": "job_complete", "method": "POST", "path": "/v1/integrations/jobs/{job_id}/complete", "scope": "jobs:complete", "auth": true, "probe": "skip",
